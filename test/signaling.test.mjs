@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { on, once } from 'node:events';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -32,12 +32,24 @@ async function listen(t, options = {}) {
   };
 }
 
-async function createInvitation(host) {
-  host.send({ type: 'host', key: HOST_KEY });
-  const { type, invite } = await host.receive();
-  assert.equal(type, 'invitation');
+async function createInvitation(host, inviteTtlMinutes) {
+  host.send({ type: 'host', key: HOST_KEY, inviteTtlMinutes });
+  const reply = await host.receive();
+  const { invite } = reply;
   assert.match(invite, /^[A-Za-z0-9_-]{22}$/);
+  const expected = { type: 'invitation', invite };
+  if (inviteTtlMinutes !== undefined) expected.inviteTtlMinutes = inviteTtlMinutes;
+  assert.deepEqual(reply, expected);
   return invite;
+}
+
+function verifierFor(code) {
+  return createHash('sha256').update(code, 'ascii').digest('base64url');
+}
+
+async function registerVerifier(host, inviteVerifier, inviteTtlMinutes = 15) {
+  host.send({ type: 'host', key: HOST_KEY, inviteVerifier, inviteTtlMinutes });
+  assert.deepEqual(await host.receive(), { type: 'invitation', inviteVerifier, inviteTtlMinutes });
 }
 
 async function join(host, viewer) {
@@ -156,6 +168,121 @@ test('expires unused invitations and unanswered requests', { timeout: 5000 }, as
   await assertError(host, /pending request/);
   viewer.send({ type: 'join', invite });
   await assertError(viewer, /already used/);
+});
+
+test('honors every explicit manual invitation deadline', { timeout: 5000 }, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const open = await listen(t, { inviteTtlMs: 123 });
+  const host = await open();
+  for (const minutes of [5, 15, 30, 60, 120, 300, 720]) {
+    await createInvitation(host, minutes);
+    t.mock.timers.tick(minutes * 60_000 - 1);
+    host.send({ type: 'host', key: HOST_KEY });
+    await assertError(host, /already belongs/);
+    t.mock.timers.tick(1);
+    assert.deepEqual(await host.receive(), { type: 'ended', reason: 'The invitation expired.' });
+  }
+});
+
+test('rejects invalid invitation options before reserving room capacity', { timeout: 5000 }, async t => {
+  const open = await listen(t, { maxRooms: 1 });
+  const host = await open();
+  const verifier = Buffer.alloc(32, 255).toString('base64url');
+  for (const inviteTtlMinutes of [0, 4, 6, 719, 721, 5.5, '5', null, true, [5]]) {
+    host.send({ type: 'host', key: HOST_KEY, inviteTtlMinutes });
+    await assertError(host, /lifetime/);
+  }
+  for (const inviteVerifier of [null, 42, [verifier], verifier.slice(1), verifier + '=', verifier.replaceAll('_', '/'),
+    verifier.slice(0, -1) + '9']) {
+    host.send({ type: 'host', key: HOST_KEY, inviteVerifier, inviteTtlMinutes: 5 });
+    await assertError(host, /verifier/);
+  }
+  host.send({ type: 'host', key: HOST_KEY, inviteVerifier: verifier });
+  await assertError(host, /lifetime/);
+  host.send({ type: 'host', key: 'wrong', inviteVerifier: verifier, inviteTtlMinutes: 5 });
+  await assertError(host, /host access key/);
+  await registerVerifier(host, verifier);
+});
+
+test('redeems only the canonical bearer once and delivers proof only to its issuing host', { timeout: 5000 }, async t => {
+  const open = await listen(t, { stunUrls: STUN_URLS });
+  const [host, viewer, manualHost, otherViewer] = await Promise.all(Array.from({ length: 4 }, open));
+  const code = randomBytes(32).toString('base64url');
+  const inviteVerifier = verifierFor(code);
+  await registerVerifier(host, inviteVerifier);
+  manualHost.send({ type: 'host', key: HOST_KEY, inviteVerifier, inviteTtlMinutes: 5 });
+  await assertError(manualHost, /already registered/);
+  const manual = await createInvitation(manualHost, 30);
+  host.send({ type: 'accept', relayOnly: false });
+  await assertError(host, /pending request/);
+  for (const invite of [inviteVerifier, code + '=', [code], { invite: code }]) {
+    viewer.send({ type: 'join', invite });
+    await assertError(viewer, /invalid/);
+  }
+  viewer.send({ type: 'join', invite: code });
+  assert.deepEqual(await host.receive(), { type: 'request', inviteProof: code });
+  assert.deepEqual(await viewer.receive(), { type: 'waiting' });
+  otherViewer.send({ type: 'join', invite: code });
+  await assertError(otherViewer, /already used/);
+  otherViewer.send({ type: 'join', invite: manual, inviteProof: code });
+  assert.deepEqual(await otherViewer.receive(), { type: 'waiting' });
+  assert.deepEqual(await manualHost.receive(), { type: 'request' });
+
+  viewer.send({ type: 'signal', data: {} });
+  await assertError(viewer, /must accept/);
+  viewer.send({ type: 'accept', relayOnly: false });
+  await assertError(viewer, /Only the host/);
+  host.send({ type: 'accept', relayOnly: false });
+  for (const [peer, role] of [[host, 'host'], [viewer, 'viewer']]) {
+    assert.deepEqual(await peer.receive(), { type: 'ready', role, iceServers: [{ urls: STUN_URLS }], relayOnly: false });
+  }
+  host.socket.terminate();
+  assert.deepEqual(await viewer.receive(), { type: 'ended', reason: 'The host disconnected.' });
+  viewer.send({ type: 'join', invite: code });
+  await assertError(viewer, /already used/);
+  await registerVerifier(viewer, inviteVerifier);
+});
+
+test('hashes only canonical 32-byte codes and keeps manual invitations separate', { timeout: 5000 }, async t => {
+  const open = await listen(t);
+  const [host, manualHost, viewer, otherViewer] = await Promise.all(Array.from({ length: 4 }, open));
+  const manual = await createInvitation(manualHost);
+  await registerVerifier(host, verifierFor(manual));
+  viewer.send({ type: 'join', invite: manual });
+  assert.deepEqual(await viewer.receive(), { type: 'waiting' });
+  assert.deepEqual(await manualHost.receive(), { type: 'request' });
+  otherViewer.send({ type: 'join', invite: manual });
+  await assertError(otherViewer, /already used/);
+  host.send({ type: 'end' });
+  assert.deepEqual(await host.receive(), { type: 'ended', reason: 'The host ended the session.' });
+
+  const noncanonical = 'A'.repeat(42) + 'B';
+  await registerVerifier(host, verifierFor(noncanonical));
+  otherViewer.send({ type: 'join', invite: noncanonical });
+  await assertError(otherViewer, /invalid/);
+});
+
+test('expiry and cancellation revoke verifiers and allow clean reissue', { timeout: 5000 }, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const open = await listen(t, { maxRooms: 1 });
+  const host = await open();
+  const code = randomBytes(32).toString('base64url');
+  const verifier = verifierFor(code);
+  await registerVerifier(host, verifier, 720);
+  t.mock.timers.tick(720 * 60_000);
+  assert.deepEqual(await host.receive(), { type: 'ended', reason: 'The invitation expired.' });
+  const viewer = await open();
+  viewer.send({ type: 'join', invite: code });
+  await assertError(viewer, /expired/);
+  await registerVerifier(host, verifier);
+  host.send({ type: 'end' });
+  assert.deepEqual(await host.receive(), { type: 'ended', reason: 'The host ended the session.' });
+  viewer.send({ type: 'join', invite: code });
+  await assertError(viewer, /invalid/);
+  await registerVerifier(host, verifier);
+  viewer.send({ type: 'join', invite: code });
+  assert.deepEqual(await viewer.receive(), { type: 'waiting' });
+  assert.deepEqual(await host.receive(), { type: 'request', inviteProof: code });
 });
 
 test('issues distinct time-limited coturn credentials to the approved pair and expires the session', { timeout: 5000 }, async t => {

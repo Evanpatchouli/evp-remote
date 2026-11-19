@@ -11,6 +11,7 @@ const MESSAGE_BURST = 128;
 const MESSAGES_PER_SECOND = 64;
 const IDLE_TIMEOUT_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 20_000;
+const INVITE_TTL_MINUTES = new Set([5, 15, 30, 60, 120, 300, 720]);
 const failureMessages = new Map([
   ['capture-denied', 'Screen sharing was not approved. Create a new invitation and choose the entire host display.'],
   ['audio-unavailable', 'System audio is unavailable. Check the host output device and select Share system audio when reconnecting.'],
@@ -21,6 +22,11 @@ const failureMessages = new Map([
 
 function digest(value) {
   return createHash('sha256').update(value).digest();
+}
+
+function isCanonical32ByteToken(value) {
+  return typeof value === 'string' && value.length === 43
+    && Buffer.from(value, 'base64url').toString('base64url') === value;
 }
 
 function validateIceUrls(urls, scheme, name) {
@@ -84,6 +90,7 @@ export function createSignalServer({
   const hostKeyDigest = digest(hostKey);
   const rooms = new Set();
   const invitations = new Map();
+  const verifiedInvitations = new Map();
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: MAX_PAYLOAD,
@@ -115,6 +122,7 @@ export function createSignalServer({
     if (!rooms.delete(room)) return;
     clearTimeout(room.timer);
     if (invitations.get(room.invite) === room) invitations.delete(room.invite);
+    if (room.inviteVerifier !== undefined) verifiedInvitations.delete(room.inviteVerifier);
     for (const peer of [room.host, room.viewer]) {
       if (!peer) continue;
       peer.room = null;
@@ -161,40 +169,59 @@ export function createSignalServer({
     consentTtlMs, sessionTtlMs, createIceServers, hasTurn: turn.length > 0,
   });
 
-  function startInvitation(peer, key) {
+  function startInvitation(peer, { key, inviteTtlMinutes, inviteVerifier }) {
     if (!isHostKey(key)) {
       return 'The host access key is invalid.';
     }
     if (peer.room) return 'This connection already belongs to a session.';
+    if (inviteTtlMinutes !== undefined && !INVITE_TTL_MINUTES.has(inviteTtlMinutes)) {
+      return 'The invitation lifetime is invalid.';
+    }
+    if (inviteVerifier !== undefined) {
+      if (inviteTtlMinutes === undefined || !isCanonical32ByteToken(inviteVerifier)) {
+        return 'A valid invitation verifier and explicit lifetime are required.';
+      }
+      const existing = verifiedInvitations.get(inviteVerifier);
+      if (existing && !expireIfOverdue(existing)) return 'The invitation verifier is already registered.';
+    }
     if (!hasRoomCapacity()) return 'The signaling server is at capacity. Try again later.';
     let invite;
-    do {
-      invite = randomBytes(16).toString('base64url');
-    } while (invitations.has(invite));
-    const room = { invite, host: peer, viewer: null, state: 'inviting' };
+    if (inviteVerifier === undefined) {
+      do {
+        invite = randomBytes(16).toString('base64url');
+      } while (invitations.has(invite));
+    }
+    const room = { invite, inviteVerifier, host: peer, viewer: null, state: 'inviting' };
     rooms.add(room);
-    invitations.set(invite, room);
+    if (inviteVerifier === undefined) invitations.set(invite, room);
+    else verifiedInvitations.set(inviteVerifier, room);
     attach(room, peer);
-    setDeadline(room, inviteTtlMs, 'The invitation expired.');
-    if (!send(peer.socket, { type: 'invitation', invite })) {
+    const duration = inviteTtlMinutes === undefined ? inviteTtlMs : inviteTtlMinutes * 60_000;
+    setDeadline(room, duration, 'The invitation expired.');
+    if (!send(peer.socket, { type: 'invitation', invite, inviteVerifier, inviteTtlMinutes })) {
       finishRoom(room, 'The host disconnected.');
     }
   }
 
   function requestConsent(peer, invite) {
     if (peer.room) return 'This connection already belongs to a session.';
-    const room = invitations.get(invite);
-    if (!room || expireIfOverdue(room)) return 'The invitation is invalid, expired, or already used.';
+    const room = isCanonical32ByteToken(invite)
+      ? verifiedInvitations.get(digest(invite).toString('base64url'))
+      : invitations.get(invite);
+    if (!room || expireIfOverdue(room) || room.state !== 'inviting') {
+      return 'The invitation is invalid, expired, or already used.';
+    }
     if (room.host.socket.readyState !== WebSocket.OPEN) {
       finishRoom(room, 'The host disconnected.');
       return 'The host disconnected.';
     }
-    invitations.delete(invite);
+    if (room.inviteVerifier === undefined) invitations.delete(invite);
     room.viewer = peer;
     room.state = 'pending';
     attach(room, peer);
     setDeadline(room, consentTtlMs, 'The request expired while waiting for the host.');
-    if (!send(room.host.socket, { type: 'request' })) {
+    const request = room.inviteVerifier === undefined ? { type: 'request' } : { type: 'request', inviteProof: invite };
+    if (!send(room.host.socket, request)) {
       finishRoom(room, 'The host disconnected.');
     } else if (!send(peer.socket, { type: 'waiting' })) {
       finishRoom(room, 'The viewer disconnected.');
@@ -227,7 +254,7 @@ export function createSignalServer({
     if (room && expireIfOverdue(room)) return;
     switch (message.type) {
       case 'host':
-        return startInvitation(peer, message.key);
+        return startInvitation(peer, message);
       case 'join':
         return requestConsent(peer, message.invite);
       case 'accept':
