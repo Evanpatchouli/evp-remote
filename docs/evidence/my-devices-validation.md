@@ -18,6 +18,12 @@ The x64 Release build ran on Windows 11 with Qt 6.8.3. Two instances of the nati
 
 All 38 Node tests passed, including seven device broker tests covering registration, expiry, presence, attempt routing, capacity and compatibility with invitations. The Linux signaling image built and loaded its coordinator module. The Windows ZIP passed the runtime dependency check and the direct native probes ran with its extracted runtime.
 
+## Invitation and pairing options
+
+The options revision passed all 43 Node tests. Broker tests advanced the clock through each of the seven invitation deadlines and checked single-use redemption. Two native Windows processes completed a 12-hour preapproved invitation through the normal UI, exchanged video, audio and input, and stopped from the floating host button. A 15-minute manual invitation still required host approval. A legacy signaling response and an incorrect redemption proof both ended the preapproved attempt before media or input started.
+
+The native pairing fixture accepted one preapproved 12-hour code through the signed handshake with zero media or input starts and incoming control still off. Editing the selected lifetime invalidated the previous code. The UI probe verified both sets of seven choices, keyboard navigation between tabs, and selection and scroll position across a presence refresh in a 24-device list. It also checked that editing the server address clears the host key and that entering a pairing code in Remote Assistance produces local guidance.
+
 ## Field qualification
 
 Two independent physical PCs on the upgraded public WSS deployment are still required to qualify public direct connectivity, automatic TURN fallback with the default ICE policy, real lock and RDP transitions, physical keyboard delivery, audible playback, and high-refresh display performance. The local desktop-loss tests use a recording input adapter and a Windows event delivered to the test window. [Field test](../runbooks/windows-session.md#two-pc-field-test)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "code_options.h"
 #include "device_identity.h"
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -54,7 +55,7 @@ private:
     bool persist();
     void changePreferences(DevicePreferences options);
     void removePeer(const QString& id);
-    void makePairingCode();
+    void makePairingCode(CodeOptions options);
     void clearPairingCode();
     void start(const QString& target, bool pair, const QByteArray& secret = {});
     void startPairing(const QString& code);
@@ -86,6 +87,7 @@ private:
     int retryMs_ = 1000;
     QSet<QString> online_;
     QByteArray pairingSecret_;
+    CodeOptions pairingOptions_;
     std::optional<Attempt> attempt_;
     bool storageFault_ = false;
 };

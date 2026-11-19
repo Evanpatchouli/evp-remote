@@ -15,7 +15,6 @@
 namespace evp {
 namespace {
 
-constexpr int pairingMs = 5 * 60 * 1000;
 constexpr int presenceMs = 4000;
 constexpr int pendingMs = 60000;
 constexpr int sessionMs = 60 * 60 * 1000;
@@ -69,7 +68,10 @@ DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& ho
             ? QStringLiteral("本次可信设备会话已达到一小时上限。需要继续时可重新连接。")
             : QStringLiteral("设备请求已超时，请重试。"));
     });
-    connect(&pairingExpiry_, &QTimer::timeout, this, &DeviceConnection::clearPairingCode);
+    connect(&pairingExpiry_, &QTimer::timeout, this, [this] {
+        clearPairingCode();
+        page_.setMessage(QStringLiteral("配对码已过期。需要配对时，请重新生成。"));
+    });
     if (!store_.open() || (id_ = deviceId(store_.identity.publicKey())).isEmpty()) {
         page_.setRegistration(false, QStringLiteral("设备存储不可用，或已有另一个客户端在运行。仍可使用远程协助。"));
         return;
@@ -83,6 +85,15 @@ DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& ho
     page_.setDevices(store_.peers, {});
     connect(&page_, &DevicePage::configureRequested, this, &DeviceConnection::configure);
     connect(&page_, &DevicePage::codeRequested, this, &DeviceConnection::makePairingCode);
+    connect(&page_, &DevicePage::pairingOptionsEdited, this, [this] {
+        if (!pairingSecret_.isEmpty()) {
+            clearPairingCode();
+            page_.setMessage(QStringLiteral("配对选项已更改，原配对码已失效。请重新生成。"));
+        } else if (attempt_ && attempt_->host && attempt_->pair &&
+                   (attempt_->stage == Stage::Approval || attempt_->stage == Stage::Confirm)) {
+            failAttempt(QStringLiteral("配对选项已更改，已取消此次配对。"), true, true);
+        }
+    });
     connect(&page_, &DevicePage::pairingRequested, this, &DeviceConnection::startPairing);
     connect(&page_, &DevicePage::pairingDecided, this, &DeviceConnection::approvePairing);
     connect(&page_, &DevicePage::connectRequested, this, [this](const QString& id) { start(id, false); });
@@ -365,18 +376,23 @@ void DeviceConnection::removePeer(const QString& id) {
     }
 }
 
-void DeviceConnection::makePairingCode() {
+void DeviceConnection::makePairingCode(CodeOptions options) {
     if (registration_ != Registration::Online || busy() || controller_.phase_ != DesktopController::Phase::Idle)
         return;
     clearPairingCode();
+    if (!isCodeLifetime(options.minutes)) {
+        page_.setMessage(QStringLiteral("请选择有效的配对码期限。"));
+        return;
+    }
     pairingSecret_ = deviceRandom();
     if (pairingSecret_.isEmpty()) {
         page_.setMessage(QStringLiteral("无法生成安全配对码。"));
         return;
     }
+    pairingOptions_ = options;
     pairingAge_.start();
-    pairingExpiry_.start(pairingMs);
-    page_.setPairingCode(QStringLiteral("EVP1.%1.%2").arg(id_, encodeDeviceBytes(pairingSecret_)));
+    pairingExpiry_.start(options.minutes * 60 * 1000);
+    page_.setPairingCode(QStringLiteral("EVP1.%1.%2").arg(id_, encodeDeviceBytes(pairingSecret_)), options);
     page_.setMessage(QStringLiteral("仅向自己的设备发送配对码，等待另一台电脑请求。"));
 }
 
@@ -384,6 +400,7 @@ void DeviceConnection::clearPairingCode() {
     pairingExpiry_.stop();
     pairingAge_.invalidate();
     pairingSecret_.clear();
+    pairingOptions_ = {};
     page_.setPairingCode({});
 }
 
@@ -471,7 +488,7 @@ void DeviceConnection::receiveRequest(const QJsonObject& message) {
     const auto data = document.object();
     if (pair) {
         if ((known == store_.peers.cend() && store_.peers.size() >= maxDevicePeers) ||
-            !pairingAge_.isValid() || pairingAge_.hasExpired(pairingMs) ||
+            pairingSecret_.isEmpty() || !pairingAge_.isValid() ||
             !equalDeviceSecrets(decodeDeviceBytes(data.value("mac").toString(), 32),
                                 pairingMac(pairingSecret_, peer, id_, attemptId))) {
             decline();
@@ -483,10 +500,12 @@ void DeviceConnection::receiveRequest(const QJsonObject& message) {
         return;
     }
     const auto proof = deviceProof({"start", mode, peer, id_, attemptId, encoded});
-    if (!DeviceIdentity::verify(key, proof, message.value("signature").toString())) {
+    if (!DeviceIdentity::verify(key, proof, message.value("signature").toString()) ||
+        (pair && pairingAge_.elapsed() >= pairingExpiry_.interval())) {
         decline();
         return;
     }
+    const bool preapproved = pair && pairingOptions_.autoApprove;
     clearPairingCode();
     attempt_.emplace();
     attempt_->id = attemptId;
@@ -500,6 +519,10 @@ void DeviceConnection::receiveRequest(const QJsonObject& message) {
     updateActivity();
     if (pair) {
         attempt_->stage = Stage::Approval;
+        if (preapproved) {
+            approvePairing(attemptId, true);
+            return;
+        }
         page_.setPairingRequest(attemptId, attempt_->name, peer);
         page_.setMessage({});
         home_.showDevicePage();

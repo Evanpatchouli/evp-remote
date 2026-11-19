@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QComboBox>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLineEdit>
@@ -68,9 +69,16 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
         QPushButton[deviceAction] { border-radius: 7px; padding: 0 10px; }
         QPushButton[deviceAction]:focus { border: 1px solid #3475e4; }
         QPushButton[deviceAction]:disabled { background: #f0f4fa; color: #667899; border: 1px solid #dfe6f1; }
-        QListWidget { background: white; border: 1px solid #e0e8f3; border-radius: 8px; outline: none; }
-        QListWidget::item { padding: 7px 10px; color: #182844; }
-        QListWidget::item:selected { background: #e1ecff; color: #163e7b; }
+        QListWidget#trustedDeviceList { background: white; border: 2px solid #e0e8f3; border-radius: 9px; }
+        QListWidget#trustedDeviceList:focus { border-color: #3475e4; }
+        QListWidget#trustedDeviceList::item {
+            padding: 8px 12px; border: 1px solid transparent; border-radius: 7px;
+            background: #f4f6fa; color: #263955;
+        }
+        QListWidget#trustedDeviceList::item:hover { background: #e8effa; border-color: #b8cbed; }
+        QListWidget#trustedDeviceList::item:selected { background: #dceaff; border-color: #739bda; color: #163e7b; }
+        QListWidget#trustedDeviceList::item:selected:hover { background: #cbdfff; border-color: #547fbe; }
+        QListWidget#trustedDeviceList::item:focus { border: 1px solid #2459ab; }
     )"));
     auto* page = new QVBoxLayout(this);
     page->setContentsMargins(0, 0, 0, 0);
@@ -96,9 +104,21 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     list_ = new QListWidget;
     list_->setObjectName("trustedDeviceList");
     list_->setAccessibleName(QStringLiteral("可信设备列表"));
-    list_->setMinimumHeight(93);
-    list_->setMaximumHeight(166);
+    list_->setMinimumHeight(110);
+    list_->setMaximumHeight(180);
+    list_->setSpacing(3);
+    list_->setMouseTracking(true);
+    list_->viewport()->setAttribute(Qt::WA_Hover);
+    list_->setUniformItemSizes(true);
+    list_->setTextElideMode(Qt::ElideMiddle);
+    list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* emptyLayout = new QVBoxLayout(list_->viewport());
+    emptyList_ = label(QStringLiteral("尚未配对其他设备\n在下方生成或输入配对码，即可添加设备。"), "subtle", 13);
+    emptyList_->setAlignment(Qt::AlignCenter);
+    emptyList_->setWordWrap(true);
+    emptyList_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    emptyLayout->addWidget(emptyList_);
     devices->addWidget(list_);
     connect_ = button(QStringLiteral("连接选中设备"), "connectDevice", true);
     remove_ = button(QStringLiteral("移除配对"), "removeDevice");
@@ -121,14 +141,31 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     id_->setReadOnly(true);
     copyId_ = button(QStringLiteral("复制 ID"), "copyDeviceId");
     row(pairing, id_, copyId_);
-    auto* hint = label(QStringLiteral("在一台电脑生成配对码，在另一台粘贴。被请求的一端确认后，两台电脑会记住彼此。"), "subtle", 13);
+    auto* hint = label(QStringLiteral("在一台电脑生成配对码，在另一台粘贴。配对成功后，两台电脑会记住彼此。"), "subtle", 13);
     hint->setWordWrap(true);
     pairing->addWidget(hint);
-    code_ = field(QStringLiteral("配对码有效期 5 分钟"), "localPairingCode");
+    auto* lifetimeLabel = label(QStringLiteral("配对码有效期"), "fieldLabel", 13);
+    pairingLifetime_ = new QComboBox;
+    pairingLifetime_->setObjectName("pairingLifetime");
+    pairingLifetime_->setAccessibleName(lifetimeLabel->text());
+    lifetimeLabel->setBuddy(pairingLifetime_);
+    for (int minutes : evp::codeLifetimeMinutes)
+        pairingLifetime_->addItem(evp::codeLifetimeLabel(minutes), minutes);
+    pairingLifetime_->setCurrentIndex(pairingLifetime_->findData(evp::CodeOptions{}.minutes));
+    autoAcceptPairing_ = new QCheckBox(QStringLiteral("持码免本机确认"));
+    autoAcceptPairing_->setObjectName("autoAcceptPairing");
+    auto* issuance = row(pairing, lifetimeLabel, pairingLifetime_, false);
+    issuance->addWidget(autoAcceptPairing_);
+    issuance->addStretch();
+    code_ = field(QStringLiteral("本机配对码"), "localPairingCode");
     code_->setReadOnly(true);
     makeCode_ = button(QStringLiteral("生成配对码"), "generatePairingCode");
     copyCode_ = button(QStringLiteral("复制"), "copyPairingCode");
     row(pairing, code_, makeCode_)->addWidget(copyCode_);
+    issuedCodeDetails_ = label({}, "issuedPairingDetails", 13);
+    issuedCodeDetails_->setWordWrap(true);
+    issuedCodeDetails_->hide();
+    pairing->addWidget(issuedCodeDetails_);
     peerCode_ = field(QStringLiteral("粘贴另一台设备的配对码"), "peerPairingCode", true);
     peerCode_->setMaxLength(128);
     pair_ = button(QStringLiteral("请求配对"), "pairDevice", true);
@@ -163,7 +200,16 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
         key_->clear();
         emit configureRequested(QUrl(url_->text().trimmed(), QUrl::StrictMode), secret);
     });
-    connect(makeCode_, &QPushButton::clicked, this, &DevicePage::codeRequested);
+    connect(makeCode_, &QPushButton::clicked, this, [this] {
+        const bool preapprove = code_->text().isEmpty() && autoAcceptPairing_->isChecked();
+        emit codeRequested({pairingLifetime_->currentData().toInt(), preapprove});
+    });
+    connect(pairingLifetime_, &QComboBox::currentIndexChanged, this, &DevicePage::pairingOptionsEdited);
+    connect(autoAcceptPairing_, &QCheckBox::toggled, this, [this](bool checked) {
+        emit pairingOptionsEdited();
+        const QSignalBlocker blocker(autoAcceptPairing_);
+        autoAcceptPairing_->setChecked(checked);
+    });
     connect(copyId_, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(id_->text()); });
     connect(copyCode_, &QPushButton::clicked, this, [this] { QApplication::clipboard()->setText(code_->text()); });
     connect(pair_, &QPushButton::clicked, this, [this] {
@@ -225,33 +271,47 @@ void DevicePage::setPreferences(const evp::DevicePreferences& options, bool edit
 }
 
 void DevicePage::setDevices(const QMap<QString, evp::DevicePeer>& peers, const QSet<QString>& online) {
-    const auto current = selectedId();
-    QSignalBlocker selection(list_);
+    const QSignalBlocker selection(list_);
     online_ = online;
-    list_->clear();
+    for (int index = list_->count() - 1; index >= 0; --index) {
+        if (!peers.contains(list_->item(index)->data(Qt::UserRole).toString()))
+            delete list_->takeItem(index);
+    }
+    int index = 0;
     for (auto it = peers.cbegin(); it != peers.cend(); ++it) {
-        auto* item = new QListWidgetItem(QStringLiteral("%1   ·   %2").arg(it->name, online_.contains(it.key())
-                                                                            ? QStringLiteral("在线")
-                                                                            : QStringLiteral("离线")), list_);
-        item->setData(Qt::UserRole, it.key());
-        item->setToolTip(it.key());
-        if (current == it.key())
-            list_->setCurrentItem(item);
+        auto* item = list_->item(index);
+        if (!item || item->data(Qt::UserRole).toString() != it.key()) {
+            item = new QListWidgetItem;
+            item->setData(Qt::UserRole, it.key());
+            item->setToolTip(it.key());
+            list_->insertItem(index, item);
+        }
+        const auto status = online_.contains(it.key()) ? QStringLiteral("在线") : QStringLiteral("离线");
+        item->setText(QStringLiteral("%1   ·   %2").arg(it->name, status));
+        ++index;
     }
-    if (peers.isEmpty()) {
-        auto* item = new QListWidgetItem(QStringLiteral("尚未配对其他设备"), list_);
-        item->setFlags(Qt::NoItemFlags);
-    } else if (!list_->currentItem()) {
+    emptyList_->setVisible(peers.isEmpty());
+    if (!peers.isEmpty() && !list_->currentItem())
         list_->setCurrentRow(0);
-    }
     updateActions();
 }
 
-void DevicePage::setPairingCode(const QString& code) {
+void DevicePage::setPairingCode(const QString& code, evp::CodeOptions options) {
     const auto old = code_->text();
     if (!old.isEmpty() && QApplication::clipboard()->text() == old)
         QApplication::clipboard()->clear();
     code_->setText(code);
+    if (!old.isEmpty() || !code.isEmpty()) {
+        const QSignalBlocker blocker(autoAcceptPairing_);
+        autoAcceptPairing_->setChecked(!code.isEmpty() && options.autoApprove);
+    }
+    const bool preapproved = !code.isEmpty() && options.autoApprove;
+    makeCode_->setText(preapproved ? QStringLiteral("重新生成（需确认）") : QStringLiteral("生成配对码"));
+    issuedCodeDetails_->setText(code.isEmpty() ? QString{} :
+        QStringLiteral("此码有效期 %1，限用一次。%2").arg(evp::codeLifetimeLabel(options.minutes),
+            preapproved ? QStringLiteral("持码免本机确认，取消勾选即可使此码失效。")
+                        : QStringLiteral("请在本机核对并确认请求。")));
+    issuedCodeDetails_->setVisible(!code.isEmpty());
     updateActions();
 }
 
@@ -272,8 +332,8 @@ void DevicePage::setReturnVisible(bool visible) {
 }
 
 QString DevicePage::selectedId() const {
-    const auto* current = list_->currentItem();
-    return current ? current->data(Qt::UserRole).toString() : QString{};
+    const auto selected = list_->selectedItems();
+    return selected.isEmpty() ? QString{} : selected.first()->data(Qt::UserRole).toString();
 }
 
 void DevicePage::updateActions() {
@@ -282,6 +342,8 @@ void DevicePage::updateActions() {
     connect_->setEnabled(idle && registered_ && online_.contains(selected));
     remove_->setEnabled(!selected.isEmpty());
     makeCode_->setEnabled(idle && registered_);
+    pairingLifetime_->setEnabled(makeCode_->isEnabled());
+    autoAcceptPairing_->setEnabled(makeCode_->isEnabled());
     copyCode_->setEnabled(idle && !code_->text().isEmpty());
     copyId_->setEnabled(!id_->text().isEmpty());
     peerCode_->setEnabled(idle && registered_);

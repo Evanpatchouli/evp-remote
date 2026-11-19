@@ -1,10 +1,12 @@
 #pragma once
 
+#include "code_options.h"
 #include "devices/device_identity.h"
 #include <QSet>
 #include <QWidget>
 
 class QCheckBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -21,14 +23,15 @@ public:
     void setActivity(bool sessionBusy, bool pending);
     void setPreferences(const evp::DevicePreferences& preferences, bool editable);
     void setDevices(const QMap<QString, evp::DevicePeer>& peers, const QSet<QString>& online);
-    void setPairingCode(const QString& code);
+    void setPairingCode(const QString& code, evp::CodeOptions options = {});
     void setPairingRequest(const QString& attempt, const QString& name, const QString& id);
     void setMessage(const QString& text);
     void setReturnVisible(bool visible);
 
 signals:
     void configureRequested(const QUrl& url, const QString& key);
-    void codeRequested();
+    void codeRequested(evp::CodeOptions options);
+    void pairingOptionsEdited();
     void pairingRequested(const QString& code);
     void pairingDecided(const QString& attempt, bool confirmed);
     void connectRequested(const QString& id);
@@ -49,6 +52,10 @@ private:
     QLineEdit* url_;
     QLineEdit* key_;
     QListWidget* list_;
+    QLabel* emptyList_;
+    QComboBox* pairingLifetime_;
+    QCheckBox* autoAcceptPairing_;
+    QLabel* issuedCodeDetails_;
     QWidget* pairApproval_;
     QLabel* pairRequester_;
     QPushButton* copyId_;

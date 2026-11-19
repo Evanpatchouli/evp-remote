@@ -16,7 +16,7 @@ foreach(component avcodec avutil swscale swresample)
     find_library(FFMPEG_${component} NAMES ${component} PATHS "${EVP_FFMPEG_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
 endforeach()
 add_library(evp_client STATIC
-    controller.cpp controller.h viewer_input.cpp viewer_input.h
+    controller.cpp controller.h code_options.h viewer_input.cpp viewer_input.h
     controller_dispatch.h controller_host.cpp host_input.cpp host_input.h
     devices/device_connection.cpp devices/device_connection.h devices/device_identity.cpp devices/device_identity.h
     ui/home_window.cpp ui/home_window.h ui/session_window.cpp ui/session_window.h

@@ -6,10 +6,10 @@ A remote desktop for Windows, with attended assistance and accountless access to
 
 Extract **`evp-remote-windows-x64.zip` on both PCs** and open **EvpRemote.exe**. Choose the mode that fits:
 
-- For **远程协助** (Remote Assistance), select **共享本机** on the controlled PC and use the deployment key to create an invitation. On the controlling PC, enter the invitation under **远程协助**. The host approves each request.
+- For **远程协助** (Remote Assistance), use the **共享本机** tab on the controlled PC to create an invitation, then enter it in **连接远程设备** on the controlling PC. The host can confirm when the request arrives or preapprove one redemption when issuing the code.
 - For **我的设备** (My Devices), configure the same device-capable signaling server on both PCs, pair once, and enable inbound control on each PC you want to control. Select an online paired device to reconnect. The target app must be running on an unlocked desktop. Each PC stores its own list of trusted peers.
 
-See the [native runbook](docs/runbooks/native-windows.md) for setup and revocation, and the [signaling upgrade](docs/runbooks/windows-session.md#enable-my-devices-on-the-same-server) for the My Devices server requirement.
+Both code selectors offer seven lifetimes from five minutes to twelve hours. The default is five minutes with local confirmation. [Windows setup and revocation](docs/runbooks/native-windows.md) · [Signaling upgrade](docs/runbooks/windows-session.md#enable-my-devices-on-the-same-server)
 
 ## Browser compatibility client for development
 

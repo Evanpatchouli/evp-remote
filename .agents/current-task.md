@@ -9,6 +9,8 @@
 | Trusted devices | Execute / S2 | Scrollable styled rows and locally enforced pairing policy with mutual authentication |
 | Integration | Verify / S0 and independent review | Verify defaults and opt-ins through the native forms, expiry, wrong or consumed codes, navigation, list scroll, and the packaged Windows build |
 
+Contracts landed in `2ebe723`, followed by the broker in `50398ef`. The two native code paths and the scrolling device list passed local checks. [Options validation](../docs/evidence/my-devices-validation.md#invitation-and-pairing-options)
+
 ## My Devices
 
 The primary agent coordinates at S2, owns the trust boundary and integrates both endpoints. Keep the attended flow and its checks intact.

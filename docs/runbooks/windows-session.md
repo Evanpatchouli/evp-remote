@@ -56,13 +56,13 @@ Look for three running services and a trusted certificate for the configured hos
 
 To upgrade, use the new release tag in `image`, run the pull and kit extraction again in the existing deployment directory, and apply the updated Compose file with `docker compose pull && docker compose up -d`. The kit contains only `compose.yaml` and `configure.sh`. If you customized either file, compare your copy before replacing it.
 
-On both Windows PCs, extract the same `evp-remote-windows-x64.zip` and open `EvpRemote.exe`. Use the same server URL from the table. On the controlled PC select **共享本机**, create the invitation with the deployment key, then approve the viewer locally. On the other PC select **远程协助**, enter the invitation, and click inside the resulting video window before testing keyboard and mouse. See [native session setup](native-windows.md#remote-assistance) for sound and high-refresh options.
+On both Windows PCs, extract the same `evp-remote-windows-x64.zip` and open `EvpRemote.exe`. Use the same server URL from the table. Under **远程协助**, the host creates an invitation in **共享本机**, and the viewer enters it in **连接远程设备**. The default five-minute invitation prompts the host to confirm. [Native session setup](native-windows.md#remote-assistance)
 
 **Check the path.** A trusted HTTPS response of 404 at the root is expected from the signaling service for an ordinary HTTP request. Confirm a WebSocket connection by creating an invitation. Confirm TURN with a fresh session and the host's **Use TURN relay only** checkbox. To check automatic fallback, keep that box clear and use a network that blocks direct endpoint traffic while allowing the relay. Verify the selected route and actual media and input using the table below.
 
 ## Enable My Devices on the same server
 
-From a checkout of the device-capable revision on the Docker host, build `docker build -f deploy/linux/Dockerfile -t evp-remote-signal:my-devices .`. In the existing deployment directory, record the old signal image, then set only `services.signal.image` in the effective Compose configuration to `evp-remote-signal:my-devices`. Check it with `docker compose config --images`. Leave `settings/`, Caddy, and coturn unchanged.
+From a checkout of the revision with invitation options on the Docker host, build `docker build -f deploy/linux/Dockerfile -t evp-remote-signal:code-options .`. In the existing deployment directory, record the old signal image, then set only `services.signal.image` in the effective Compose configuration to `evp-remote-signal:code-options`. Check it with `docker compose config --images`. This build supports My Devices and acknowledges the lifetime and verifier used by the new invitation options.
 
 Apply with `docker compose up -d --no-deps --force-recreate --pull never signal`, then check `docker compose ps signal`. Replacing this container ends active sessions. Each Windows endpoint keeps its own trust records through the upgrade. To roll back to invitation-only service, restore the old image tag and rerun the same command.
 

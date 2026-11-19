@@ -112,7 +112,7 @@ async function pair(stage, hostProfile, viewerProfile) {
   assert.equal(hostReport.passed, true);
   assert.equal(viewerReport.passed, true);
   assert.notEqual(hostReport.id, viewerReport.id);
-  if (stage === 'pair') {
+  if (stage === 'pair' || stage === 'auto-pair') {
     assert.equal(hostReport.id, viewerReport.peer);
     assert.equal(viewerReport.id, hostReport.peer);
   } else {
@@ -169,7 +169,9 @@ async function verifyDevices() {
   if (route === 'direct') {
     await launch('device-checks', 'checks', 'device-checks', {});
     await pair('wrong-pair', 'wrong-host', 'wrong-viewer');
+    await pair('changed-code', 'changed-host', 'changed-viewer');
     await pair('deny-pair', 'deny-host', 'deny-viewer');
+    await pair('auto-pair', 'auto-host', 'auto-viewer');
   }
   const [firstId, secondId] = await pair('pair', 'first', 'second');
   await stopBroker();
@@ -191,6 +193,7 @@ async function verifyDevices() {
   }
   console.log(JSON.stringify({ route, pairedAfterRestart: true, bidirectional: true, decodedAndPresented: true,
     inputDelivered: true, ...(route === 'direct' ? { wrongCodeRejected: true, pairingDeclined: true,
+      codeReplacedOnEdit: true, preapprovedPairingWithoutMedia: true,
       consumedCodeRefused: true, lockedRefused: true, activeDesktopLossStopped: true, sessionDisconnectStopped: true,
       disabledRefused: true, releasedKeysOnRevoke: true, reregisteredWithoutResuming: true,
       removedWhileOffline: true, rejectedAfterUnpair: true } : {}) }));

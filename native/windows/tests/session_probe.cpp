@@ -44,7 +44,9 @@ int runViewerProbe(int argc, char** argv) {
     const auto invite = qEnvironmentVariable("EVP_PROBE_INVITE");
     const auto device = qEnvironmentVariable("EVP_PROBE_DEVICE_STAGE");
     const auto pairingCode = qEnvironmentVariable("EVP_PROBE_PAIRING_CODE");
-    const bool pairing = device == "pair" || device == "deny-pair" || device == "wrong-pair" || device == "expired-pair";
+    const bool willPair = device == "pair" || device == "auto-pair";
+    const bool pairing = willPair || device == "changed-code" || device == "deny-pair" ||
+                         device == "wrong-pair" || device == "expired-pair";
     const bool expectBlocked = device == "disabled" || device == "locked" || device == "forgotten";
     const auto expectedRoute = qEnvironmentVariable("EVP_PROBE_ROUTE", "direct");
     const bool expectDenial = qEnvironmentVariable("EVP_PROBE_CASE") == "deny";
@@ -89,7 +91,7 @@ int runViewerProbe(int argc, char** argv) {
             }
             if ((!pairing && !expectBlocked) || deviceUi.button("cancelDeviceAttempt")->isVisible())
                 return;
-            const bool passed = device == "pair" ? deviceUi.peer() == expectedPeer
+            const bool passed = willPair ? deviceUi.peer() == expectedPeer
                 : deviceUi.message().contains(QStringLiteral("对方未授权或已拒绝")) &&
                   (pairing ? deviceUi.peer().isEmpty() : deviceUi.peer() == expectedPeer);
             if (passed && device == "deny-pair" && !retriedCode) {

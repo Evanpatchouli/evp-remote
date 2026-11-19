@@ -9,8 +9,8 @@ import { createSignalServer } from '../server/signaling.mjs';
 // devices, OS input, and local clicks use test adapters. Invitations stay in memory.
 const directory = process.argv[2];
 const mode = process.argv[3] || 'direct';
-if (!directory || !['direct', 'deny', 'relay', 'video-only', 'release-retry'].includes(mode)) {
-  throw new Error('Usage: node tools/unified-session-smoke.mjs <probe runtime directory> [direct|relay|deny|video-only|release-retry]');
+if (!directory || !['direct', 'deny', 'relay', 'video-only', 'release-retry', 'auto-invite'].includes(mode)) {
+  throw new Error('Usage: node tools/unified-session-smoke.mjs <probe runtime directory> [direct|relay|deny|video-only|release-retry|auto-invite]');
 }
 const key = randomBytes(24).toString('base64url');
 const turnUrls = (process.env.EVP_TURN_URLS || '').split(',').map(url => url.trim()).filter(Boolean);

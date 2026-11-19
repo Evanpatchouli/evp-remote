@@ -3,9 +3,14 @@
 #include "devices/device_identity.h"
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFile>
 #include <QJsonDocument>
 #include <QSettings>
+#include <QSignalSpy>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <Windows.h>
@@ -18,6 +23,7 @@ class DeviceSecurityProbe : public QObject {
 private slots:
     void bindsProofToPeerAttemptNonceAndPayload();
     void pausesOnUnwritableSettingsAcrossRestarts();
+    void assistanceTabsAndScrollableDeviceList();
 };
 
 void DeviceSecurityProbe::bindsProofToPeerAttemptNonceAndPayload() {
@@ -98,6 +104,101 @@ void DeviceSecurityProbe::pausesOnUnwritableSettingsAcrossRestarts() {
     QCOMPARE(evp::deviceId(recovered.identity.publicKey()), id);
     QVERIFY(!recovered.preferences.allowIncoming);
     QVERIFY(!recovered.preferences.audio);
+}
+
+void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    auto* tabs = window.findChild<QTabBar*>("assistanceTabs");
+    auto* navigation = window.findChild<QPushButton*>("navigation");
+    QVERIFY(tabs && navigation && window.findChild<QPushButton*>("deviceNavigation"));
+    QVERIFY(!window.findChild<QPushButton*>("hostNavigation"));
+    navigation->click();
+    QCOMPARE(tabs->count(), 2);
+    QCOMPARE(tabs->currentIndex(), 0);
+    window.setSignalingUrl(QUrl("wss://first.example.invalid/"));
+    QSignalSpy joinRequest(&window, &HomeWindow::joinRequested);
+    window.findChild<QLineEdit*>("invitation")->setText("EVP1.preview.private");
+    window.findChild<QPushButton*>("join")->click();
+    QCOMPARE(joinRequest.count(), 0);
+    QVERIFY(window.findChild<QLabel*>("bannerMessage")->text().contains(QStringLiteral("我的设备")));
+    window.findChild<QLineEdit*>("invitation")->clear();
+    tabs->setFocus();
+    QTest::keyClick(tabs, Qt::Key_Right);
+    QCOMPARE(tabs->currentIndex(), 1);
+    QVERIFY(window.findChild<QPushButton*>("hostCreate")->isVisible());
+    auto* key = window.findChild<QLineEdit*>("hostKey");
+    key->setText("ui-test-credential");
+    tabs->setCurrentIndex(0);
+    window.findChild<QLineEdit*>("signalingUrl")->setText("wss://second.example.invalid/");
+    tabs->setCurrentIndex(1);
+    QVERIFY(key->text().isEmpty());
+    window.setSignalingUrl({});
+    const QList<int> minutes{5, 15, 30, 60, 120, 300, 720};
+    for (const auto* name : {"invitationLifetime", "pairingLifetime"}) {
+        auto* combo = window.findChild<QComboBox*>(name);
+        QVERIFY(combo);
+        QCOMPARE(combo->currentData().toInt(), 5);
+        QCOMPARE(combo->count(), minutes.size());
+        for (int index = 0; index < minutes.size(); ++index)
+            QCOMPARE(combo->itemData(index).toInt(), minutes.at(index));
+    }
+    QVERIFY(!window.findChild<QCheckBox*>("autoAcceptInvitation")->isChecked());
+    QCoreApplication::processEvents();
+    if (!preview.isEmpty())
+        QVERIFY(window.grab().save(QDir(preview).filePath("assistance.png")));
+
+    window.showDevicePage();
+    QVERIFY(!tabs->isVisible());
+    QVERIFY(!window.findChild<QCheckBox*>("autoAcceptPairing")->isChecked());
+    auto& page = window.devices();
+    page.setIdentity("UI-PREVIEW");
+    page.setRegistration(true, QStringLiteral("本机在线"));
+    QMap<QString, evp::DevicePeer> peers;
+    QSet<QString> online;
+    const QStringList names{QStringLiteral("办公室电脑"), QStringLiteral("家用台式机"),
+                            QStringLiteral("工作笔记本"), QStringLiteral("客厅电脑")};
+    for (int index = 0; index < 24; ++index) {
+        const auto id = QString("preview-%1").arg(index, 2, 10, QChar('0'));
+        peers.insert(id, {{}, index < names.size() ? names.at(index) : QStringLiteral("测试设备 %1").arg(index)});
+        if (index % 3 != 1)
+            online.insert(id);
+    }
+    page.setDevices(peers, online);
+    auto* list = window.findChild<QListWidget*>("trustedDeviceList");
+    QVERIFY(list);
+    QCOMPARE(list->count(), peers.size());
+    QTRY_VERIFY(list->verticalScrollBar()->maximum() > 0);
+    list->setCurrentRow(1);
+    QTest::keyClick(list, Qt::Key_Down);
+    QCOMPARE(list->currentRow(), 2);
+    const auto selected = list->currentItem()->data(Qt::UserRole).toString();
+    auto* connectButton = window.findChild<QPushButton*>("connectDevice");
+    QVERIFY(connectButton->isEnabled());
+    QTest::qWait(120);
+    if (!preview.isEmpty()) {
+        QVERIFY(window.grab().save(QDir(preview).filePath("devices.png")));
+        auto* pairingLifetime = window.findChild<QComboBox*>("pairingLifetime");
+        pairingLifetime->setCurrentIndex(pairingLifetime->findData(120));
+        auto* pageScroll = window.findChild<QScrollArea*>("homeScroll");
+        auto* pairingCard = pairingLifetime->parentWidget();
+        pageScroll->verticalScrollBar()->setValue(pairingCard->mapTo(pageScroll->widget(), QPoint{}).y() - 16);
+        QTest::qWait(100);
+        QVERIFY(window.grab().save(QDir(preview).filePath("pairing-options.png")));
+    }
+    auto* scroll = list->verticalScrollBar();
+    scroll->setValue(scroll->maximum());
+    const int position = scroll->value();
+    online.remove(selected);
+    page.setDevices(peers, online);
+    QCoreApplication::processEvents();
+    QCOMPARE(list->currentItem()->data(Qt::UserRole).toString(), selected);
+    QCOMPARE(scroll->value(), position);
+    QVERIFY(!connectButton->isEnabled());
+    navigation->click();
+    QCOMPARE(tabs->currentIndex(), 1);
 }
 
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "code_options.h"
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QSize>
@@ -53,7 +54,10 @@ class DesktopController final : public QObject {
         Streaming
     };
     void join(const QUrl& url, const QString& invite);
-    void openSignaling(Role role, const QUrl& url, const QString& credential);
+    void openSignaling(Role role, const QUrl& url, const QString& credential, CodeOptions options = {},
+                       bool highRefresh = false, bool relayOnly = false, bool withAudio = true);
+    void invitationIssued(const QJsonObject& message);
+    void invitationRedeemed(const QJsonObject& message);
     bool reserveDeviceSession(bool host, bool relayOnly, const DevicePreferences& preferences);
     std::unique_ptr<HostInput> makeHostInput() const;
     void received(const QJsonObject& message);
@@ -80,6 +84,9 @@ class DesktopController final : public QObject {
     HostAdapters hostAdapters_;
     Role role_ = Role::Viewer;
     Phase phase_ = Phase::Idle;
+    CodeOptions invitationOptions_;
+    QByteArray invitationSecret_;
+    QElapsedTimer invitationAge_;
     QWebSocket* socket_ = nullptr;
     std::unique_ptr<RtcViewer> rtc_;
     std::unique_ptr<RtcHost> host_;

@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "controller_dispatch.h"
 #include "devices/device_connection.h"
+#include "devices/device_identity.h"
 #include "host_input.h"
 #include "rtc/rtc_host.h"
 #include "media/video_surface.h"
@@ -12,6 +13,7 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QCryptographicHash>
 #include <QUrl>
 #include <QWebSocket>
 #include <mutex>
@@ -22,6 +24,11 @@
 
 namespace evp {
 namespace {
+QString invitationVerifier(const QByteArray& secret) {
+    const auto encoded = encodeDeviceBytes(secret).toLatin1();
+    return encodeDeviceBytes(QCryptographicHash::hash(encoded, QCryptographicHash::Sha256));
+}
+
 QString peerMessage(const QString& raw) {
     if (raw.contains("Relay-only mode requires", Qt::CaseInsensitive))
         return QStringLiteral("信令服务未配置 TURN。请配置中继，或重新邀请并取消「仅使用 TURN 中继」。");
@@ -75,8 +82,10 @@ DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters, QS
     : home_(home), hostAdapters_(std::move(adapters)) {
     connect(&home, &HomeWindow::joinRequested, this, &DesktopController::join);
     connect(&home, &HomeWindow::cancelRequested, this, &DesktopController::endSession);
-    connect(&home, &HomeWindow::hostRequested, this,
-            [this](const QUrl& url, const QString& key) { openSignaling(Role::Host, url, key); });
+    connect(&home, &HomeWindow::hostRequested, this, [this](const QUrl& url, const QString& key,
+            CodeOptions options, bool highRefresh, bool relayOnly, bool withAudio) {
+        openSignaling(Role::Host, url, key, options, highRefresh, relayOnly, withAudio);
+    });
     connect(&home, &HomeWindow::hostApproved, this, &DesktopController::hostApproved);
     connect(&home, &HomeWindow::hostDenied, this, &DesktopController::hostDenied);
     connect(&home, &HomeWindow::hostEndRequested, this, &DesktopController::endSession);
@@ -92,6 +101,7 @@ DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters, QS
         }
     });
     deadline_.setSingleShot(true);
+    deadline_.setTimerType(Qt::PreciseTimer);
     connect(&deadline_, &QTimer::timeout, this, [this] {
         if (role_ == Role::Host) {
             const bool invitation = phase_ == Phase::Inviting || phase_ == Phase::PendingApproval;
@@ -124,9 +134,14 @@ DesktopController::~DesktopController() {
     endSession();
 }
 void DesktopController::join(const QUrl& url, const QString& invite) {
+    if (invite.trimmed().startsWith(QStringLiteral("EVP1."), Qt::CaseInsensitive)) {
+        home_.showFailure(QStringLiteral("这是配对码，请在「我的设备」中请求配对。"));
+        return;
+    }
     openSignaling(Role::Viewer, url, invite);
 }
-void DesktopController::openSignaling(Role role, const QUrl& url, const QString& credential) {
+void DesktopController::openSignaling(Role role, const QUrl& url, const QString& credential, CodeOptions options,
+                                      bool highRefresh, bool relayOnly, bool withAudio) {
     if (phase_ != Phase::Idle)
         return;
     if (devices_->busy()) {
@@ -137,6 +152,23 @@ void DesktopController::openSignaling(Role role, const QUrl& url, const QString&
         home_.showFailure(role == Role::Viewer ? QStringLiteral("请填写有效的信令地址和邀请码。")
                                                : QStringLiteral("请填写有效的信令地址和部署访问密钥。"));
         return;
+    }
+    if (role == Role::Host) {
+        if (!isCodeLifetime(options.minutes)) {
+            home_.showFailure(QStringLiteral("请选择有效的邀请码期限。"));
+            return;
+        }
+        if (options.autoApprove) {
+            invitationSecret_ = deviceRandom();
+            if (invitationSecret_.isEmpty()) {
+                home_.showFailure(QStringLiteral("无法生成安全的邀请码，请重试。"));
+                return;
+            }
+        }
+        invitationOptions_ = options;
+        highRefresh_ = highRefresh;
+        relayOnly_ = relayOnly;
+        withAudio_ = withAudio;
     }
     ++generation_;
     role_ = role;
@@ -161,10 +193,17 @@ void DesktopController::openSignaling(Role role, const QUrl& url, const QString&
             if (phase_ != Phase::Connecting)
                 return;
             phase_ = Phase::Joining;
-            const bool sent = role_ == Role::Host
-                                  ? sendSignal({{"type", "host"}, {"key", credential}})
-                                  : sendSignal({{"type", "join"}, {"invite", credential.trimmed()}});
-            if (!sent)
+            QJsonObject request;
+            if (role_ == Role::Host) {
+                request = {{"type", "host"}, {"key", credential}};
+                if (invitationOptions_.autoApprove || invitationOptions_.minutes != codeLifetimeMinutes.front())
+                    request.insert("inviteTtlMinutes", invitationOptions_.minutes);
+                if (invitationOptions_.autoApprove)
+                    request.insert("inviteVerifier", invitationVerifier(invitationSecret_));
+            } else {
+                request = {{"type", "join"}, {"invite", credential.trimmed()}};
+            }
+            if (!sendSignal(request))
                 finish(QStringLiteral("无法发送连接请求。"), true, false);
         },
         Qt::SingleShotConnection);
@@ -184,6 +223,62 @@ void DesktopController::openSignaling(Role role, const QUrl& url, const QString&
     deadline_.start(15000);
     socket_->open(url);
 }
+void DesktopController::invitationIssued(const QJsonObject& message) {
+    const auto minutes = invitationOptions_.minutes;
+    const bool automatic = invitationOptions_.autoApprove;
+    const bool custom = automatic || minutes != codeLifetimeMinutes.front();
+    if ((custom || message.contains("inviteTtlMinutes")) && message.value("inviteTtlMinutes") != minutes) {
+        finish(QStringLiteral("信令服务未确认所选期限。请升级服务，或使用 5 分钟且需本机确认的邀请码。"), true);
+        return;
+    }
+    QString code;
+    if (automatic) {
+        if (invitationSecret_.size() != 32 || message.value("inviteVerifier") != invitationVerifier(invitationSecret_) ||
+            message.contains("invite")) {
+            finish(QStringLiteral("信令服务未确认本次免确认邀请。请升级服务后重试。"), true);
+            return;
+        }
+        code = encodeDeviceBytes(invitationSecret_);
+    } else {
+        code = message.value("invite").toString();
+        if (code.isEmpty() || code.size() > 256 || message.contains("inviteVerifier")) {
+            finish(QStringLiteral("信令服务未返回有效的邀请码。"), true);
+            return;
+        }
+    }
+    phase_ = Phase::Inviting;
+    invitationAge_.start();
+    deadline_.start(minutes * 60000);
+    home_.setHostInvitation(code, minutes, automatic);
+    home_.setStatus(automatic ? QStringLiteral("邀请码已就绪。首位持码者可在有效期内直接控制本机。")
+                              : QStringLiteral("请将一次性邀请码发给对方，等待连接请求。"));
+}
+
+void DesktopController::invitationRedeemed(const QJsonObject& message) {
+    if (!invitationAge_.isValid() || invitationAge_.elapsed() >= invitationOptions_.minutes * 60000) {
+        finish(QStringLiteral("本次邀请码已过期，请重新创建。"), true);
+        return;
+    }
+    invitationAge_.invalidate();
+    phase_ = Phase::PendingApproval;
+    if (!invitationOptions_.autoApprove) {
+        home_.setHostPending(generation_);
+        home_.setStatus(QStringLiteral("对方请求控制本机。请确认是否允许共享。"));
+        deadline_.start(60000);
+        return;
+    }
+    const auto proof = decodeDeviceBytes(message.value("inviteProof").toString(), 32);
+    const bool verified = equalDeviceSecrets(proof, invitationSecret_);
+    invitationSecret_.fill(0);
+    invitationSecret_.clear();
+    if (!verified) {
+        finish(QStringLiteral("未能验证本次邀请码，请重新创建。"), true);
+        return;
+    }
+    home_.setHostInvitation({}, invitationOptions_.minutes, true);
+    hostApproved(generation_, highRefresh_, relayOnly_, withAudio_);
+}
+
 bool DesktopController::reserveDeviceSession(bool host, bool relayOnly, const DevicePreferences& preferences) {
     if (phase_ != Phase::Idle)
         return false;
@@ -220,20 +315,9 @@ void DesktopController::received(const QJsonObject& m) {
         finish(peerMessage(m.value(type == "error" ? "message" : "reason").toString()), type == "error",
                false);
     } else if (type == "invitation" && role_ == Role::Host && phase_ == Phase::Joining) {
-        const QString invite = m.value("invite").toString();
-        if (invite.isEmpty() || invite.size() > 256) {
-            finish(QStringLiteral("信令服务未返回有效的邀请码。"), true);
-            return;
-        }
-        phase_ = Phase::Inviting;
-        home_.setHostInvitation(invite);
-        home_.setStatus(QStringLiteral("请将一次性邀请码发给对方，等待连接请求。"));
-        deadline_.start(310000);
+        invitationIssued(m);
     } else if (type == "request" && role_ == Role::Host && phase_ == Phase::Inviting) {
-        phase_ = Phase::PendingApproval;
-        home_.setHostPending(generation_);
-        home_.setStatus(QStringLiteral("对方请求控制本机。请确认是否允许共享。"));
-        deadline_.start(60000);
+        invitationRedeemed(m);
     } else if (type == "waiting" && role_ == Role::Viewer && phase_ == Phase::Joining) {
         phase_ = Phase::Waiting;
         home_.setStatus(QStringLiteral("已发送请求，等待对方同意共享…"));
@@ -475,6 +559,10 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
     if (phase_ == Phase::Idle)
         return;
     phase_ = Phase::Idle;
+    invitationAge_.invalidate();
+    invitationOptions_ = {};
+    invitationSecret_.fill(0);
+    invitationSecret_.clear();
     ++generation_;
     deadline_.stop();
     sampler_.stop();

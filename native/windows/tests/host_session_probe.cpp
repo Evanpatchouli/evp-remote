@@ -5,12 +5,14 @@
 #include "ui/home_window.h"
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <windows.h>
 #include <webrtc_c/api/video/adapted_video_track_source.h>
@@ -121,7 +123,9 @@ int runHostProbe(int argc, char** argv) {
     const QString key = qEnvironmentVariable("EVP_PROBE_KEY");
     const auto device = qEnvironmentVariable("EVP_PROBE_DEVICE_STAGE");
     const bool expires = device == "expired-pair";
-    const bool pairing = device == "pair" || device == "deny-pair" || device == "wrong-pair" || expires;
+    const bool autoPair = device == "auto-pair";
+    const bool changedCode = device == "changed-code";
+    const bool pairing = device == "pair" || autoPair || changedCode || device == "deny-pair" || device == "wrong-pair" || expires;
     const auto viewerDone = qEnvironmentVariable("EVP_PROBE_VIEWER_DONE");
     const bool revoke = device == "revoke";
     const bool disabled = device == "disabled";
@@ -133,7 +137,11 @@ int runHostProbe(int argc, char** argv) {
     bool desktopAvailable = !locked;
     if (url.host() != "127.0.0.1" || ((pairing || device.isEmpty()) && key.isEmpty()))
         return 2;
-    const bool deny = qEnvironmentVariable("EVP_PROBE_CASE") == "deny";
+    const auto invitationCase = qEnvironmentVariable("EVP_PROBE_CASE");
+    const bool deny = invitationCase == "deny";
+    const bool legacyBroker = invitationCase == "auto-invite-legacy";
+    const bool invalidProof = invitationCase == "auto-invite-invalid-proof";
+    const bool autoInvite = invitationCase == "auto-invite" || legacyBroker || invalidProof;
     const bool withAudio = qEnvironmentVariable("EVP_PROBE_CASE") != "video-only";
     const bool delayedRelease = revoke || qEnvironmentVariable("EVP_PROBE_CASE") == "release-retry";
     const bool relay = qEnvironmentVariable("EVP_PROBE_ROUTE") == "relay";
@@ -192,6 +200,8 @@ int runHostProbe(int argc, char** argv) {
         auto* audio = home.findChild<QCheckBox*>("deviceShareAudio");
         auto* refresh = home.findChild<QCheckBox*>("deviceHighRefresh");
         auto* relayOnly = home.findChild<QCheckBox*>("deviceRelayOnly");
+        auto* lifetime = home.findChild<QComboBox*>("pairingLifetime");
+        auto* preapproved = home.findChild<QCheckBox*>("autoAcceptPairing");
         ui.configure(key);
         if (ui.id().isEmpty())
             return 5;
@@ -204,7 +214,8 @@ int runHostProbe(int argc, char** argv) {
             return passed ? 0 : 1;
         }
 
-        if (pairing && (inbound->isChecked() || !ui.peer().isEmpty()))
+        if (pairing && (inbound->isChecked() || !ui.peer().isEmpty() || !lifetime || !preapproved ||
+                        lifetime->currentData().toInt() != 5 || preapproved->isChecked()))
             return 5;
         if (!pairing && (ui.peer().isEmpty() != forgotten || inbound->isChecked() == disabled))
             return 5;
@@ -237,11 +248,22 @@ int runHostProbe(int argc, char** argv) {
             if (!started) {
                 started = true;
                 if (pairing) {
+                    if (autoPair || changedCode || device == "wrong-pair") {
+                        lifetime->setCurrentIndex(lifetime->findData(720));
+                        preapproved->setChecked(true);
+                    }
                     button("generatePairingCode")->click();
                     const auto code = ui.field("localPairingCode")->text();
                     if (code.isEmpty()) {
                         app.exit(5);
                         return;
+                    }
+                    if (changedCode) {
+                        lifetime->setCurrentIndex(lifetime->findData(15));
+                        if (!ui.field("localPairingCode")->text().isEmpty()) {
+                            app.exit(5);
+                            return;
+                        }
                     }
                     print({{"pairingCode", code}});
                 } else {
@@ -250,7 +272,7 @@ int runHostProbe(int argc, char** argv) {
                     print({{"registered", true}, {"id", ui.id()}});
                 }
             }
-            if (device == "wrong-pair" || expires) {
+            if (device == "wrong-pair" || changedCode || expires) {
                 if (button("approveDevicePairing")->isVisible()) {
                     app.exit(5);
                 } else if (expires && !expired && ui.field("localPairingCode")->text().isEmpty()) {
@@ -264,16 +286,17 @@ int runHostProbe(int argc, char** argv) {
             }
             if (pairing) {
                 if (button("approveDevicePairing")->isVisible()) {
-                    if (decided) {
+                    if (decided || autoPair) {
                         app.exit(5);
                         return;
                     }
                     decided = true;
                     button(device == "pair" ? "approveDevicePairing" : "denyDevicePairing")->click();
                 }
-                if (!decided || button("cancelDeviceAttempt")->isVisible() || !QFileInfo::exists(viewerDone))
+                if ((!decided && !autoPair) || button("cancelDeviceAttempt")->isVisible() || !QFileInfo::exists(viewerDone))
                     return;
-                const bool passed = (device == "pair") == !ui.peer().isEmpty();
+                const bool passed = ((device == "pair" || autoPair) == !ui.peer().isEmpty()) &&
+                                    !inbound->isChecked() && !preapproved->isChecked();
                 if (device == "pair")
                     inbound->setChecked(true);
                 print({{"passed", passed}, {"id", ui.id()}, {"peer", ui.peer()}});
@@ -343,21 +366,39 @@ int runHostProbe(int argc, char** argv) {
     }
     if (!preview.isEmpty())
         home.grab().save(QDir(preview).filePath("unified-home.png"));
-    button("hostNavigation")->click();
+    auto* tabs = home.findChild<QTabBar*>("assistanceTabs");
+    auto* invitationLifetime = home.findChild<QComboBox*>("invitationLifetime");
+    auto* invitationApproval = home.findChild<QCheckBox*>("autoAcceptInvitation");
+    if (!tabs || !invitationLifetime || !invitationApproval || tabs->count() != 2 ||
+        invitationLifetime->currentData().toInt() != 5 || invitationApproval->isChecked())
+        return 5;
+    tabs->setCurrentIndex(1);
+    if (autoInvite) {
+        invitationLifetime->setCurrentIndex(invitationLifetime->findData(720));
+        invitationApproval->setChecked(true);
+        home.findChild<QCheckBox*>("hostHighRefresh")->setChecked(true);
+    } else if (deny) {
+        invitationLifetime->setCurrentIndex(invitationLifetime->findData(15));
+    }
     if (!preview.isEmpty())
         home.grab().save(QDir(preview).filePath("unified-share.png"));
     home.findChild<QLineEdit*>("hostKey")->setText(key);
     auto* invite = home.findChild<QLineEdit*>("hostInvitation");
+    bool quietAtIssue = false;
+    bool inviteEmitted = false;
     QObject::connect(invite, &QLineEdit::textChanged, &app, [&](const QString& v) {
-        if (!v.isEmpty())
+        if (!v.isEmpty()) {
+            inviteEmitted = true;
+            quietAtIssue = !seen.starts && !seen.audioStarts && !seen.armingChecks;
             print({{"invite", v}});
+        }
     });
     bool granted = false;
     QTimer watch;
     watch.setInterval(30);
     QObject::connect(&watch, &QTimer::timeout, &app, [&] {
         if (!granted && button("hostApprove")->isVisible() && button("hostApprove")->isEnabled()) {
-            if (seen.starts || seen.audioStarts || seen.armingChecks || seen.receivedInput()) {
+            if (autoInvite || seen.starts || seen.audioStarts || seen.armingChecks || seen.receivedInput()) {
                 app.exit(5);
                 return;
             }
@@ -381,25 +422,49 @@ int runHostProbe(int argc, char** argv) {
             home.findChild<QCheckBox*>("hostHighRefresh")->setChecked(true);
             button("hostApprove")->click();
         }
-        if (seen.receivedInput() && (!delayedRelease || seen.heldDown))
-            button("hostEnd")->click();
+        if (seen.receivedInput() && (!delayedRelease || seen.heldDown)) {
+            if (autoInvite) {
+                for (auto* widget : QApplication::topLevelWidgets()) {
+                    if (widget->objectName() == "trustedShareStop" && widget->isVisible()) {
+                        static_cast<QPushButton*>(widget)->click();
+                        return;
+                    }
+                }
+                app.exit(5);
+            } else {
+                button("hostEnd")->click();
+            }
+        }
     });
     QObject::connect(&controller, &evp::DesktopController::sessionFinished, &app, [&](const QString& state) {
         watch.stop();
-        const bool passed = deny ? (granted && !seen.starts && !seen.audioStarts && !seen.armingChecks)
-                                 : (granted && seen.starts == 1 && seen.audioStarts == int(withAudio) &&
-                                    seen.stops == 1 && seen.receivedInput() && seen.requested144);
+        if (legacyBroker || invalidProof) {
+            const bool expected = legacyBroker ? state.contains(QStringLiteral("升级服务"))
+                                              : state.contains(QStringLiteral("验证本次邀请码"));
+            const bool mediaStarted = seen.starts || seen.audioStarts;
+            const bool inputGranted = seen.armingChecks || seen.receivedInput();
+            const bool passed = expected && inviteEmitted == invalidProof && !granted && !mediaStarted && !inputGranted;
+            print({{"inviteOptionsReport", QJsonObject{{"case", invitationCase},
+                   {"outcome", legacyBroker ? "upgrade-required" : "invalid-proof"}, {"inviteEmitted", inviteEmitted},
+                   {"mediaStarted", mediaStarted}, {"inputGranted", inputGranted}}}});
+            app.exit(passed ? 0 : 1);
+            return;
+        }
+        const bool passed = quietAtIssue && (deny ? (granted && !seen.starts && !seen.audioStarts && !seen.armingChecks)
+                                : ((autoInvite ? !granted : granted) && seen.starts == 1 && seen.audioStarts == int(withAudio) &&
+                                   seen.stops == 1 && seen.receivedInput() && seen.requested144));
         if (!passed)
             std::fprintf(stderr, "%s\n", state.toUtf8().constData());
         QTimer::singleShot(delayedRelease ? 1200 : 0, &app, [&, passed] {
             const bool cleanupOk = !delayedRelease || (seen.heldDown == 1 && seen.heldUp == 1);
             button("navigation")->click();
+            tabs->setCurrentIndex(0);
             const bool canJoin = home.findChild<QLineEdit*>("invitation")->isVisible() &&
                                  button("join")->isEnabled();
-            button("hostNavigation")->click();
+            tabs->setCurrentIndex(1);
             const bool canSwitch = canJoin && button("hostCreate")->isVisible() &&
                                    home.findChild<QLineEdit*>("hostKey")->text().isEmpty() &&
-                                   invite->text().isEmpty();
+                                   invite->text().isEmpty() && !invitationApproval->isChecked();
             print({{"passed", passed && cleanupOk && canSwitch},
                    {"roleSwitch", canSwitch},
                    {"denied", deny},
