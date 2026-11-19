@@ -9,13 +9,17 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QFormLayout>
+#include <QFocusEvent>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLineEdit>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QStyleOptionTab>
 #include <QSysInfo>
 #include <QTabBar>
 #include <QVBoxLayout>
@@ -70,7 +74,6 @@ constexpr auto homeStyle = R"(
     QTabBar#assistanceTabs::tab:selected {
         background: #e4eeff; color: #174ca8; border-bottom-color: #2865d5;
     }
-    QTabBar#assistanceTabs::tab:selected:focus { border-color: #2865d5; }
     QTabBar#assistanceTabs::tab:disabled { background: transparent; color: #78869c; }
     QPushButton#paste, QPushButton#cancel, QPushButton#copyHostInvitation, QPushButton#hostDeny {
         background: #f8faff; color: #284675; border: 1px solid #ccd9ec;
@@ -96,6 +99,46 @@ constexpr auto homeStyle = R"(
     QPushButton#hostEnd:pressed { background: #61191d; }
     QPushButton#hostEnd:focus { border-color: #f3aab0; }
 )";
+
+class AssistanceTabs final : public QTabBar {
+protected:
+    void initStyleOption(QStyleOptionTab* option, int index) const override {
+        QTabBar::initStyleOption(option, index);
+        option->state.setFlag(QStyle::State_HasFocus, false);
+    }
+    void focusInEvent(QFocusEvent* event) override {
+        if (event->reason() == Qt::TabFocusReason || event->reason() == Qt::BacktabFocusReason ||
+            event->reason() == Qt::ShortcutFocusReason)
+            keyboardFocus_ = true;
+        else if (event->reason() == Qt::MouseFocusReason)
+            keyboardFocus_ = false;
+        QTabBar::focusInEvent(event);
+        update();
+    }
+    void mousePressEvent(QMouseEvent* event) override {
+        keyboardFocus_ = false;
+        QTabBar::mousePressEvent(event);
+        update();
+    }
+    void keyPressEvent(QKeyEvent* event) override {
+        keyboardFocus_ = true;
+        QTabBar::keyPressEvent(event);
+        update();
+    }
+    void paintEvent(QPaintEvent* event) override {
+        QTabBar::paintEvent(event);
+        if (!hasFocus() || !keyboardFocus_ || currentIndex() < 0)
+            return;
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor("#2865d5"), 1.5));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(QRectF(tabRect(currentIndex())).adjusted(1, 1, -5, -2), 5, 5);
+    }
+
+private:
+    bool keyboardFocus_ = false;
+};
 
 QPushButton* roleButton(const QString& text, const char* name, Symbol symbol) {
     auto* button = new QPushButton(text);
@@ -202,7 +245,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     headerLayout->setContentsMargins(35, 24, 35, 0);
     headerLayout->setSpacing(12);
     headerLayout->addWidget(label(QStringLiteral("远程协助"), "title", 29, QFont::DemiBold));
-    assistanceTabs_ = new QTabBar;
+    assistanceTabs_ = new AssistanceTabs;
     assistanceTabs_->setObjectName(QStringLiteral("assistanceTabs"));
     assistanceTabs_->setAccessibleName(QStringLiteral("远程协助"));
     assistanceTabs_->setFont(uiFont(14, QFont::DemiBold));

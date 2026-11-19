@@ -50,6 +50,7 @@ private slots:
     void bindsProofToPeerAttemptNonceAndPayload();
     void pausesOnUnwritableSettingsAcrossRestarts();
     void assistanceTabsAndScrollableDeviceList();
+    void cleanTabFocus();
     void themedLifetimeSelectors_data();
     void themedLifetimeSelectors();
     void floatingStopControl();
@@ -231,6 +232,39 @@ void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     QVERIFY(!connectButton->isEnabled());
     navigation->click();
     QCOMPARE(tabs->currentIndex(), 1);
+}
+
+void DeviceSecurityProbe::cleanTabFocus() {
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    QApplication::setActiveWindow(&window);
+    auto* tabs = window.findChild<QTabBar*>("assistanceTabs");
+    auto* navigation = window.findChild<QPushButton*>("navigation");
+    QVERIFY(tabs && navigation);
+    tabs->setFocus(Qt::MouseFocusReason);
+    QTest::mouseClick(tabs, Qt::LeftButton, Qt::NoModifier, tabs->tabRect(0).center());
+    QCOMPARE(tabs->currentIndex(), 0);
+    QVERIFY(tabs->hasFocus());
+    const QImage clicked = tabs->grab().toImage();
+    navigation->setFocus(Qt::OtherFocusReason);
+    QVERIFY(!tabs->hasFocus());
+    const QImage unfocused = tabs->grab().toImage();
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty())
+        QVERIFY(clicked.save(QDir(preview).filePath("clicked-tabs.png")));
+    QVERIFY2(clicked == unfocused, "A mouse click drew an extra focus rectangle on the selected tab.");
+    QTest::keyClick(navigation, Qt::Key_Tab);
+    QVERIFY(tabs->hasFocus());
+    const QImage keyboard = tabs->grab().toImage();
+    QVERIFY2(keyboard != unfocused, "Keyboard navigation needs a visible focus indicator.");
+    if (!preview.isEmpty())
+        QVERIFY(keyboard.save(QDir(preview).filePath("keyboard-tabs.png")));
+    QTest::keyClick(tabs, Qt::Key_Right);
+    QCOMPARE(tabs->currentIndex(), 1);
+    QTest::mouseClick(tabs, Qt::LeftButton, Qt::NoModifier, tabs->tabRect(0).center());
+    QCOMPARE(tabs->currentIndex(), 0);
+    QVERIFY(tabs->grab().toImage() == clicked);
 }
 
 void DeviceSecurityProbe::themedLifetimeSelectors_data() {
