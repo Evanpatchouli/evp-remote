@@ -12,6 +12,8 @@ Each row comes from the same `npm run test:session -- all` run. Route assertions
 
 The unit and integration suite passed 25 tests for pairing, admission limits, expiry, approval, failure reporting, ICE state, audio-track muting, codec preference, input mapping, and local adapter lifecycle. The extracted Windows ZIP independently served its browser assets and compiled and armed the real x64 Windows input helper. The native readiness probe sent a heartbeat and closed the helper without sending desktop input.
 
-## Outstanding field acceptance
+## Two-PC feasibility result
 
-Two separately connected Windows computers with a public signaling/TURN deployment still need to exercise the real display picker, Windows system sound, physical display and speakers, and typing into an ordinary host application. This local run provides no public NAT success rate, WAN latency, or 1080p60 performance measurement. Run the [field test](../runbooks/windows-session.md) and record the actual routes and results.
+On 2026-11-19 the operator reported a successful session between the two Windows PCs and accepted the current version as a proof of feasibility. The successful retry followed the addition of Cloudflare STUN alongside the deployment's own STUN server. In a separate browser probe, that combination produced a server-reflexive ICE candidate in 1.86 seconds.
+
+The operator did not report the selected ICE pair for the successful session. Field qualification of individual routes, including forced TURN and automatic fallback, and WAN performance measurements remain separate [field tests](../runbooks/windows-session.md).

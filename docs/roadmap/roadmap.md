@@ -7,4 +7,4 @@
 
 Mark cross-network field acceptance complete only after retaining results from two authorized Windows machines and the public test infrastructure.
 
-The [first Windows build](../../README.md) has passed local browser-to-browser direct and relay qualification. The [validation record](../evidence/windows-v1-validation.md) lists the remaining physical and cross-network checks.
+On 2026-11-19 the operator accepted the [first Windows build](../../README.md) as a proof of feasibility after a successful two-PC session. The [validation record](../evidence/windows-v1-validation.md) distinguishes this milestone from route-specific and performance qualification.

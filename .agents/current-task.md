@@ -9,7 +9,7 @@ Deliver the first attended Windows session on independently connected peers.
 | Signaling, browser peer, Windows input | Execute / S1 after brief | Separate file ownership. Verify each independently and commit locally |
 | Integration and qualification | Verify / S0 and independent Review | Exercise pairing, tracks, input, route classification, consent and teardown. Distinguish local evidence from two-PC field results |
 
-Implementation, independent review fixes, portable packaging, and local validation are complete. The outstanding unit is the real two-PC field test. See [handoff](handoff.md).
+Implementation, review fixes, packaging, and local validation are complete. The operator accepted the successful two-PC session as the feasibility milestone on 2026-11-19. See the [field result](../docs/evidence/windows-v1-validation.md#two-pc-feasibility-result).
 
 ## Registry distribution
 
