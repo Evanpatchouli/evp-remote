@@ -7,5 +7,6 @@
 | How should the independent implementation differ? | [Transport decision](../decisions/0001-attended-webrtc.md) | consent, direct, fallback |
 | What remains to be measured? | [Reconstruction plan](../exec-plans/gameviewer-reconstruction.md), [roadmap](../roadmap/roadmap.md) | input-to-display, first frame, independent networks |
 | How do I verify an artifact? | [Evidence runbook](../runbooks/evidence.md) | SHA-256, file offset, RVA, evidence ID |
+| Where does the first version run? | [Windows session runbook](../runbooks/windows-session.md), [project quick start](../../README.md) | `server/signaling.mjs`, `desktop/main.mjs`, `web/peer.mjs`, `tools/session-smoke.mjs` |
 
 Build a Context Pack with the objective, relevant paths and versions, confirmed observations, uncertainties, and required checks. Reuse an existing pack when its sample and version still match.

@@ -12,4 +12,4 @@ Start with the entry matching the question. All reports and implementation guida
 | [Knowledge](knowledge/README.md) | Lessons that generalize beyond a single task |
 | [Execution plans](exec-plans/README.md) | Multi-stage plans and dependencies |
 | [Roadmap](roadmap/roadmap.md) | Release order and outstanding field validation |
-| [Evidence](evidence/gameviewer-evidence.zip) | Original sample manifest and five REA records |
+| [Evidence](evidence/README.md) | English inventory, original sample manifest, and five REA records |
