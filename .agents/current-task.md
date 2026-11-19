@@ -4,6 +4,8 @@
 
 The stack, two-window Chinese UX and acceptance boundary are recorded in [ADR 0002](../docs/decisions/0002-native-windows-client.md). Independently verify the native SDK/toolchain, implement the Qt shell and video presentation, integrate the existing WebRTC invitation and input protocol, then build and test a real executable. Preserve the browser endpoint for interoperability and field comparison.
 
+The native viewer and ffprobe tool are implemented. The portable preview passed browser-host interoperability; direct and forced-relay routes were measured locally. See [validation](../docs/evidence/native-windows-preview.md). Remaining field work includes physical 144 Hz cadence, audible playout and input-to-display latency. WinUI 3 remains an alternative subject to visible performance parity.
+
 Deliver the first attended Windows session on independently connected peers.
 
 | Unit | Mode / grade | Ownership and acceptance |

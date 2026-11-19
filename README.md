@@ -2,6 +2,10 @@
 
 An attended remote desktop for two Windows computers on different Internet connections. The host shares its screen and system sound and authorizes one viewer to use the mouse and keyboard. The browser negotiates direct WebRTC connectivity and can select a TURN relay when a direct route is unavailable.
 
+## Native Windows viewer
+
+Extract `evp-remote-native-windows-x64-preview.zip` and open **EvpRemote.exe**. The Chinese home window accepts a signaling URL and invitation; after host approval, a separate native window displays H.264 video and forwards authorized input. Use the browser host below on the controlled machine. See the [native build and runbook](docs/runbooks/native-windows.md) and [validation results](docs/evidence/native-windows-preview.md).
+
 ## Run the Windows endpoints
 
 **Portable endpoint.** Extract the Windows x64 ZIP on each PC, open `Start-EVP-Remote.cmd`, and enter the deployment's public `wss://` URL. Keep the launcher open during the session. The archive includes the Node runtime and dependencies. Build it from a Windows checkout with `npm ci` and `pwsh -File tools/package-windows.ps1`. Both the portable and source variants use the local browser and the built-in Windows .NET Framework x64 compiler.
@@ -16,8 +20,8 @@ npm run desktop
 
 Replace the example URL with your own reachable signaling server. With the 0.1.1 deployment kit, `sh configure.sh PUBLIC_IPV4` sets up a domain-free server. Enter `wss://PUBLIC_IPV4/` in both launchers, using the actual address. If necessary, configure Edge or Chrome as the default browser or open the private launch URL in one of them. The launcher serves the UI on its own loopback address on each computer.
 
-1. On the host, enter your deployment's host access key and select **Create invitation**. Send the single-use invitation to the intended viewer.
-2. On the viewer, enter it and choose **Ask to join**. On the host, select **Accept and share**, choose the entire primary display, and enable **Share system audio** in the browser picker.
+1. On the host, enter your deployment's host access key and select **创建邀请码** (Create invitation). Send the single-use invitation to the intended viewer.
+2. On the viewer, enter it and choose **请求连接** (Ask to join). On the host, select **接受并共享** (Accept and share), choose the entire primary display, and enable system audio in the browser picker.
 3. On the viewer, enable sound if prompted and click inside the video to send input. Check **ICE route** for the selected candidate types. End the session from either endpoint or stop capture from the host browser.
 
 The [single-server deployment recipe](docs/runbooks/windows-session.md#quick-start-on-one-public-linux-server) uses a versioned GHCR signaling image with its matching Compose setup, coturn, and automatic WSS certificates. The same runbook covers the [two-PC field test](docs/runbooks/windows-session.md#two-pc-field-test). Use the [documentation map](docs/README.md) to find the reference analysis and longer-term reconstruction plan.
