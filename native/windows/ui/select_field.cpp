@@ -3,7 +3,9 @@
 #include "visual_style.h"
 #include "code_options.h"
 
+#include <QApplication>
 #include <QListView>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QStyleOptionComboBox>
 #include <QStyledItemDelegate>
@@ -97,7 +99,13 @@ void SelectField::showPopup() {
     auto* popup = view()->window();
     clearWindowDecoration(*popup);
     view()->setCurrentIndex(model()->index(currentIndex(), modelColumn(), rootModelIndex()));
-    QComboBox::showPopup();
+    if (QApplication::isEffectEnabled(Qt::UI_AnimateCombo)) {
+        QApplication::setEffectEnabled(Qt::UI_AnimateCombo, false);
+        const auto restore = qScopeGuard([] { QApplication::setEffectEnabled(Qt::UI_AnimateCombo, true); });
+        QComboBox::showPopup();
+    } else {
+        QComboBox::showPopup();
+    }
     if (!popup->isVisible())
         return;
     const auto margins = popup->contentsMargins();

@@ -6,9 +6,12 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QMouseEvent>
+#include <QScopeGuard>
 #include <QPainter>
 #include <QSettings>
 #include <QSignalSpy>
@@ -18,6 +21,7 @@
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QVBoxLayout>
 #include <Windows.h>
 
 namespace {
@@ -49,6 +53,7 @@ private slots:
     void themedLifetimeSelectors_data();
     void themedLifetimeSelectors();
     void floatingStopControl();
+    void onscreenPopupOpening();
 };
 
 void DeviceSecurityProbe::bindsProofToPeerAttemptNonceAndPayload() {
@@ -367,6 +372,89 @@ void DeviceSecurityProbe::floatingStopControl() {
     QCOMPARE(stopped.count(), 1);
     QVERIFY(window.setHostBusy(false));
     QVERIFY(!panel->isVisible());
+}
+
+void DeviceSecurityProbe::onscreenPopupOpening() {
+    if (qEnvironmentVariableIsEmpty("EVP_PROBE_ONSCREEN_POPUP"))
+        QSKIP("Set EVP_PROBE_ONSCREEN_POPUP=1 to exercise the Windows desktop compositor.");
+    auto* screen = QGuiApplication::primaryScreen();
+    QVERIFY(screen);
+    QWidget fixture(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+    fixture.setAttribute(Qt::WA_ShowWithoutActivating);
+    fixture.setFixedSize(400, 380);
+    fixture.setAutoFillBackground(true);
+    const QColor background("#e3ecf7");
+    auto colors = fixture.palette();
+    colors.setColor(QPalette::Window, background);
+    fixture.setPalette(colors);
+    auto* layout = new QVBoxLayout(&fixture);
+    layout->setContentsMargins(80, 24, 80, 24);
+    auto* label = new QLabel(QStringLiteral("邀请码有效期"));
+    layout->addWidget(label);
+    auto* field = native_ui::codeLifetimeSelector(label, "probeLifetime");
+    layout->addWidget(field);
+    layout->addStretch();
+    auto* popup = field->view()->window();
+    const auto area = screen->availableGeometry();
+    fixture.move(area.left() + (area.width() - fixture.width()) / 2,
+                 area.top() + (area.height() - fixture.height()) / 2);
+    fixture.show();
+    QTest::qWait(150);
+    const bool general = QApplication::isEffectEnabled(Qt::UI_General);
+    const bool animated = QApplication::isEffectEnabled(Qt::UI_AnimateCombo);
+    const auto restore = qScopeGuard([general, animated] {
+        QApplication::setEffectEnabled(Qt::UI_AnimateCombo, animated);
+        QApplication::setEffectEnabled(Qt::UI_General, general);
+    });
+    QApplication::setEffectEnabled(Qt::UI_General, true);
+    QApplication::setEffectEnabled(Qt::UI_AnimateCombo, true);
+    const auto origin = fixture.mapToGlobal(QPoint{}) - screen->geometry().topLeft();
+    const auto grab = [&] { return screen->grabWindow(0, origin.x(), origin.y(), fixture.width(), fixture.height()); };
+    const auto baseline = grab();
+    QVERIFY(!baseline.isNull());
+    const auto ratio = baseline.devicePixelRatio();
+    const auto sample = [&](const QImage& image, QPoint point) {
+        return image.pixelColor(qRound(point.x() * ratio), qRound(point.y() * ratio));
+    };
+    QVERIFY(qAbs(sample(baseline.toImage(), QPoint(5, 5)).red() - background.red()) < 8);
+    QTest::mouseClick(field, Qt::LeftButton);
+    QElapsedTimer opening;
+    opening.start();
+    bool extraWindow = false, capturedDarkFrame = false;
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    do {
+        QCoreApplication::processEvents();
+        for (auto* top : QApplication::topLevelWidgets()) {
+            if (top != &fixture && top != popup && top->isVisible())
+                extraWindow = true;
+        }
+        const auto frame = grab();
+        const auto image = frame.toImage();
+        const QPoint surface = fixture.mapFromGlobal(popup->mapToGlobal(QPoint{}));
+        const auto size = popup->size();
+        const auto left = sample(image, surface + QPoint(3, size.height() / 2));
+        const auto right = sample(image, surface + QPoint(size.width() - 4, size.height() / 2));
+        const auto bottom = sample(image, surface + QPoint(size.width() / 2, size.height() - 4));
+        const auto shadow = [](const QColor& color) { return qMax(color.red(), qMax(color.green(), color.blue())) < 135; };
+        if (shadow(left) || shadow(right) || shadow(bottom)) {
+            if (!capturedDarkFrame && !preview.isEmpty())
+                frame.save(QDir(preview).filePath("opening-dark-frame.png"));
+            capturedDarkFrame = true;
+        }
+        QTest::qWait(8);
+    } while (opening.elapsed() < 230);
+    const auto settled = grab();
+    const auto bodyPoint = fixture.mapFromGlobal(popup->mapToGlobal(QPoint(popup->width() - 25, popup->height() / 2)));
+    const auto body = sample(settled.toImage(), bodyPoint);
+    if (!preview.isEmpty())
+        QVERIFY(settled.save(QDir(preview).filePath("opening-settled.png")));
+    QVERIFY(popup->isVisible());
+    QVERIFY(QApplication::isEffectEnabled(Qt::UI_AnimateCombo));
+    field->hidePopup();
+    fixture.hide();
+    QVERIFY(body.red() > 245 && body.green() > 245);
+    QVERIFY2(!capturedDarkFrame, "The desktop compositor rendered a dark popup gutter.");
+    QVERIFY2(!extraWindow, "An extra top-level animation window appeared while the dropdown opened.");
 }
 
 }
