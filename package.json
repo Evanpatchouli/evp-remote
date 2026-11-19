@@ -1,0 +1,21 @@
+{
+  "name": "evp-remote",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "signal": "node server/main.mjs",
+    "desktop": "node desktop/main.mjs",
+    "test": "node --test \"test/*.mjs\"",
+    "test:session": "node tools/session-smoke.mjs"
+  },
+  "dependencies": {
+    "ws": "8.23.0"
+  },
+  "devDependencies": {
+    "playwright-core": "1.65.1"
+  }
+}
