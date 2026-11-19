@@ -20,12 +20,13 @@ async function main() {
 
   const native = windowsInput()
   const desktop = await startDesktop({ createInput: native.open, port, signalUrl: process.env.EVP_SIGNAL_URL })
-  async function shutdown() {
-    await desktop.close()
-    await native.dispose()
+  let shutdown
+  function stop() {
+    shutdown ??= desktop.close().then(() => native.dispose())
+    return shutdown
   }
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGBREAK']) {
-    process.once(signal, () => shutdown().catch((error) => {
+    process.once(signal, () => stop().catch((error) => {
       console.error(error.message)
       process.exitCode = 1
     }))

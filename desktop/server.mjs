@@ -24,6 +24,9 @@ export async function startDesktop({
   if (!['ws:', 'wss:'].includes(signal.protocol) || signal.username || signal.password || signal.hash) {
     throw new Error('EVP_SIGNAL_URL must be a ws: or wss: URL without credentials or a fragment.')
   }
+  if (signal.protocol === 'ws:' && !['127.0.0.1', '[::1]', 'localhost'].includes(signal.hostname)) {
+    throw new Error('EVP_SIGNAL_URL must use wss: outside loopback.')
+  }
 
   const token = randomBytes(32).toString('base64url')
   const expectedToken = Buffer.from(token)

@@ -94,6 +94,18 @@ test('the loopback desktop serves web assets and checks Host and Origin', async 
   await scope.upgradeRejected({ origin: scope.launch.origin }, `ws://${scope.launch.host}/input?token=ignored`)
 })
 
+test('plaintext signaling is limited to loopback addresses', async (t) => {
+  for (const host of ['example.test', '192.168.0.2', 'localhost.example.test']) {
+    await assert.rejects(startDesktop({ signalUrl: `ws://${host}:8787` }), /must use wss: outside loopback/)
+  }
+  for (const host of ['127.0.0.1', '[::1]', 'localhost']) {
+    const signalUrl = `ws://${host}:8787`
+    const scope = await fixture(t, undefined, { signalUrl })
+    const settings = await fetch(new URL('/settings', scope.launch))
+    assert.deepEqual(await settings.json(), { signalUrl })
+  }
+})
+
 test('the desktop starts a single input adapter only after valid authorization', async (t) => {
   const started = deferred()
   const ready = deferred()
