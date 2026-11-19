@@ -24,6 +24,14 @@ The options revision passed all 43 Node tests. Broker tests advanced the clock t
 
 The native pairing fixture accepted one preapproved 12-hour code through the signed handshake with zero media or input starts and incoming control still off. Editing the selected lifetime invalidated the previous code. The UI probe verified both sets of seven choices, keyboard navigation between tabs, and selection and scroll position across a presence refresh in a 24-device list. It also checked that editing the server address clears the host key and that entering a pairing code in Remote Assistance produces local guidance.
 
+## Public signaling deployment
+
+On 2026-11-20 the operator reported that the old `signal` container had exited and the public endpoint returned HTTP 502. The deployment in `/opt/evp-remote` uses Compose project `evp-remote`, with `compose.yaml` followed by `compose.override.yaml`. The operator pinned `signal.image` to the GHCR index `sha256:43a86f68a8a146209329b218463df8059db9428ea46d2982ee30e717e0b13f9c`. The new linux/amd64 image ID was `sha256:d5fe9ab0839319fcc5116a7089cb051fa7609064d15b43ed6968f53764ad8114`. The new container ran for the 89-second observation with zero restarts.
+
+Nginx continued terminating TLS and forwarding to `127.0.0.1:8788` in its shared network namespace. The Nginx and coturn container IDs were preserved and Caddy stayed disabled. From the server through its public domain, the operator verified a WebSocket upgrade and pong, a device registration challenge, and issuance and cancellation of a 15-minute manual invitation.
+
+At 04:28 Beijing time, a separate probe on the Windows workstation connected to `wss://remote.evanpatchouli.space/`, validated the certificate, negotiated TLS 1.3, received HTTP 101 and a matching pong, and closed with code 1000. This checked the signaling path from the workstation. Two-PC media and input acceptance is pending.
+
 ## Field qualification
 
 Two independent physical PCs on the upgraded public WSS deployment are still required to qualify public direct connectivity, automatic TURN fallback with the default ICE policy, real lock and RDP transitions, physical keyboard delivery, audible playback, and high-refresh display performance. The local desktop-loss tests use a recording input adapter and a Windows event delivered to the test window. [Field test](../runbooks/windows-session.md#two-pc-field-test)
