@@ -424,7 +424,7 @@ int runHostProbe(int argc, char** argv) {
         }
         if (seen.receivedInput() && (!delayedRelease || seen.heldDown)) {
             if (autoInvite) {
-                for (auto* widget : QApplication::topLevelWidgets()) {
+                for (auto* widget : QApplication::allWidgets()) {
                     if (widget->objectName() == "trustedShareStop" && widget->isVisible()) {
                         static_cast<QPushButton*>(widget)->click();
                         return;

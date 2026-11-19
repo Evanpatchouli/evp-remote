@@ -1,5 +1,13 @@
 # Current task
 
+## Floating window corners
+
+- **Investigate / S0.** Reproduce the gray corner on both selector popups and inspect the isolated window pixels.
+- **Execute / S1.** Give dropdowns and the floating stop control a transparent host and one rounded surface with room for a soft shadow.
+- **Verify / S0.** Check corner transparency, shadow falloff, mouse and keyboard interaction, scaled rendering, and the versioned Windows build.
+
+The original lower-right popup pixel had alpha 164/255. Both dropdowns and the stop indicator now render transparent outer corners and a fading shadow at 100%, 150% and 200% scale. The local native sessions also passed stopping from the floating control.
+
 ## Windows selectors
 
 - **Execute / S1.** Use a shared themed control and popup for both code lifetimes and label the viewer tab **远程协助**.

@@ -1,6 +1,7 @@
 #include "home_window.h"
 
 #include "device_page.h"
+#include "floating_surface.h"
 #include "select_field.h"
 #include "visual_style.h"
 
@@ -175,16 +176,19 @@ HomeWindow::HomeWindow(QWidget* parent)
     hostEndButton_->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
     hostEndButton_->setIconSize(QSize(17, 17));
     railLayout->addWidget(hostEndButton_);
-    trustedShareStop_.reset(hostButton(QStringLiteral("正在共享本机 · 停止共享"), "trustedShareStop"));
-    trustedShareStop_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint |
-                                      Qt::WindowDoesNotAcceptFocus);
-    trustedShareStop_->setAttribute(Qt::WA_ShowWithoutActivating);
-    trustedShareStop_->setAttribute(Qt::WA_QuitOnClose, false);
-    trustedShareStop_->setStyleSheet(QStringLiteral(
-        "QPushButton { color: white; background: #922f31; border: 0; padding: 0 14px; }"
+    shareIndicator_ = std::make_unique<QWidget>(nullptr, Qt::Tool | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus);
+    shareIndicator_->setAttribute(Qt::WA_ShowWithoutActivating);
+    shareIndicator_->setAttribute(Qt::WA_QuitOnClose, false);
+    auto* indicatorLayout = new QVBoxLayout(shareIndicator_.get());
+    indicatorLayout->setContentsMargins(0, 0, 0, 0);
+    auto* stop = hostButton(QStringLiteral("正在共享本机 · 停止共享"), "trustedShareStop");
+    indicatorLayout->addWidget(stop);
+    stop->setStyleSheet(QStringLiteral(
+        "QPushButton { color: white; background: #922f31; border: 0; border-radius: 8px; padding: 0 14px; }"
         "QPushButton:hover { background: #7c2225; } QPushButton:pressed { background: #61191d; }"));
-    trustedShareStop_->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
-    connect(trustedShareStop_.get(), &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
+    stop->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
+    native_ui::styleFloatingSurface(*shareIndicator_, *stop);
+    connect(stop, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
     railLayout->addSpacing(16);
     auto* role = label(QStringLiteral("Windows"), "subtle", 12);
     role->setContentsMargins(8, 0, 0, 0);
@@ -904,15 +908,17 @@ void HomeWindow::updateForm()
     shareOptions_->setVisible(pending || (!hostBusy_ && autoAcceptInvitation_->isChecked()));
     hostEndButton_->setVisible(hostBusy_);
     if (hostActive_ && (trustedSession_ || issuedAutoApprove_)) {
-        if (!trustedShareStop_->isVisible()) {
-            trustedShareStop_->setAttribute(Qt::WA_DontShowOnScreen, testAttribute(Qt::WA_DontShowOnScreen));
-            trustedShareStop_->adjustSize();
+        if (!shareIndicator_->isVisible()) {
+            shareIndicator_->setAttribute(Qt::WA_DontShowOnScreen, testAttribute(Qt::WA_DontShowOnScreen));
+            shareIndicator_->adjustSize();
             const auto area = screen()->availableGeometry();
-            trustedShareStop_->move(area.right() + 1 - trustedShareStop_->width() - 12, area.top() + 12);
-            trustedShareStop_->show();
+            const auto margins = shareIndicator_->contentsMargins();
+            shareIndicator_->move(area.right() + 1 - shareIndicator_->width() + margins.right() - 12,
+                                  area.top() + 12 - margins.top());
+            shareIndicator_->show();
         }
     } else {
-        trustedShareStop_->hide();
+        shareIndicator_->hide();
     }
     hostEndButton_->setText(hostActive_ ? QStringLiteral("结束共享")
                                       : QStringLiteral("取消共享"));

@@ -1,8 +1,10 @@
 #include "select_field.h"
+#include "floating_surface.h"
 #include "visual_style.h"
 #include "code_options.h"
 
 #include <QListView>
+#include <QScreen>
 #include <QStyleOptionComboBox>
 #include <QStyledItemDelegate>
 
@@ -87,14 +89,29 @@ SelectField::SelectField(QWidget* parent) : QComboBox(parent) {
     setItemDelegate(new OptionDelegate(this));
     auto* popup = view()->window();
     popup->setObjectName("selectPopup");
-    popup->setAttribute(Qt::WA_TranslucentBackground);
-    popup->setWindowFlag(Qt::FramelessWindowHint);
     popup->setStyleSheet(QStringLiteral("QFrame#selectPopup { background: transparent; border: none; }"));
+    styleFloatingSurface(*popup, *list);
 }
 
 void SelectField::showPopup() {
+    auto* popup = view()->window();
+    clearWindowDecoration(*popup);
     view()->setCurrentIndex(model()->index(currentIndex(), modelColumn(), rootModelIndex()));
     QComboBox::showPopup();
+    if (!popup->isVisible())
+        return;
+    const auto margins = popup->contentsMargins();
+    const auto anchor = mapToGlobal(QPoint{});
+    auto bounds = popup->geometry();
+    bounds.setWidth(width() + margins.left() + margins.right());
+    bounds.moveLeft(anchor.x() - margins.left());
+    bounds.translate(0, bounds.top() < anchor.y() ? margins.bottom() - 4 : 4 - margins.top());
+    const auto available = popup->screen()->availableGeometry();
+    bounds.setWidth(qMin(bounds.width(), available.width()));
+    bounds.setHeight(qMin(bounds.height(), available.height()));
+    bounds.moveLeft(qBound(available.left(), bounds.left(), available.right() - bounds.width() + 1));
+    bounds.moveTop(qBound(available.top(), bounds.top(), available.bottom() - bounds.height() + 1));
+    popup->setGeometry(bounds);
 }
 
 void SelectField::paintEvent(QPaintEvent* event) {

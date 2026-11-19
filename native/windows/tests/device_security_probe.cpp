@@ -14,12 +14,30 @@
 #include <QSignalSpy>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScreen>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <Windows.h>
 
 namespace {
+
+void verifyElevation(const QPixmap& layer, const QRect& panel) {
+    const auto pixels = layer.toImage().convertToFormat(QImage::Format_ARGB32);
+    const auto ratio = layer.devicePixelRatio();
+    const auto alpha = [&](int column, int row) {
+        return qAlpha(pixels.pixel(qRound(column * ratio), qRound(row * ratio)));
+    };
+    for (const auto corner : {pixels.rect().topLeft(), pixels.rect().topRight(),
+                              pixels.rect().bottomLeft(), pixels.rect().bottomRight()})
+        QCOMPARE(qAlpha(pixels.pixel(corner)), 0);
+    for (const auto corner : {panel.topLeft(), panel.topRight(), panel.bottomLeft(), panel.bottomRight()})
+        QVERIFY(alpha(corner.x(), corner.y()) < 80);
+    QVERIFY(layer.deviceIndependentSize().height() - panel.bottom() > 6);
+    const auto nearShadow = alpha(panel.center().x(), panel.bottom() + 2);
+    QVERIFY(nearShadow > 0 && nearShadow < 80);
+    QVERIFY(alpha(panel.center().x(), panel.bottom() + 6) < nearShadow);
+}
 
 class DeviceSecurityProbe : public QObject {
     Q_OBJECT
@@ -30,6 +48,7 @@ private slots:
     void assistanceTabsAndScrollableDeviceList();
     void themedLifetimeSelectors_data();
     void themedLifetimeSelectors();
+    void floatingStopControl();
 };
 
 void DeviceSecurityProbe::bindsProofToPeerAttemptNonceAndPayload() {
@@ -274,18 +293,38 @@ void DeviceSecurityProbe::themedLifetimeSelectors() {
     QApplication::sendEvent(view->viewport(), &hover);
     QCOMPARE(view->currentIndex(), last);
     const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    const auto layer = popup->grab();
     if (!preview.isEmpty()) {
         auto image = window.grab();
         QPainter painter(&image);
-        painter.drawPixmap(window.mapFromGlobal(popup->mapToGlobal(QPoint{})), popup->grab());
+        painter.drawPixmap(window.mapFromGlobal(popup->mapToGlobal(QPoint{})), layer);
         painter.end();
         const auto filename = pairing ? "pairing-selector.png" : "invitation-selector.png";
         QVERIFY(image.save(QDir(preview).filePath(filename)));
+        QVERIFY(layer.save(QDir(preview).filePath(pairing ? "pairing-layer.png" : "invitation-layer.png")));
     }
+    const QRect panel(view->mapTo(popup, QPoint{}), view->size());
+    verifyElevation(layer, panel);
+    QVERIFY(view->viewport()->rect().contains(lastRow));
+    QCOMPARE(panel.width(), field->width());
     QTest::qWait(QApplication::doubleClickInterval() + 20);
     QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, lastRow.center());
     QTRY_VERIFY(!popup->isVisible());
     QCOMPARE(field->currentData().toInt(), 720);
+    QCOMPARE(changed.count(), 2);
+    field->showPopup();
+    QTRY_VERIFY(popup->isVisible());
+    QTest::mouseClick(popup, Qt::LeftButton, Qt::NoModifier, QPoint(2, panel.center().y()));
+    QTRY_VERIFY(!popup->isVisible());
+    QCOMPARE(changed.count(), 2);
+    field->showPopup();
+    QTRY_VERIFY(popup->isVisible());
+    const auto anchor = field->mapToGlobal(field->rect().center());
+    QMouseEvent press(QEvent::MouseButtonPress, popup->mapFromGlobal(anchor), anchor,
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(popup, &press);
+    QTRY_VERIFY(!popup->isVisible());
+    QVERIFY(popup->testAttribute(Qt::WA_NoMouseReplay));
     QCOMPARE(changed.count(), 2);
     if (pairing) {
         devices.setActivity(true, false);
@@ -296,6 +335,38 @@ void DeviceSecurityProbe::themedLifetimeSelectors() {
         QVERIFY(!field->isEnabled());
         QCOMPARE(field->currentData().toInt(), 720);
     }
+}
+
+void DeviceSecurityProbe::floatingStopControl() {
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    QVERIFY(window.setHostBusy(true, true));
+    window.showMinimized();
+    window.setHostActive(true);
+    QWidget* panel = nullptr;
+    QPushButton* stop = nullptr;
+    for (auto* top : QApplication::topLevelWidgets()) {
+        if (auto* button = top->findChild<QPushButton*>("trustedShareStop")) {
+            panel = top;
+            stop = button;
+            break;
+        }
+    }
+    QVERIFY(panel && stop);
+    QTRY_VERIFY(panel->isVisible() && stop->isVisible());
+    QVERIFY(panel->testAttribute(Qt::WA_DontShowOnScreen));
+    QVERIFY(panel->windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus));
+    const auto image = panel->grab();
+    verifyElevation(image, QRect(stop->mapTo(panel, QPoint{}), stop->size()));
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty())
+        QVERIFY(image.save(QDir(preview).filePath("stop-sharing-layer.png")));
+    QSignalSpy stopped(&window, &HomeWindow::hostEndRequested);
+    QTest::mouseClick(stop, Qt::LeftButton);
+    QCOMPARE(stopped.count(), 1);
+    QVERIFY(window.setHostBusy(false));
+    QVERIFY(!panel->isVisible());
 }
 
 }

@@ -96,7 +96,7 @@ private:
     QComboBox* invitationLifetime_;
     QCheckBox* autoAcceptInvitation_;
     QPushButton* hostEndButton_;
-    std::unique_ptr<QPushButton> trustedShareStop_;
+    std::unique_ptr<QWidget> shareIndicator_;
     WId notificationWindow_ = 0;
     QCheckBox* highRefresh_;
     QCheckBox* shareAudio_;
