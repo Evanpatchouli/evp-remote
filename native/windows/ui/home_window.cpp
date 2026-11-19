@@ -1,5 +1,6 @@
 #include "home_window.h"
 
+#include "device_page.h"
 #include "visual_style.h"
 
 #include <QApplication>
@@ -9,11 +10,14 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScreen>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QSysInfo>
 #include <QVBoxLayout>
 
+#include <Windows.h>
+#include <wtsapi32.h>
 #include <limits>
 #include <utility>
 
@@ -147,8 +151,11 @@ HomeWindow::HomeWindow(QWidget* parent)
     brand->addWidget(label(QStringLiteral("EVP 远程"), "brandName", 17, QFont::DemiBold), 1);
     railLayout->addLayout(brand);
     railLayout->addSpacing(34);
-    viewerNavigation_ = roleButton(QStringLiteral("远程连接"), "navigation", Symbol::Connect);
+    deviceNavigation_ = roleButton(QStringLiteral("我的设备"), "deviceNavigation", Symbol::Display);
+    viewerNavigation_ = roleButton(QStringLiteral("远程协助"), "navigation", Symbol::Connect);
     hostNavigation_ = roleButton(QStringLiteral("共享本机"), "hostNavigation", Symbol::Display);
+    railLayout->addWidget(deviceNavigation_);
+    railLayout->addSpacing(6);
     railLayout->addWidget(viewerNavigation_);
     railLayout->addSpacing(6);
     railLayout->addWidget(hostNavigation_);
@@ -157,6 +164,16 @@ HomeWindow::HomeWindow(QWidget* parent)
     hostEndButton_->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
     hostEndButton_->setIconSize(QSize(17, 17));
     railLayout->addWidget(hostEndButton_);
+    trustedShareStop_.reset(hostButton(QStringLiteral("正在共享本机 · 停止共享"), "trustedShareStop"));
+    trustedShareStop_->setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint |
+                                      Qt::WindowDoesNotAcceptFocus);
+    trustedShareStop_->setAttribute(Qt::WA_ShowWithoutActivating);
+    trustedShareStop_->setAttribute(Qt::WA_QuitOnClose, false);
+    trustedShareStop_->setStyleSheet(QStringLiteral(
+        "QPushButton { color: white; background: #922f31; border: 0; padding: 0 14px; }"
+        "QPushButton:hover { background: #7c2225; } QPushButton:pressed { background: #61191d; }"));
+    trustedShareStop_->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
+    connect(trustedShareStop_.get(), &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
     railLayout->addSpacing(16);
     auto* role = label(QStringLiteral("Windows"), "subtle", 12);
     role->setContentsMargins(8, 0, 0, 0);
@@ -197,6 +214,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     bannerText->setSpacing(3);
     bannerTitle_ = label({}, "bannerTitle", 16, QFont::DemiBold);
     bannerMessage_ = label({}, "bannerMessage", 13);
+    bannerMessage_->setTextFormat(Qt::PlainText);
     bannerMessage_->setWordWrap(true);
     bannerText->addWidget(bannerTitle_);
     bannerText->addWidget(bannerMessage_);
@@ -300,7 +318,10 @@ HomeWindow::HomeWindow(QWidget* parent)
     viewerLayout->addStretch();
     pages_->addWidget(viewerPage);
     pages_->addWidget(createHostPage());
+    devicePage_ = new DevicePage;
+    pages_->addWidget(devicePage_);
 
+    setTabOrder(deviceNavigation_, viewerNavigation_);
     setTabOrder(viewerNavigation_, hostNavigation_);
     setTabOrder(hostNavigation_, invitation_);
     setTabOrder(invitation_, pasteButton_);
@@ -309,6 +330,8 @@ HomeWindow::HomeWindow(QWidget* parent)
     setTabOrder(joinButton_, cancelButton_);
     connect(viewerNavigation_, &QPushButton::clicked, this, [this] { switchRole(false); });
     connect(hostNavigation_, &QPushButton::clicked, this, [this] { switchRole(true); });
+    connect(deviceNavigation_, &QPushButton::clicked, this, &HomeWindow::showDevicePage);
+    connect(devicePage_, &DevicePage::returnRequested, this, &HomeWindow::sessionActivationRequested);
     connect(hostEndButton_, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
     connect(signalingUrl_, &QLineEdit::textChanged, hostSignalingUrl_, &QLineEdit::setText);
     connect(hostSignalingUrl_, &QLineEdit::textChanged, signalingUrl_, &QLineEdit::setText);
@@ -326,6 +349,29 @@ HomeWindow::HomeWindow(QWidget* parent)
     invitation_->setFocus(Qt::OtherFocusReason);
     updateForm();
     updateBanner();
+}
+
+HomeWindow::~HomeWindow()
+{
+    if (notificationWindow_)
+        WTSUnRegisterSessionNotification(reinterpret_cast<HWND>(notificationWindow_));
+}
+
+bool HomeWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr* result)
+{
+    const auto* msg = static_cast<const MSG*>(message);
+    if (msg->message == WM_WTSSESSION_CHANGE) {
+        switch (msg->wParam) {
+        case WTS_SESSION_LOCK:
+        case WTS_SESSION_LOGOFF:
+        case WTS_CONSOLE_DISCONNECT:
+        case WTS_REMOTE_DISCONNECT:
+            emit hostDesktopUnavailable();
+            *result = 0;
+            return true;
+        }
+    }
+    return QMainWindow::nativeEvent(eventType, message, result);
 }
 
 QWidget* HomeWindow::createHostPage()
@@ -439,28 +485,50 @@ QWidget* HomeWindow::createHostPage()
 void HomeWindow::setSignalingUrl(const QUrl& url)
 {
     signalingUrl_->setText(url.toString(QUrl::FullyEncoded));
+    devicePage_->setServer(url);
 }
 
-void HomeWindow::setBusy(bool busy)
+DevicePage& HomeWindow::devices()
+{
+    return *devicePage_;
+}
+
+void HomeWindow::showDevicePage()
+{
+    devicePageSelected_ = true;
+    updateForm();
+    updateBanner();
+    scroll_->ensureVisible(0, 0, 0, 0);
+}
+
+void HomeWindow::setBusy(bool busy, bool trusted)
 {
     if (busy_ == busy || (busy && hostBusy_)) {
         return;
     }
     if (busy) {
-        switchRole(false);
+        if (trusted)
+            hostPage_ = false;
+        else
+            switchRole(false);
     }
     busy_ = busy;
+    trustedSession_ = busy && trusted;
     if (busy) {
         failed_ = false;
-        statusMessage_ = waitingMessage;
+        statusMessage_ = trusted ? QStringLiteral("正在建立可信设备连接。") : waitingMessage;
     } else {
         sessionActive_ = false;
         if (!failed_) {
             statusMessage_ = idleMessage;
         }
     }
-    updateForm();
-    updateBanner();
+    if (trustedSession_)
+        showDevicePage();
+    else {
+        updateForm();
+        updateBanner();
+    }
 }
 
 void HomeWindow::setSessionActive(bool active)
@@ -480,17 +548,27 @@ void HomeWindow::setSessionActive(bool active)
     updateBanner();
 }
 
-void HomeWindow::setHostBusy(bool busy)
+bool HomeWindow::setHostBusy(bool busy, bool trusted)
 {
     if (hostBusy_ == busy || (busy && busy_)) {
-        return;
+        return hostBusy_ == busy;
     }
     hostKey_->setText({});
     if (busy) {
-        switchRole(true);
+        const WId id = winId();
+        if (!WTSRegisterSessionNotification(reinterpret_cast<HWND>(id), NOTIFY_FOR_THIS_SESSION))
+            return false;
+        notificationWindow_ = id;
+        if (trusted)
+            hostPage_ = true;
+        else
+            switchRole(true);
         failed_ = false;
-        statusMessage_ = QStringLiteral("正在创建邀请码。");
+        statusMessage_ = trusted ? QStringLiteral("已验证可信设备，正在准备共享。")
+                                 : QStringLiteral("正在创建邀请码。");
     } else {
+        if (notificationWindow_)
+            WTSUnRegisterSessionNotification(reinterpret_cast<HWND>(std::exchange(notificationWindow_, 0)));
         hostActive_ = false;
         hostRequestId_ = 0;
         hostInvitation_->clear();
@@ -502,8 +580,14 @@ void HomeWindow::setHostBusy(bool busy)
         }
     }
     hostBusy_ = busy;
-    updateForm();
-    updateBanner();
+    trustedSession_ = busy && trusted;
+    if (trustedSession_)
+        showDevicePage();
+    else {
+        updateForm();
+        updateBanner();
+    }
+    return true;
 }
 
 void HomeWindow::setHostInvitation(const QString& invitation)
@@ -566,17 +650,18 @@ void HomeWindow::showFailure(const QString& message)
 
 void HomeWindow::switchRole(bool host)
 {
-    if ((host && busy_) || (!host && hostBusy_)) {
+    if (trustedSession_ || (host && busy_) || (!host && hostBusy_)) {
         updateForm();
         return;
     }
-    if (host != hostPage_) {
+    if (host != hostPage_ || (devicePageSelected_ && !hostBusy_ && !busy_)) {
         hostPage_ = host;
         hostKey_->setText({});
         failed_ = false;
         statusMessage_ = host ? hostIdleMessage : idleMessage;
-        updateBanner();
     }
+    devicePageSelected_ = false;
+    updateBanner();
     updateForm();
     if (hostBusy_) {
         if (hostRequestId_) {
@@ -686,15 +771,32 @@ void HomeWindow::respondToHostRequest(bool approved)
 
 void HomeWindow::updateForm()
 {
-    pages_->setCurrentIndex(hostPage_ ? 1 : 0);
-    viewerNavigation_->setChecked(!hostPage_);
-    hostNavigation_->setChecked(hostPage_);
-    viewerNavigation_->setEnabled(!hostBusy_);
-    hostNavigation_->setEnabled(!busy_);
+    const int selected = devicePageSelected_ ? 2 : hostPage_ ? 1 : 0;
+    for (int index = 0; index < pages_->count(); ++index)
+        pages_->widget(index)->setSizePolicy(QSizePolicy::Preferred,
+                                            index == selected ? QSizePolicy::Preferred : QSizePolicy::Ignored);
+    pages_->setCurrentIndex(selected);
+    deviceNavigation_->setChecked(devicePageSelected_);
+    viewerNavigation_->setChecked(!devicePageSelected_ && !hostPage_);
+    hostNavigation_->setChecked(!devicePageSelected_ && hostPage_);
+    viewerNavigation_->setEnabled(!hostBusy_ && !trustedSession_);
+    hostNavigation_->setEnabled(!busy_ && !trustedSession_);
+    devicePage_->setReturnVisible(sessionActive_);
     hostSetup_->setVisible(!hostBusy_);
     hostInvite_->setVisible(hostBusy_ && !hostInvitation_->text().isEmpty());
     hostConsent_->setVisible(hostBusy_ && hostRequestId_);
     hostEndButton_->setVisible(hostBusy_);
+    if (hostActive_ && trustedSession_) {
+        if (!trustedShareStop_->isVisible()) {
+            trustedShareStop_->setAttribute(Qt::WA_DontShowOnScreen, testAttribute(Qt::WA_DontShowOnScreen));
+            trustedShareStop_->adjustSize();
+            const auto area = screen()->availableGeometry();
+            trustedShareStop_->move(area.right() + 1 - trustedShareStop_->width() - 12, area.top() + 12);
+            trustedShareStop_->show();
+        }
+    } else {
+        trustedShareStop_->hide();
+    }
     hostEndButton_->setText(hostActive_ ? QStringLiteral("结束共享")
                                       : QStringLiteral("取消共享"));
     invitation_->setEnabled(!busy_);
@@ -742,5 +844,6 @@ void HomeWindow::updateBanner()
             bannerTitle_->setText(busy_ ? QStringLiteral("正在连接") : QStringLiteral("等待连接"));
         }
     }
+    banner_->setVisible(!devicePageSelected_ || hostBusy_ || busy_ || failed_);
     bannerMessage_->setText(statusMessage_);
 }

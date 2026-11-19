@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "controller_dispatch.h"
+#include "devices/device_connection.h"
 #include "host_input.h"
 #include "rtc/rtc_host.h"
 #include "media/video_surface.h"
@@ -70,7 +71,7 @@ void DesktopController::Dispatch::decoded(const DecodedVideoFrame& frame, int ro
         ++cpuDecoded;
 }
 
-DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters)
+DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters, QString deviceStorePath)
     : home_(home), hostAdapters_(std::move(adapters)) {
     connect(&home, &HomeWindow::joinRequested, this, &DesktopController::join);
     connect(&home, &HomeWindow::cancelRequested, this, &DesktopController::endSession);
@@ -79,6 +80,10 @@ DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters)
     connect(&home, &HomeWindow::hostApproved, this, &DesktopController::hostApproved);
     connect(&home, &HomeWindow::hostDenied, this, &DesktopController::hostDenied);
     connect(&home, &HomeWindow::hostEndRequested, this, &DesktopController::endSession);
+    connect(&home, &HomeWindow::hostDesktopUnavailable, this, [this] {
+        if (role_ == Role::Host)
+            finish(QStringLiteral("Windows 交互桌面不可用，本机共享已停止。"), true, true, "display-unavailable");
+    });
     connect(&home, &HomeWindow::sessionActivationRequested, this, [this] {
         if (window_) {
             window_->showNormal();
@@ -113,6 +118,7 @@ DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters)
     connect(&sampler_, &QTimer::timeout, this, &DesktopController::updateStats);
     releaseRetry_.setInterval(500);
     connect(&releaseRetry_, &QTimer::timeout, this, &DesktopController::retryInputRelease);
+    devices_ = std::make_unique<DeviceConnection>(*this, home, std::move(deviceStorePath));
 }
 DesktopController::~DesktopController() {
     endSession();
@@ -123,6 +129,10 @@ void DesktopController::join(const QUrl& url, const QString& invite) {
 void DesktopController::openSignaling(Role role, const QUrl& url, const QString& credential) {
     if (phase_ != Phase::Idle)
         return;
+    if (devices_->busy()) {
+        home_.showFailure(QStringLiteral("请先结束「我的设备」中的待处理请求。"));
+        return;
+    }
     if (!validUrl(url) || credential.trimmed().isEmpty()) {
         home_.showFailure(role == Role::Viewer ? QStringLiteral("请填写有效的信令地址和邀请码。")
                                                : QStringLiteral("请填写有效的信令地址和部署访问密钥。"));
@@ -131,10 +141,15 @@ void DesktopController::openSignaling(Role role, const QUrl& url, const QString&
     ++generation_;
     role_ = role;
     phase_ = Phase::Connecting;
-    if (role == Role::Host)
-        home_.setHostBusy(true);
-    else
+    devices_->updateActivity();
+    if (role == Role::Host) {
+        if (!home_.setHostBusy(true)) {
+            finish(QStringLiteral("无法监测 Windows 桌面状态。请返回已解锁的桌面后重试。"), true, false);
+            return;
+        }
+    } else {
         home_.setBusy(true);
+    }
     home_.setStatus(QStringLiteral("正在连接信令服务…"));
     QSettings().setValue("signaling/url", url.toString());
     socket_ = new QWebSocket(QString{}, QWebSocketProtocol::VersionLatest, this);
@@ -169,7 +184,32 @@ void DesktopController::openSignaling(Role role, const QUrl& url, const QString&
     deadline_.start(15000);
     socket_->open(url);
 }
+bool DesktopController::reserveDeviceSession(bool host, bool relayOnly, const DevicePreferences& preferences) {
+    if (phase_ != Phase::Idle)
+        return false;
+    if (host) {
+        retryInputRelease();
+        if (releasingInput_)
+            return false;
+        auto input = makeHostInput();
+        if (!input || !input->checkEnvironment().isEmpty() || !home_.setHostBusy(true, true))
+            return false;
+        localInput_ = std::move(input);
+    }
+    ++generation_;
+    trustedSession_ = true;
+    role_ = host ? Role::Host : Role::Viewer;
+    phase_ = host ? Phase::Approved : Phase::Waiting;
+    relayOnly_ = relayOnly;
+    highRefresh_ = preferences.highRefresh;
+    withAudio_ = preferences.audio;
+    if (!host)
+        home_.setBusy(true, true);
+    return true;
+}
 bool DesktopController::sendSignal(QJsonObject message) {
+    if (trustedSession_)
+        return message.value("type") == "signal" && devices_->sendMedia(message.value("data").toObject());
     return socket_ && socket_->state() == QAbstractSocket::ConnectedState &&
            socket_->sendTextMessage(
                QString::fromUtf8(QJsonDocument(message).toJson(QJsonDocument::Compact))) >= 0;
@@ -265,16 +305,19 @@ void DesktopController::ready(const QJsonObject& m) {
     window_->setStatus(QStringLiteral("正在协商音视频连接…"));
     window_->show();
     home_.setSessionActive(true);
-    home_.setStatus(QStringLiteral("对方已同意，正在建立远程会话…"));
+    home_.setStatus(trustedSession_ ? QStringLiteral("设备身份已验证，正在建立远程会话…")
+                                    : QStringLiteral("对方已同意，正在建立远程会话…"));
     dispatch_ = std::make_shared<Dispatch>(this, surface_, generation_);
     const auto gate = dispatch_;
     RtcViewer::Callbacks cb;
     cb.post = [gate](std::function<void()> f) { gate->post([f = std::move(f)](auto&) { f(); }); };
     cb.localAnswer = [gate](std::string sdp) {
         gate->post([sdp = QString::fromStdString(sdp)](DesktopController& c) {
-            c.sendSignal(
+            const bool sent = c.sendSignal(
                 {{"type", "signal"},
                  {"data", QJsonObject{{"description", QJsonObject{{"type", "answer"}, {"sdp", sdp}}}}}});
+            if (!sent && c.trustedSession_)
+                c.finish(QStringLiteral("无法发送设备会话协商信息。"), true);
         });
     };
     cb.localCandidate = [gate](IceCandidate i) {
@@ -358,7 +401,8 @@ void DesktopController::stateChanged(const std::string& state) {
         phase_ = Phase::Streaming;
         window_->setConnected(true);
         window_->setStatus(QStringLiteral("已连接，等待远程画面…"));
-        home_.setStatus(QStringLiteral("远程协助会话进行中"));
+        home_.setStatus(trustedSession_ ? QStringLiteral("可信设备会话进行中")
+                                        : QStringLiteral("远程协助会话进行中"));
         deadline_.start(45000);
         updatePermit();
         rtc_->pollStats();
@@ -424,7 +468,8 @@ void DesktopController::forwardCandidate(IceCandidate i) {
     const QJsonObject candidate{{"candidate", QString::fromStdString(i.candidate)},
                                 {"sdpMid", QString::fromStdString(i.sdpMid)},
                                 {"sdpMLineIndex", i.sdpMLineIndex}};
-    sendSignal({{"type", "signal"}, {"data", QJsonObject{{"candidate", candidate}}}});
+    if (!sendSignal({{"type", "signal"}, {"data", QJsonObject{{"candidate", candidate}}}}) && trustedSession_)
+        finish(QStringLiteral("无法发送设备会话网络信息。"), true);
 }
 void DesktopController::finish(const QString& message, bool failure, bool notify, QString reason) {
     if (phase_ == Phase::Idle)
@@ -443,7 +488,8 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
         releasingInput_ = std::move(localInput_);
         releaseRetry_.start();
     }
-    if (notify) {
+    const bool trusted = std::exchange(trustedSession_, false);
+    if (notify && !trusted) {
         QJsonObject end{{"type", "end"}};
         if (failure)
             end.insert("reason", reason.isEmpty() ? QStringLiteral("transport-failed") : reason);
@@ -488,6 +534,10 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
         home_.showFailure(message);
     else
         home_.setStatus(message);
+    if (trusted)
+        devices_->sessionEnded(message, notify, reason == "declined");
+    else
+        devices_->updateActivity();
     emit sessionFinished(message);
 }
 } // namespace evp

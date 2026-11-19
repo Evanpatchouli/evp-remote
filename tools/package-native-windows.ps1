@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)] [string] $WebRtcRoot,
     [Parameter(Mandatory)] [string] $FfmpegRoot,
     [Parameter(Mandatory)] [string] $BuildDir,
-    [string] $DefaultSignalUrl = ''
+    [string] $DefaultSignalUrl = '',
+    [string] $OutputDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -97,8 +98,8 @@ if ($DefaultSignalUrl) {
     $iniValue = '"' + $uri.AbsoluteUri + '"'
 }
 
-$repo = Split-Path $PSScriptRoot -Parent
-$dist = [IO.Directory]::CreateDirectory((Join-Path $repo 'dist')).FullName
+if (!$OutputDir) { $OutputDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist' }
+$dist = [IO.Directory]::CreateDirectory($OutputDir).FullName
 $destination = Join-Path $dist 'evp-remote-windows-x64.zip'
 $temporaryZip = Join-Path $dist ('native-preview-' + [guid]::NewGuid().ToString('N') + '.zip')
 $tempDirectory = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -140,11 +141,13 @@ try {
     [IO.File]::WriteAllLines((Join-Path $staging '使用说明.txt'), @(
         'EVP 远程 · Windows x64'
         '两台电脑都完整解压同一个压缩包，双击 EvpRemote.exe。'
-        '被控电脑：选「共享本机」，输入部署密钥，创建并复制一次性邀请码。'
-        '控制电脑：选「远程连接」，填写相同的信令服务器地址和邀请码，点击「请求连接」。'
-        '被控电脑：核对请求后点击「同意并开始共享」。可以选择共享系统声音及目标 144 帧/秒。'
+        ''
+        '远程协助：被控端选「共享本机」，输入部署密钥并创建邀请码。控制端选「远程协助」，填写相同的信令地址及邀请码。被控端核对后确认共享。'
+        '我的设备：两端在「我的设备」中保存同一台已升级的信令服务器地址和部署密钥，不需要登录。一端生成配对码，另一端粘贴并请求配对，生成配对码的一端确认。'
+        '在需要被控制的电脑上开启「允许可信设备远控本机」，保持客户端运行、桌面解锁。控制端从设备列表选择在线设备即可连接，不需再次配对或输入邀请码。'
+        '关闭可信设备远控开关或移除配对，可在本机撤销授权。请仅私下分享配对码和邀请码，不要把部署密钥交给协助访客。'
         '控制电脑：点击远程画面后即可使用键鼠。全屏时按 Ctrl+Alt+F11 返回窗口。'
-        '被控电脑可随时点「结束共享」。请仅将邀请码交给你信任的人。'
+        '被控电脑可随时点「结束共享」。'
     ))
     # Pin Qt's runtime lookup to the deployed plugin and translation directories.
     [IO.File]::WriteAllLines((Join-Path $staging 'qt.conf'), @('[Paths]', 'Prefix=.', 'Plugins=.', 'Translations=translations'))

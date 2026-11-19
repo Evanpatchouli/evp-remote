@@ -16,7 +16,7 @@ The same server provides two distinct services. Both PCs use signaling to pair a
 
 The three containers use Linux host networking. The coordinator listens only on loopback port 8787. Caddy terminates TLS and forwards WebSockets. The TURN listener in this kit uses port 3478 over UDP or TCP. Networks allowing only TLS on port 443 need separate TURN/TLS service planning. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) · [coturn container reference](https://github.com/coturn/coturn/blob/master/docker/coturn/README.md)
 
-The [0.1.1 signaling image](https://github.com/users/Evanpatchouli/packages/container/package/evp-remote-signal) includes IP-only setup for Linux amd64 and arm64. Pull it anonymously on the VPS with the commands below. The Windows 0.1.0 endpoint supports both address forms.
+The published 0.1.1 image supports Remote Assistance and includes IP-only setup for Linux amd64 and arm64. The commands below pull it anonymously. For My Devices, use the same setup with a build from the device-capable source revision. [Published image](https://github.com/users/Evanpatchouli/packages/container/package/evp-remote-signal) · [My Devices upgrade](#enable-my-devices-on-the-same-server)
 
 The image contains the matching Compose file and first-run configuration script. Choose the working directory once, according to your installation:
 
@@ -52,20 +52,28 @@ docker compose ps
 docker compose logs --tail=30 proxy signal turn
 ```
 
-Look for three running services and a trusted certificate for the configured hostname. On the server, run `sed -n 's/^EVP_HOST_KEY=//p' settings/signal.env` in a private terminal to retrieve the host access key. Supply it only to the Windows host operator. Keep the TURN signing secret on the server. The setup script preserves existing keys on rerun. To restart, use `docker compose up -d` in the same directory. To stop, run `docker compose down`. Keep the `settings/` directory and the Caddy data volume for the next start.
+Look for three running services and a trusted certificate for the configured hostname. On the server, run `sed -n 's/^EVP_HOST_KEY=//p' settings/signal.env` in a private terminal to retrieve the deployment key. Supply it only to authorized operators and their own PCs, not to invited guests. Keep the TURN signing secret on the server. The setup script preserves existing keys on rerun. To restart, use `docker compose up -d` in the same directory. To stop, run `docker compose down`. Keep the `settings/` directory and the Caddy data volume for the next start.
 
 To upgrade, use the new release tag in `image`, run the pull and kit extraction again in the existing deployment directory, and apply the updated Compose file with `docker compose pull && docker compose up -d`. The kit contains only `compose.yaml` and `configure.sh`. If you customized either file, compare your copy before replacing it.
 
-On both Windows PCs, extract the same `evp-remote-windows-x64.zip` and open `EvpRemote.exe`. Use the same server URL from the table. On the controlled PC select **共享本机**, create the invitation with the deployment key, then approve the viewer locally. On the other PC select **远程连接**, enter the invitation, and click inside the resulting video window before testing keyboard and mouse. See [native session setup](native-windows.md#run-a-session) for sound and high-refresh options.
+On both Windows PCs, extract the same `evp-remote-windows-x64.zip` and open `EvpRemote.exe`. Use the same server URL from the table. On the controlled PC select **共享本机**, create the invitation with the deployment key, then approve the viewer locally. On the other PC select **远程协助**, enter the invitation, and click inside the resulting video window before testing keyboard and mouse. See [native session setup](native-windows.md#remote-assistance) for sound and high-refresh options.
 
 **Check the path.** A trusted HTTPS response of 404 at the root is expected from the signaling service for an ordinary HTTP request. Confirm a WebSocket connection by creating an invitation. Confirm TURN with a fresh session and the host's **Use TURN relay only** checkbox. To check automatic fallback, keep that box clear and use a network that blocks direct endpoint traffic while allowing the relay. Verify the selected route and actual media and input using the table below.
+
+## Enable My Devices on the same server
+
+From a checkout of the device-capable revision on the Docker host, build `docker build -f deploy/linux/Dockerfile -t evp-remote-signal:my-devices .`. In the existing deployment directory, record the old signal image, then set only `services.signal.image` in the effective Compose configuration to `evp-remote-signal:my-devices`. Check it with `docker compose config --images`. Leave `settings/`, Caddy, and coturn unchanged.
+
+Apply with `docker compose up -d --no-deps --force-recreate --pull never signal`, then check `docker compose ps signal`. Replacing this container ends active sessions. Each Windows endpoint keeps its own trust records through the upgrade. To roll back to invitation-only service, restore the old image tag and rerun the same command.
+
+Enter the existing WSS address and deployment key once on both owned native clients, then pair them. Share only the one-time invitation with an assistance guest. Verify that both native clients show online and that an attended invitation works on the same deployment. [Pairing instructions](native-windows.md#my-devices)
 
 ## Public test node
 
 Use a publicly reachable address you control. A deployment needs one trusted WSS endpoint and a TURN service with public relay addresses. Signaling carries pairing and WebRTC negotiation. Audio, video, and input use the selected ICE path. The two Windows endpoints may be behind different NATs.
 
 1. Install Node.js 22.13 or newer, run `npm ci --omit=dev` at the repository root, and provision a trusted TLS certificate for the WSS hostname. Run the coordinator as an unprivileged service account.
-2. Install coturn on the public node. Generate two independent high-entropy secrets. Keep the TURN signing secret exclusively on coturn and the coordinator. Give the host access key only to operators who may create invitations. Store them in your service manager's protected configuration.
+2. Install coturn on the public node. Generate two independent high-entropy secrets. Keep the TURN signing secret exclusively on coturn and the coordinator. Give the deployment key only to operators who may create invitations or register their own devices. Store the service secrets in your service manager's protected configuration.
 3. Start coturn with a private configuration file. Set `realm` to your own domain, `fingerprint`, `use-auth-secret`, `static-auth-secret` to the TURN signing secret, `listening-port=3478`, `min-port=52000`, `max-port=52100`, `no-multicast-peers`, and `no-cli`. Set `listening-ip` and `relay-ip` to the bound interface. If behind 1:1 NAT, set `external-ip=PUBLIC_IP/PRIVATE_IP` and preserve relay port numbers. Restrict relaying to intended public peers, deny internal service ranges on a public deployment, and enable quotas appropriate to available bandwidth. Keep the relay clock synchronized with signaling. [coturn configuration reference](https://github.com/coturn/coturn/blob/master/examples/etc/turnserver.conf)
 4. Permit inbound TCP 8787 for the example WSS service, UDP/TCP 3478 for the TURN listener, and UDP 52000–52100 for relay allocations. Restrictive client networks may also need TURN over TLS with an appropriate certificate and a reachable listener such as TCP 5349. Configure the matching `turns:` URL when enabling that listener.
 
@@ -93,7 +101,7 @@ Record the client revision, Windows and browser versions, physical access networ
 | Automatic relay | Keep the same application settings. Use a test network that blocks traffic between endpoints while allowing signaling and coturn | Media and input still work. At least one selected candidate is `relay`; the operator did not select relay-only |
 | Forced relay | Check **Use TURN relay only** on the host before accepting | Selected relay pair, working video, audio, mouse and keys. Compare timing to the previous two scenarios |
 
-Also exercise deny, stop during capture selection, stop while a key is held, and abrupt viewer disconnect. Confirm capture ends and further input is rejected. A connected WebSocket, gathered relay candidate, or resolved invitation alone does not prove a selected route or a displayed frame.
+Also exercise deny, stop during capture selection, stop while a key is held, and abrupt viewer disconnect. For My Devices, repeat the route checks after one approved pairing and a restart of both apps without new codes. Lock the target during control, exercise local revocation, and confirm that restoring connectivity does not resume sharing. A connected WebSocket, gathered relay candidate, or resolved invitation alone does not prove a selected route or a displayed frame.
 
 ## Local regression
 

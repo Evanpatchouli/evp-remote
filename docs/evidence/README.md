@@ -1,5 +1,6 @@
 # Evidence inventory
 
+- [My Devices validation](my-devices-validation.md) records native pairing, restart, direct and relay control, local revocation, and outstanding field checks.
 - [Native Windows validation](native-windows-preview.md) records the unified two-instance tests, viewer interop, FFmpeg paths, and limits of the WinUI comparison.
 
 [GameViewer evidence archive](gameviewer-evidence.zip) contains the Windows 4.48.0.5446 reference snapshot. Its manifest, `index.json`, lists 20 sample identities and five REA records. The original archive is preserved byte for byte.

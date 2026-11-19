@@ -1,8 +1,10 @@
 #include "controller.h"
+#include "device_probe.h"
 #include "media/video_surface.h"
 #include "ui/home_window.h"
 #include "ui/session_window.h"
 #include <QApplication>
+#include <QCheckBox>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLineEdit>
@@ -37,19 +39,73 @@ int runViewerProbe(int argc, char** argv) {
     InvisibleTestWindows hidden;
     app.installEventFilter(&hidden);
     HomeWindow home;
-    evp::DesktopController client(home);
     home.setAttribute(Qt::WA_DontShowOnScreen);
-    home.show();
     const auto url = QUrl(qEnvironmentVariable("EVP_PROBE_URL"));
     const auto invite = qEnvironmentVariable("EVP_PROBE_INVITE");
+    const auto device = qEnvironmentVariable("EVP_PROBE_DEVICE_STAGE");
+    const auto pairingCode = qEnvironmentVariable("EVP_PROBE_PAIRING_CODE");
+    const bool pairing = device == "pair" || device == "deny-pair" || device == "wrong-pair" || device == "expired-pair";
+    const bool expectBlocked = device == "disabled" || device == "locked" || device == "forgotten";
     const auto expectedRoute = qEnvironmentVariable("EVP_PROBE_ROUTE", "direct");
     const bool expectDenial = qEnvironmentVariable("EVP_PROBE_CASE") == "deny";
     const bool expectAudio = qEnvironmentVariable("EVP_PROBE_CASE") != "video-only";
-    if (url.host() != "127.0.0.1" || invite.isEmpty())
+    if (url.host() != "127.0.0.1" || (device.isEmpty() && invite.isEmpty()) || (pairing && pairingCode.isEmpty()))
         return 2;
     home.setSignalingUrl(url);
+    evp::DesktopController client(home, {}, device_probe::storePath(preferences.path()));
+    home.show();
     home.findChild<QLineEdit*>("invitation")->setText(invite);
     auto* join = home.findChild<QPushButton*>("join");
+    const device_probe::Ui deviceUi(home);
+    bool requested = false;
+    bool retriedCode = false;
+    QTimer watch;
+    if (!device.isEmpty()) {
+        deviceUi.configure(pairing ? qEnvironmentVariable("EVP_PROBE_KEY") : QString{});
+        const auto expectedPeer = qEnvironmentVariable("EVP_PROBE_TARGET");
+        if (deviceUi.id().isEmpty() || (pairing ? !deviceUi.peer().isEmpty() : deviceUi.peer() != expectedPeer))
+            return 5;
+        QObject::connect(&watch, &QTimer::timeout, &app, [&, expectedPeer] {
+            if (pairing || expectBlocked) {
+                for (auto* top : QApplication::topLevelWidgets()) {
+                    if (qobject_cast<SessionWindow*>(top)) {
+                        app.exit(5);
+                        return;
+                    }
+                }
+            }
+            if (!deviceUi.online())
+                return;
+            if (!requested) {
+                if (pairing) {
+                    requested = true;
+                    deviceUi.field("peerPairingCode")->setText(pairingCode);
+                    deviceUi.button("pairDevice")->click();
+                } else if (deviceUi.button("connectDevice")->isEnabled()) {
+                    requested = true;
+                    deviceUi.button("connectDevice")->click();
+                }
+                return;
+            }
+            if ((!pairing && !expectBlocked) || deviceUi.button("cancelDeviceAttempt")->isVisible())
+                return;
+            const bool passed = device == "pair" ? deviceUi.peer() == expectedPeer
+                : deviceUi.message().contains(QStringLiteral("对方未授权或已拒绝")) &&
+                  (pairing ? deviceUi.peer().isEmpty() : deviceUi.peer() == expectedPeer);
+            if (passed && device == "deny-pair" && !retriedCode) {
+                retriedCode = true;
+                requested = false;
+                return;
+            }
+            if (device == "pair" && passed)
+                home.findChild<QCheckBox*>("allowTrustedControl")->setChecked(true);
+            device_probe::print({{"passed", passed}, {"id", deviceUi.id()}, {"peer", deviceUi.peer()}});
+            if (!passed)
+                std::fprintf(stderr, "%s\n", deviceUi.message().toUtf8().constData());
+            app.exit(passed ? 0 : 1);
+        });
+        watch.start(30);
+    }
     bool exercised = false;
     bool ended = false;
     QObject::connect(
@@ -78,7 +134,7 @@ int runViewerProbe(int argc, char** argv) {
             QWheelEvent wheel(position, surface->mapToGlobal(position.toPoint()), {}, QPoint(0, 120),
                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
             QApplication::sendEvent(surface, &wheel);
-            if (qEnvironmentVariable("EVP_PROBE_CASE") == "release-retry")
+            if (device == "revoke" || qEnvironmentVariable("EVP_PROBE_CASE") == "release-retry")
                 QTest::keyPress(surface, Qt::Key_B);
             const auto* renderer = static_cast<evp::VideoSurface*>(surface);
             const auto data =
@@ -90,8 +146,12 @@ int runViewerProbe(int argc, char** argv) {
                             {"gpuDecoded", static_cast<qint64>(gpu)},
                             {"cpuDecoded", static_cast<qint64>(cpu)},
                             {"presentationFailures", static_cast<qint64>(renderer->stats().failures)}};
-            fprintf(stdout, "%s\n", QJsonDocument(data).toJson(QJsonDocument::Compact).constData());
-            fflush(stdout);
+            auto report = data;
+            if (!device.isEmpty()) {
+                report.insert("id", deviceUi.id());
+                report.insert("peer", deviceUi.peer());
+            }
+            device_probe::print(report);
         });
     QObject::connect(&client, &evp::DesktopController::sessionFinished, &app, [&](const QString& message) {
         ended = true;
@@ -99,10 +159,14 @@ int runViewerProbe(int argc, char** argv) {
         app.exit((expectDenial ? (!exercised && message.contains(QStringLiteral("拒绝"))) : exercised) ? 0
                                                                                                        : 1);
     });
-    QTimer::singleShot(0, join, &QPushButton::click);
-    QTimer::singleShot(60000, &app, [&] {
-        if (!ended)
+    if (device.isEmpty())
+        QTimer::singleShot(0, join, &QPushButton::click);
+    QTimer::singleShot(device.isEmpty() ? 60000 : 28000, &app, [&] {
+        if (!ended) {
+            if (!device.isEmpty())
+                std::fprintf(stderr, "%s\n", deviceUi.message().toUtf8().constData());
             app.exit(3);
+        }
     });
     return app.exec();
 }

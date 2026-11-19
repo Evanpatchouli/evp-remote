@@ -28,6 +28,10 @@ void DesktopController::hostDenied(quint64 requestId) {
     finish(QStringLiteral("已拒绝本次请求。"), false, false);
 }
 
+std::unique_ptr<HostInput> DesktopController::makeHostInput() const {
+    return hostAdapters_.input ? hostAdapters_.input() : std::make_unique<HostInput>();
+}
+
 void DesktopController::hostReady(const std::vector<IceServer>& servers) {
     retryInputRelease();
     if (releasingInput_) {
@@ -37,7 +41,8 @@ void DesktopController::hostReady(const std::vector<IceServer>& servers) {
     }
     dispatch_ = std::make_shared<Dispatch>(this, nullptr, generation_);
     const auto gate = dispatch_;
-    localInput_ = hostAdapters_.input ? hostAdapters_.input() : std::make_unique<HostInput>();
+    if (!localInput_)
+        localInput_ = makeHostInput();
     if (!localInput_ || !localInput_->checkEnvironment().isEmpty()) {
         finish(QStringLiteral("请在单个活动显示器的交互桌面上共享本机。"), true, true, "display-unavailable");
         return;
@@ -91,7 +96,7 @@ void DesktopController::hostReady(const std::vector<IceServer>& servers) {
         gate->inputGrant = 0;
         gate->post([detail = std::move(detail)](DesktopController& c) {
             if (detail.find("audio") != std::string::npos || detail.find("WASAPI") != std::string::npos)
-                c.finish(QStringLiteral("无法采集系统声音，请检查默认扬声器并重新邀请。"), true, true,
+                c.finish(QStringLiteral("无法采集系统声音，请检查默认扬声器后重试。"), true, true,
                          "audio-unavailable");
             else
                 c.finish(QStringLiteral("共享引擎无法继续运行，请检查显示器、编码设备和网络。"), true);

@@ -18,6 +18,8 @@ class VideoSurface;
 class HostInput;
 class HostMediaSource;
 class RtcHost;
+class DeviceConnection;
+struct DevicePreferences;
 
 struct HostAdapters {
     std::function<std::unique_ptr<HostMediaSource>()> media;
@@ -27,7 +29,7 @@ struct HostAdapters {
 class DesktopController final : public QObject {
     Q_OBJECT
   public:
-    explicit DesktopController(HomeWindow& home, HostAdapters adapters = {});
+    explicit DesktopController(HomeWindow& home, HostAdapters adapters = {}, QString deviceStorePath = {});
     ~DesktopController() override;
     void endSession();
   signals:
@@ -36,6 +38,7 @@ class DesktopController final : public QObject {
     void sessionFinished(QString message);
 
   private:
+    friend class DeviceConnection;
     struct Dispatch;
     enum class Role { Viewer, Host };
     enum class Phase {
@@ -51,6 +54,8 @@ class DesktopController final : public QObject {
     };
     void join(const QUrl& url, const QString& invite);
     void openSignaling(Role role, const QUrl& url, const QString& credential);
+    bool reserveDeviceSession(bool host, bool relayOnly, const DevicePreferences& preferences);
+    std::unique_ptr<HostInput> makeHostInput() const;
     void received(const QJsonObject& message);
     void ready(const QJsonObject& message);
     void hostApproved(quint64 requestId, bool highRefresh, bool relayOnly, bool withAudio);
@@ -90,7 +95,9 @@ class DesktopController final : public QObject {
     bool connected_ = false, channel_ = false, audio_ = false, offered_ = false, relayOnly_ = false;
     bool everOpened_ = false, playout_ = false, inputFault_ = false;
     bool hostArmed_ = false, highRefresh_ = false, withAudio_ = true;
+    bool trustedSession_ = false;
     QString route_, encoder_;
     QSize captureSize_;
+    std::unique_ptr<DeviceConnection> devices_;
 };
 } // namespace evp

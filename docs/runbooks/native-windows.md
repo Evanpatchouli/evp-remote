@@ -1,15 +1,26 @@
 # Unified Windows client
 
-## Run a session
+## Remote Assistance
 
-Extract the same **`evp-remote-windows-x64.zip`** on each Windows PC and open **EvpRemote.exe**. The home window contains both roles, and the active viewer gets its own control window. A machine can switch roles after ending its current invitation or session. The endpoint includes the runtime for both roles.
+Extract the same **`evp-remote-windows-x64.zip`** on each Windows PC and open **EvpRemote.exe**. A configuration that already has My Devices set up opens its device list. Use the sidebar to start Remote Assistance. The active viewer gets its own control window, and a machine can switch roles after ending its current invitation or session.
 
 1. On the PC to share, choose **共享本机**, verify **信令服务器**, enter the deployment's **部署密钥** and select **创建邀请码**. Share the one-time invitation with the intended viewer. Creating the invitation does not start capture. The deployment key is cleared from its password field and is not saved in preferences.
-2. On the controlling PC, choose the remote connection page, paste **邀请码**, and select **请求连接**. Both PCs use the same signaling URL. The app remembers the server address; `EVP_SIGNAL_URL` overrides it.
+2. On the controlling PC, choose **远程协助**, paste **邀请码**, and select **请求连接**. Both PCs use the same signaling URL. This mode remembers its own address; `EVP_SIGNAL_URL` can override that address on startup.
 3. The host reviews the request and selects **同意并开始共享** or **拒绝**. **共享系统声音** uses the default Windows render endpoint (WASAPI loopback); uncheck it for a video-only session. **原生分辨率，目标 144 帧/秒** requests high refresh. **仅使用 TURN 中继** is optional. The first implementation shares the entire primary SDR display and accepts input on the interactive, unlocked single-monitor desktop.
 4. The viewer opens **远程控制**. The toolbar shows the selected ICE route, source resolution, successful presentation submissions per second, and input permission. Click the picture to send keyboard/mouse input. Choose **全屏** to hide the toolbar; **Ctrl+Alt+F11** restores it. The host's **结束共享** or the viewer's **结束控制** ends the session. Use a fresh invitation to reconnect.
 
 The native sender captures desktop updates with DXGI Desktop Duplication, includes the pointer, and encodes H.264 using FFmpeg. It currently reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
+
+## My Devices
+
+1. On each PC, open **我的设备**. Under **远控权限与信令服务**, enter the same `wss://` address and the deployment key, then select **保存并连接**. Wait for **本机在线** on both PCs. Use a device-capable server for this accountless setup. My Devices remembers its own address and key. Enter the key again after changing the address or rotating the key. [Server upgrade](windows-session.md#enable-my-devices-on-the-same-server)
+2. On one PC select **生成配对码** and copy it to the other PC privately. On the other PC paste it and select **请求配对**. On the first PC verify the displayed device ID belongs to the other PC and select **确认配对**. The one-time pairing code expires after five minutes. Pairing does not start sharing or enable incoming control.
+3. Enable **允许可信设备远控本机（无需逐次确认）** only on each PC you want to control. Keep the target client running on a signed-in, unlocked desktop. On the controlling PC select the online device and click **连接选中设备**, or double-click its row. No invitation, password, or approval prompt is needed for this session.
+4. To stop the current session, click **结束共享** on the target or **结束控制** on the controlling PC. Turn off inbound control to stop an incoming session and block future incoming connections without losing pairings. Select a peer and click **移除配对** to revoke it locally even while offline; the other PC may still show its old entry but cannot authenticate. If a pairing completed on only one PC or a device loses its installation key, pair again, and remove any obsolete entry.
+
+The online indicator tracks the target's signaling connection. The target also needs one active display and an unlocked Windows session. Locking the desktop or losing signaling ends the session. After re-registration, select the device again to reconnect. Choose system sound, high refresh, and TURN-only before starting a session. A floating **正在共享本机 · 停止共享** button stays available on the host while sharing, including when its main window is minimized. The local session limit is one hour.
+
+If the app reports a local storage error, restore write access to the Windows user's application data directory. Review the trusted list and inbound switch and select **保存并连接**. Repeat any revocation that was reported as unsaved.
 
 ## Build both roles
 
@@ -29,7 +40,7 @@ cmake --build $build --config Release --parallel
 pwsh -File tools/package-native-windows.ps1 -QtRoot $qt -WebRtcRoot $rtc -FfmpegRoot $ff -BuildDir $build
 ```
 
-The output archive is `dist/evp-remote-windows-x64.zip`. Supply `-DefaultSignalUrl wss://your-server.example/` to prefill the address. The package contains one application executable, Qt and FFmpeg runtime files, the app-local VC runtime, and dependency notices. The acceptance probes are separate build targets.
+The output archive is `dist/evp-remote-windows-x64.zip`. Use `-OutputDir` to write the archive elsewhere. Supply `-DefaultSignalUrl wss://your-server.example/` to prefill the address. The package contains one application executable, Qt and FFmpeg runtime files, the app-local VC runtime, and dependency notices. The acceptance probes are separate build targets.
 
 ## Verify the two native roles
 
@@ -44,9 +55,13 @@ node tools/unified-session-smoke.mjs $testRuntime direct
 node tools/unified-session-smoke.mjs $testRuntime video-only
 node tools/unified-session-smoke.mjs $testRuntime release-retry
 node tools/native-session-smoke.mjs "$testRuntime/EvpSessionProbe.exe" direct
+node tools/device-session-smoke.mjs $testRuntime direct
+node tools/device-session-smoke.mjs $testRuntime expiry
 ```
 
-For a forced relay run use `relay` as the last argument and provide a reachable test coturn service via `EVP_TURN_URLS` and `EVP_TURN_SECRET` in the test environment. The unified harness launches two copies of the same test executable with the production Qt windows, controllers, codecs and WebRTC transport. It supplies moving frames and PCM and records Windows input events in memory. It checks that a denied request starts no media and that a failed key release can be retried after revocation. The final command separately checks interoperability with the original browser host.
+For forced relay, run `tools/unified-session-smoke.mjs` and `tools/device-session-smoke.mjs` with `relay` as the last argument and provide a reachable test coturn service via `EVP_TURN_URLS` and `EVP_TURN_SECRET` in the test environment. The native harnesses drive the production Qt windows, controllers, codecs, and WebRTC transport. They supply moving frames and PCM and record Windows input events in memory. The device harness uses separate temporary profiles and covers pairing once, restart, two-way control, and local revocation. `tools/native-session-smoke.mjs` checks interoperability with the original browser host.
+
+The `expiry` case waits five minutes for the production pairing code to expire, then submits the original code through the UI. The `direct` case also checks signed session fields, protected-store write failures, the local stop control, and teardown on desktop loss.
 
 ## Qualify 144 FPS and input latency
 

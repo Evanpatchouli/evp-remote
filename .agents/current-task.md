@@ -11,6 +11,8 @@ The primary agent coordinates at S2, owns the trust boundary and integrates both
 | Native identity, pairing and control | Execute / S2 | Protected persisted credentials, local permission and revoke, challenge-bound signatures, one-click routing into the current native session |
 | Integration | Verify / S0 and independent Review | Reject untrusted/stale attempts, verify native restart and reconnect, and distinguish local results from outstanding two-PC field checks |
 
+The local trust decision landed in `2b6f628` before implementation. The signaling extension landed in `a2e90e2`. Both native roles passed direct and forced TURN checks. The next field check uses two Windows PCs on different networks after the operator upgrades the signal service. [Validation record](../docs/evidence/my-devices-validation.md)
+
 ## Unified Windows endpoint
 
 Deliver one Chinese Windows executable and one archive for either side of an attended session. Implement the native sender and capture (S2), wire invitation/approval, local input, and the existing viewer into the same home (S2), then verify two instances, denial/revocation, and standalone packaging (S0 and independent review). Preserve the deployed signaling server protocol and the high-refresh field acceptance boundary.

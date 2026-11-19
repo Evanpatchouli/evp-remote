@@ -1,10 +1,12 @@
 #include "controller.h"
+#include "device_probe.h"
 #include "host_input.h"
 #include "rtc/rtc_host.h"
 #include "ui/home_window.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QLineEdit>
 #include <QPushButton>
@@ -117,11 +119,23 @@ int runHostProbe(int argc, char** argv) {
     app.setApplicationName("Host");
     const QUrl url(qEnvironmentVariable("EVP_PROBE_URL"));
     const QString key = qEnvironmentVariable("EVP_PROBE_KEY");
-    if (url.host() != "127.0.0.1" || key.isEmpty())
+    const auto device = qEnvironmentVariable("EVP_PROBE_DEVICE_STAGE");
+    const bool expires = device == "expired-pair";
+    const bool pairing = device == "pair" || device == "deny-pair" || device == "wrong-pair" || expires;
+    const auto viewerDone = qEnvironmentVariable("EVP_PROBE_VIEWER_DONE");
+    const bool revoke = device == "revoke";
+    const bool disabled = device == "disabled";
+    const bool locked = device == "locked";
+    const bool forgotten = device == "forgotten";
+    const bool disconnect = device == "disconnect";
+    const bool lockActive = device == "lock-active";
+    const bool sessionDisconnect = device == "session-disconnect";
+    bool desktopAvailable = !locked;
+    if (url.host() != "127.0.0.1" || ((pairing || device.isEmpty()) && key.isEmpty()))
         return 2;
     const bool deny = qEnvironmentVariable("EVP_PROBE_CASE") == "deny";
     const bool withAudio = qEnvironmentVariable("EVP_PROBE_CASE") != "video-only";
-    const bool delayedRelease = qEnvironmentVariable("EVP_PROBE_CASE") == "release-retry";
+    const bool delayedRelease = revoke || qEnvironmentVariable("EVP_PROBE_CASE") == "release-retry";
     const bool relay = qEnvironmentVariable("EVP_PROBE_ROUTE") == "relay";
     Observations seen;
     QElapsedTimer releaseDelay;
@@ -162,16 +176,171 @@ int runHostProbe(int argc, char** argv) {
             },
             [&] {
                 ++seen.armingChecks;
-                return QString{};
+                return desktopAvailable ? QString{} : QStringLiteral("Test desktop unavailable");
             });
     };
     HomeWindow home;
     home.setAttribute(Qt::WA_DontShowOnScreen);
-    evp::DesktopController controller(home, std::move(adapters));
-    home.show();
     home.setSignalingUrl(url);
+    evp::DesktopController controller(home, std::move(adapters), device_probe::storePath(prefs.path()));
+    home.show();
     auto button = [&](const char* name) { return home.findChild<QPushButton*>(name); };
     const QString preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!device.isEmpty()) {
+        const device_probe::Ui ui(home);
+        auto* inbound = home.findChild<QCheckBox*>("allowTrustedControl");
+        auto* audio = home.findChild<QCheckBox*>("deviceShareAudio");
+        auto* refresh = home.findChild<QCheckBox*>("deviceHighRefresh");
+        auto* relayOnly = home.findChild<QCheckBox*>("deviceRelayOnly");
+        ui.configure(key);
+        if (ui.id().isEmpty())
+            return 5;
+        if (device == "offline-remove") {
+            const auto old = ui.peer();
+            ui.button("removeDevice")->click();
+            const bool passed = !old.isEmpty() && ui.peer().isEmpty() && !ui.online() &&
+                                ui.message().contains(QStringLiteral("已在本机移除配对"));
+            print({{"passed", passed}, {"id", ui.id()}, {"previousPeer", old}});
+            return passed ? 0 : 1;
+        }
+
+        if (pairing && (inbound->isChecked() || !ui.peer().isEmpty()))
+            return 5;
+        if (!pairing && (ui.peer().isEmpty() != forgotten || inbound->isChecked() == disabled))
+            return 5;
+        if (!pairing && !disabled) {
+            inbound->setChecked(true);
+            audio->setChecked(withAudio);
+            refresh->setChecked(true);
+            relayOnly->setChecked(relay);
+        }
+
+        QTimer watch;
+        bool started = false, decided = false, stopping = false, disconnected = false;
+        bool expired = false;
+        const bool expectBlocked = disabled || locked || forgotten;
+        QObject::connect(&watch, &QTimer::timeout, &app, [&] {
+            if (button("hostApprove")->isVisible() || ((pairing || expectBlocked) &&
+                (seen.starts || seen.audioStarts || seen.receivedInput() || (!locked && seen.armingChecks)))) {
+                app.exit(5);
+                return;
+            }
+            if (disconnect && disconnected && ui.online()) {
+                const bool passed = seen.starts == 1 && seen.stops == 1 && seen.receivedInput();
+                print({{"passed", passed}, {"reregistered", true}, {"id", ui.id()}, {"peer", ui.peer()},
+                       {"noResumedMedia", seen.starts == 1}});
+                app.exit(passed ? 0 : 1);
+                return;
+            }
+            if (!ui.online())
+                return;
+            if (!started) {
+                started = true;
+                if (pairing) {
+                    button("generatePairingCode")->click();
+                    const auto code = ui.field("localPairingCode")->text();
+                    if (code.isEmpty()) {
+                        app.exit(5);
+                        return;
+                    }
+                    print({{"pairingCode", code}});
+                } else {
+                    if (device == "control")
+                        home.showMinimized();
+                    print({{"registered", true}, {"id", ui.id()}});
+                }
+            }
+            if (device == "wrong-pair" || expires) {
+                if (button("approveDevicePairing")->isVisible()) {
+                    app.exit(5);
+                } else if (expires && !expired && ui.field("localPairingCode")->text().isEmpty()) {
+                    expired = true;
+                    print({{"expired", true}});
+                } else if (QFileInfo::exists(viewerDone)) {
+                    print({{"passed", ui.peer().isEmpty()}, {"id", ui.id()}});
+                    app.exit(ui.peer().isEmpty() ? 0 : 1);
+                }
+                return;
+            }
+            if (pairing) {
+                if (button("approveDevicePairing")->isVisible()) {
+                    if (decided) {
+                        app.exit(5);
+                        return;
+                    }
+                    decided = true;
+                    button(device == "pair" ? "approveDevicePairing" : "denyDevicePairing")->click();
+                }
+                if (!decided || button("cancelDeviceAttempt")->isVisible() || !QFileInfo::exists(viewerDone))
+                    return;
+                const bool passed = (device == "pair") == !ui.peer().isEmpty();
+                if (device == "pair")
+                    inbound->setChecked(true);
+                print({{"passed", passed}, {"id", ui.id()}, {"peer", ui.peer()}});
+                app.exit(passed ? 0 : 1);
+                return;
+            }
+            if (expectBlocked && QFileInfo::exists(viewerDone)) {
+                const bool passed = !locked || seen.armingChecks > 0;
+                print({{"passed", passed}, {"id", ui.id()}, {"peer", ui.peer()}, {"videoStarts", seen.starts}});
+                app.exit(passed ? 0 : 1);
+                return;
+            }
+            if (!stopping && seen.receivedInput() && (!delayedRelease || seen.heldDown)) {
+                QPushButton* shareStop = nullptr;
+                for (auto* widget : QApplication::allWidgets()) {
+                    if (widget->objectName() == "trustedShareStop")
+                        shareStop = qobject_cast<QPushButton*>(widget);
+                }
+                if (!shareStop || !shareStop->isVisible() || !shareStop->isEnabled() ||
+                    !shareStop->window()->testAttribute(Qt::WA_DontShowOnScreen) || audio->isEnabled() ||
+                    refresh->isEnabled() || relayOnly->isEnabled() || !inbound->isEnabled()) {
+                    app.exit(5);
+                    return;
+                }
+                stopping = true;
+                if (disconnect)
+                    print({{"inputDelivered", true}});
+                else if (revoke)
+                    inbound->setChecked(false);
+                else if (lockActive)
+                    desktopAvailable = false;
+                else if (sessionDisconnect) {
+                    DWORD sessionId = 0;
+                    if (!ProcessIdToSessionId(GetCurrentProcessId(), &sessionId) ||
+                        !PostMessageW(reinterpret_cast<HWND>(home.winId()), WM_WTSSESSION_CHANGE,
+                                      WTS_REMOTE_DISCONNECT, sessionId))
+                        app.exit(5);
+                }
+                else
+                    shareStop->click();
+            }
+        });
+        QObject::connect(&controller, &evp::DesktopController::sessionFinished, &app, [&](const QString& message) {
+            const bool clean = stopping && !expectBlocked && !pairing && seen.starts == 1 && seen.stops == 1 &&
+                               seen.audioStarts == int(withAudio) && seen.receivedInput() && seen.requested144;
+            if (!clean)
+                std::fprintf(stderr, "%s\n", message.toUtf8().constData());
+            if (disconnect && clean) {
+                disconnected = true;
+                print({{"disconnected", true}});
+                return;
+            }
+            watch.stop();
+            QTimer::singleShot(delayedRelease ? 1200 : 0, &app, [&, clean] {
+                const bool passed = clean && (!delayedRelease || (seen.heldDown == 1 && seen.heldUp == 1));
+                print({{"passed", passed}, {"id", ui.id()}, {"peer", ui.peer()}, {"inputDelivered", seen.receivedInput()},
+                       {"videoStarts", seen.starts}, {"mediaStops", seen.stops}, {"releasedKeys", seen.heldUp}});
+                app.exit(passed ? 0 : 1);
+            });
+        });
+        watch.start(30);
+        QTimer::singleShot(expires ? 350000 : 30000, &app, [&] {
+            std::fprintf(stderr, "%s\n", ui.message().toUtf8().constData());
+            app.exit(3);
+        });
+        return app.exec();
+    }
     if (!preview.isEmpty())
         home.grab().save(QDir(preview).filePath("unified-home.png"));
     button("hostNavigation")->click();
@@ -193,6 +362,16 @@ int runHostProbe(int argc, char** argv) {
                 return;
             }
             granted = true;
+            auto* incoming = home.findChild<QCheckBox*>("allowTrustedControl");
+            if (incoming->isEnabled()) {
+                app.exit(5);
+                return;
+            }
+            incoming->setChecked(true);
+            if (incoming->isChecked()) {
+                app.exit(5);
+                return;
+            }
             if (deny) {
                 button("hostDeny")->click();
                 return;

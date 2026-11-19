@@ -2,7 +2,9 @@
 
 #include <QMainWindow>
 #include <QUrl>
+#include <memory>
 
+class DevicePage;
 class QFrame;
 class QCheckBox;
 class QLabel;
@@ -16,12 +18,15 @@ class HomeWindow final : public QMainWindow {
 
 public:
     explicit HomeWindow(QWidget* parent = nullptr);
+    ~HomeWindow() override;
+    DevicePage& devices();
+    void showDevicePage();
 
 public slots:
     void setSignalingUrl(const QUrl& url);
-    void setBusy(bool busy);
+    void setBusy(bool busy, bool trusted = false);
     void setSessionActive(bool active);
-    void setHostBusy(bool busy);
+    bool setHostBusy(bool busy, bool trusted = false);
     void setHostInvitation(const QString& invitation);
     void setHostPending(quint64 requestId);
     void setHostActive(bool active);
@@ -36,6 +41,10 @@ signals:
     void hostApproved(quint64 requestId, bool highRefresh, bool relayOnly, bool withAudio);
     void hostDenied(quint64 requestId);
     void hostEndRequested();
+    void hostDesktopUnavailable();
+
+protected:
+    bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
 
 private:
     QWidget* createHostPage();
@@ -60,7 +69,9 @@ private:
     QPushButton* cancelButton_;
     QPushButton* viewerNavigation_;
     QPushButton* hostNavigation_;
+    QPushButton* deviceNavigation_;
     QStackedWidget* pages_;
+    DevicePage* devicePage_;
     QScrollArea* scroll_;
     QWidget* hostSetup_;
     QWidget* hostInvite_;
@@ -69,6 +80,8 @@ private:
     QLineEdit* hostSignalingUrl_;
     QLineEdit* hostInvitation_;
     QPushButton* hostEndButton_;
+    std::unique_ptr<QPushButton> trustedShareStop_;
+    WId notificationWindow_ = 0;
     QCheckBox* highRefresh_;
     QCheckBox* shareAudio_;
     QCheckBox* relayOnly_;
@@ -77,6 +90,8 @@ private:
     bool busy_ = false;
     bool sessionActive_ = false;
     bool hostPage_ = false;
+    bool devicePageSelected_ = false;
+    bool trustedSession_ = false;
     bool hostBusy_ = false;
     bool hostActive_ = false;
     bool failed_ = false;

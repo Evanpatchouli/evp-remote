@@ -1,10 +1,15 @@
 # evp-remote
 
-An attended remote desktop for two Windows computers on different Internet connections. Both run the same Chinese Windows application. A user can share the local screen and system sound or control another computer over a direct WebRTC connection with TURN fallback.
+A remote desktop for Windows, with attended assistance and accountless access to personally paired devices. Both PCs run the same Chinese Windows app. Screen, system sound, and input use WebRTC, with direct connections preferred and TURN as a fallback.
 
 ## Windows app
 
-Extract **`evp-remote-windows-x64.zip` on both PCs** and open **EvpRemote.exe**. On the controlled PC select **共享本机**, enter the deployment key and create a one-time invitation. On the other PC select **远程连接**, enter the invite and request a connection. The host approves the pending request and can end sharing locally at any time. The viewer uses an independent control window. Both roles use native WebRTC and the same deployed signaling service. See the [native runbook](docs/runbooks/native-windows.md) and [validation record](docs/evidence/native-windows-preview.md).
+Extract **`evp-remote-windows-x64.zip` on both PCs** and open **EvpRemote.exe**. Choose the mode that fits:
+
+- For **远程协助** (Remote Assistance), select **共享本机** on the controlled PC and use the deployment key to create an invitation. On the controlling PC, enter the invitation under **远程协助**. The host approves each request.
+- For **我的设备** (My Devices), configure the same device-capable signaling server on both PCs, pair once, and enable inbound control on each PC you want to control. Select an online paired device to reconnect. The target app must be running on an unlocked desktop. Each PC stores its own list of trusted peers.
+
+See the [native runbook](docs/runbooks/native-windows.md) for setup and revocation, and the [signaling upgrade](docs/runbooks/windows-session.md#enable-my-devices-on-the-same-server) for the My Devices server requirement.
 
 ## Browser compatibility client for development
 

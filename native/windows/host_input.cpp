@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <Windows.h>
+#include <wtsapi32.h>
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -32,7 +33,21 @@ bool isDefaultDesktop() {
     return available;
 }
 
-QString checkWindowsEnvironment() {
+bool isSessionActiveAndUnlocked() {
+    LPWSTR buffer = nullptr;
+    DWORD bytes = 0;
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSSessionInfoEx,
+                                     &buffer, &bytes))
+        return false;
+    const auto* info = reinterpret_cast<const WTSINFOEXW*>(buffer);
+    const bool available = info && bytes >= sizeof(*info) && info->Level == 1 &&
+                           info->Data.WTSInfoExLevel1.SessionState == WTSActive &&
+                           info->Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_UNLOCK;
+    WTSFreeMemory(buffer);
+    return available;
+}
+
+QString checkInputDesktop() {
     if (GetSystemMetrics(SM_CMONITORS) != 1)
         return QStringLiteral("远程键鼠需要本机仅启用一个显示器。");
     return isDefaultDesktop() ? QString{} : desktopUnavailable;
@@ -114,8 +129,7 @@ void releaseReverse(std::vector<int>& held, Release release) {
 
 HostInput::HostInput(Sender sender, EnvironmentCheck environmentCheck)
     : sender_(sender ? std::move(sender) : Sender{sendWindowsInput}),
-      environmentCheck_(environmentCheck ? std::move(environmentCheck)
-                                         : EnvironmentCheck{checkWindowsEnvironment}) {
+      environmentCheck_(std::move(environmentCheck)) {
     heldKeys_.reserve(scanCodes().size());
     heldButtons_.reserve(std::size(buttonDown));
 }
@@ -125,7 +139,9 @@ HostInput::~HostInput() {
 }
 
 QString HostInput::checkEnvironment() const {
-    return environmentCheck_();
+    if (environmentCheck_)
+        return environmentCheck_();
+    return isSessionActiveAndUnlocked() ? checkInputDesktop() : desktopUnavailable;
 }
 
 QString HostInput::arm() {
