@@ -5,6 +5,8 @@
 #include <QLocale>
 #include <QSettings>
 #include <QTranslator>
+#include <cstdio>
+#include <cstring>
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
@@ -12,6 +14,10 @@ int main(int argc, char** argv) {
     app.setApplicationName("EVP Remote");
     app.setApplicationVersion(QStringLiteral(EVP_PACKAGE_VERSION));
     app.setApplicationDisplayName(QStringLiteral("EVP 远程"));
+    if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
+        std::puts(EVP_PACKAGE_VERSION);
+        return 0;
+    }
     QLocale::setDefault(QLocale(QLocale::Chinese, QLocale::China));
     QTranslator translator;
     if (translator.load("qtbase_zh_CN", QLibraryInfo::path(QLibraryInfo::TranslationsPath)))

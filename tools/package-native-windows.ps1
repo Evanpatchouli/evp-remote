@@ -41,6 +41,56 @@ function Assert-X64Image([string] $Path) {
     finally { $reader.Dispose() }
 }
 
+function New-PortableExecutable([string] $Archive, [string] $Destination) {
+    $framework = Join-Path $env:SystemRoot 'Microsoft.NET/Framework64/v4.0.30319'
+    $compiler = Get-RequiredFile (Join-Path $framework 'csc.exe')
+    $work = Split-Path -LiteralPath $Archive
+    $assemblyInfo = Join-Path $work 'PortableVersion.cs'
+    $numericVersion = "$($parsedVersion.Major).$($parsedVersion.Minor).$($parsedVersion.Patch).0"
+    [IO.File]::WriteAllLines($assemblyInfo, @(
+        'using System.Reflection;'
+        '[assembly: AssemblyTitle("EVP Remote Portable")]'
+        '[assembly: AssemblyProduct("EVP Remote")]'
+        "[assembly: AssemblyFileVersion(`"$numericVersion`")]"
+        "[assembly: AssemblyInformationalVersion(`"$version`")]"
+    ))
+    $arguments = @(
+        '/nologo', '/noconfig', '/target:winexe', '/platform:x64', '/optimize+', '/codepage:65001'
+        '/reference:System.dll', '/reference:System.IO.Compression.dll'
+        '/reference:System.IO.Compression.FileSystem.dll', '/reference:System.Windows.Forms.dll'
+        "/resource:$([IO.Path]::GetFileName($Archive)),evp-remote-client.zip", "/out:$Destination"
+        $assemblyInfo, (Join-Path $repo 'native/windows/portable/PortableLauncher.cs')
+    )
+    Push-Location -LiteralPath $work
+    try {
+        & $compiler @arguments
+        if ($LASTEXITCODE -ne 0) { throw 'Building the single-file portable client failed.' }
+    } finally { Pop-Location }
+    Assert-X64Image $Destination
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($Destination).ProductVersion -cne $version) {
+        throw 'The portable executable does not match the package version.'
+    }
+}
+
+function Publish-ClientPair([string] $ZipSource, [string] $ExeSource, [string] $ZipPath, [string] $ExePath) {
+    $backup = Join-Path (Split-Path -LiteralPath $ZipSource) 'previous.zip'
+    $lockName = Join-Path (Split-Path -LiteralPath $ZipPath) '.evp-client-publish.lock'
+    $publishLock = [IO.FileStream]::new($lockName, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write,
+        [IO.FileShare]::None, 1, [IO.FileOptions]::DeleteOnClose)
+    try {
+        $hadZip = [IO.File]::Exists($ZipPath)
+        if ($hadZip) { [IO.File]::Replace($ZipSource, $ZipPath, $backup) }
+        else { [IO.File]::Move($ZipSource, $ZipPath) }
+        try { [IO.File]::Move($ExeSource, $ExePath, $true) }
+        catch {
+            if ($hadZip) { [IO.File]::Move($backup, $ZipPath, $true) }
+            else { [IO.File]::Delete($ZipPath) }
+            throw
+        }
+        [IO.File]::Delete($backup)
+    } finally { $publishLock.Dispose() }
+}
+
 function Get-Imports([string] $Path) {
     $lines = & $dumpbin /nologo /dependents $Path
     if ($LASTEXITCODE -ne 0) { throw "Could not read runtime dependencies from $Path" }
@@ -132,13 +182,17 @@ if (!$OutputDir) {
 }
 $dist = [IO.Directory]::CreateDirectory($OutputDir).FullName
 $destination = Join-Path $dist 'evp-remote-windows-x64.zip'
-$temporaryZip = Join-Path $dist ('native-preview-' + [guid]::NewGuid().ToString('N') + '.zip')
+$portable = Join-Path $dist 'evp-remote-windows-x64-portable.exe'
+$packageWork = Join-Path $dist ('.pack-' + [guid]::NewGuid().ToString('N'))
+$temporaryZip = Join-Path $packageWork 'payload.zip'
+$temporaryExe = Join-Path $packageWork 'evp-remote-windows-x64-portable.exe'
 $tempDirectory = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $stagingName = 'evp-remote-native-' + [guid]::NewGuid().ToString('N')
 $staging = [IO.Directory]::CreateDirectory((Join-Path $tempDirectory $stagingName)).FullName
 $systemDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::System)
 
 try {
+    [void][IO.Directory]::CreateDirectory($packageWork)
     $app = Join-Path $staging 'EvpRemote.exe'
     Copy-Item -LiteralPath $exe -Destination $app
     $deployArgs = @(
@@ -171,7 +225,7 @@ try {
     [IO.File]::WriteAllLines((Join-Path $staging 'evp-remote.ini'), @('[General]', "signalingUrl=$iniValue"))
     [IO.File]::WriteAllLines((Join-Path $staging '使用说明.txt'), @(
         "EVP 远程 $version · Windows x64"
-        '两台电脑都完整解压同一个压缩包，双击 EvpRemote.exe。'
+        '两台电脑各自双击便携版 EXE 即可打开；使用 ZIP 时，先完整解压再打开 EvpRemote.exe。'
         ''
         '打开侧栏「远程协助」。被控端在「共享本机」标签中输入部署密钥并创建邀请码，控制端在「远程协助」标签中填写相同的信令地址及邀请码。'
         '两种码的有效期可选 5、15、30 分钟或 1、2、5、12 小时，默认 5 分钟。通常由本机确认，生成时勾选「持码免本机确认」可预先授权本次邀请码或配对码。自定义邀请码需要升级信令服务。'
@@ -299,14 +353,24 @@ try {
     }
 
     [IO.Compression.ZipFile]::CreateFromDirectory($staging, $temporaryZip, [IO.Compression.CompressionLevel]::Optimal, $false)
-    [IO.File]::Move($temporaryZip, $destination, $true)
+    New-PortableExecutable $temporaryZip $temporaryExe
+    $artifacts = @(
+        [pscustomobject]@{ Algorithm = 'SHA256'; Hash = (Get-FileHash -LiteralPath $temporaryZip -Algorithm SHA256).Hash; Path = $destination }
+        [pscustomobject]@{ Algorithm = 'SHA256'; Hash = (Get-FileHash -LiteralPath $temporaryExe -Algorithm SHA256).Hash; Path = $portable }
+    )
+    Publish-ClientPair $temporaryZip $temporaryExe $destination $portable
 }
 finally {
-    if ([IO.File]::Exists($temporaryZip)) { [IO.File]::Delete($temporaryZip) }
+    foreach ($scratchFile in $temporaryZip, $temporaryExe, (Join-Path $packageWork 'PortableVersion.cs')) {
+        [IO.File]::Delete($scratchFile)
+    }
+    if ([IO.Directory]::Exists($packageWork) -and ![IO.File]::Exists((Join-Path $packageWork 'previous.zip'))) {
+        [IO.Directory]::Delete($packageWork)
+    }
     if ($staging.StartsWith($tempDirectory, [StringComparison]::OrdinalIgnoreCase) -and
         (Split-Path $staging -Leaf).StartsWith('evp-remote-native-', [StringComparison]::Ordinal)) {
         Remove-Item -LiteralPath $staging -Recurse -Force
     }
 }
-Write-Host "Packaged EVP Remote $version at $destination"
-Get-FileHash -LiteralPath $destination -Algorithm SHA256
+Write-Host "Packaged EVP Remote $version at $destination and $portable"
+$artifacts

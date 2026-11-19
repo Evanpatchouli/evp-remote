@@ -2,7 +2,7 @@
 
 ## Remote Assistance
 
-Extract the same **`evp-remote-windows-x64.zip`** on each Windows PC and open **EvpRemote.exe**. A configuration that already has My Devices set up opens its device list. Use the sidebar to start Remote Assistance. The active viewer gets its own control window, and a machine can switch roles after ending its current invitation or session.
+On each Windows PC, double-click **`evp-remote-windows-x64-portable.exe`**. Alternatively, extract **`evp-remote-windows-x64.zip`** and open **EvpRemote.exe**. A configuration that already has My Devices set up opens its device list. Use the sidebar to start Remote Assistance. The active viewer gets its own control window, and a machine can switch roles after ending its current invitation or session.
 
 1. On the PC to share, open **远程协助** and choose the **共享本机** tab. Enter the signaling address and deployment key, choose the invitation lifetime, and select **创建邀请码**. Send the one-time code privately to the intended viewer. The app clears the deployment key field after use.
 2. On the controlling PC, open **远程协助** in the sidebar. In its **远程协助** tab, paste the invitation and select **请求连接**. Both PCs use the same signaling address. The host normally reviews this request and selects **同意并开始共享** or **拒绝**.
@@ -45,9 +45,12 @@ npm run build
 
 `npm run build` invokes `build:client`, which runs `tools/build-client.ps1`. CMake caches the SDK locations in `.build/windows-x64` for subsequent runs. For a different build directory or a prefilled signaling address, pass options through npm, for example `npm run build -- -BuildDir "D:\EVP Build" -DefaultSignalUrl wss://remote.example.net/`.
 
-The output is `release/<version>/evp-remote-windows-x64.zip`. Set `version` in the root `package.json` before running the build. The executable's file and product version strings retain the full version, including prerelease and build labels. The numeric Windows version uses the three numeric components and a zero fourth field. Rebuilding the same version replaces its ZIP after packaging succeeds. Other versions keep their own directories.
+Set `version` in the root `package.json` before building. The packager writes two artifacts in `release/<version>/` and prints a SHA-256 hash for each.
 
-The ZIP contains one application executable, Qt and FFmpeg runtime files, the app-local VC runtime and dependency notices. The packager checks the executable's version and runtime dependencies before publishing the ZIP and prints its SHA-256 hash.
+- `evp-remote-windows-x64.zip` contains the native client, Qt and FFmpeg runtime files, the app-local VC runtime, default signaling configuration and dependency notices.
+- `evp-remote-windows-x64-portable.exe` embeds that exact ZIP. The Windows .NET Framework launcher extracts the bundled files into a fresh directory under `%TEMP%`, opens the same native client, waits for it to exit, and removes the temporary directory. Each Windows user retains their existing settings and device pairings. The operating system supplies the launcher runtime. The build uses the 64-bit .NET Framework 4.x C# compiler under `%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319`.
+
+Both executables carry the full package version in their product metadata. Rebuilding the same version replaces the pair. Close a running release-directory portable EXE before replacing it. To verify a release, run `pwsh -File tools/test-portable-windows.ps1`. The smoke checks the embedded ZIP, launches the portable EXE alone with `--version`, and checks that the runtime directory is removed. For a visible home-window and close test, use `-GuiTestUser 'DOMAIN\user'` from that disposable user's interactive desktop.
 
 ## Verify the two native roles
 

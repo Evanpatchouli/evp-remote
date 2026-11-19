@@ -1,5 +1,12 @@
 # Current task
 
+## Single-file Windows client
+
+- **Execute / S2.** Package the verified native runtime as both the existing ZIP and a double-clickable x64 portable EXE in the manifest version's release directory.
+- **Verify / S0.** Compare the embedded payload with the ZIP, launch a copy of the EXE from a directory containing no companion files, and check version, exit handling and temporary-file cleanup.
+
+The standalone smoke matched the embedded ZIP byte for byte and started the packaged native Qt runtime through its version command. Two concurrent launches returned the package version and cleaned both run directories. A held portable EXE during same-version packaging preserved the previous release pair.
+
 ## Floating window corners
 
 - **Investigate / S0.** Reproduce the gray corner on both selector popups and inspect the isolated window pixels.

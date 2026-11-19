@@ -4,7 +4,7 @@ A remote desktop for Windows, with attended assistance and accountless access to
 
 ## Windows app
 
-Extract **`evp-remote-windows-x64.zip` on both PCs** and open **EvpRemote.exe**. Choose the mode that fits:
+On each PC, double-click **`evp-remote-windows-x64-portable.exe`**, or extract **`evp-remote-windows-x64.zip`** and open **EvpRemote.exe**. Both packages run the same client.
 
 - For **远程协助** (Remote Assistance), use the **共享本机** tab on the controlled PC to create an invitation. On the controlling PC, enter it in the **远程协助** tab. The host can confirm when the request arrives or preapprove one redemption when issuing the code.
 - For **我的设备** (My Devices), configure the same device-capable signaling server on both PCs, pair once, and enable inbound control on each PC you want to control. Select an online paired device to reconnect. The target app must be running on an unlocked desktop. Each PC stores its own list of trusted peers.
@@ -13,7 +13,7 @@ Both code selectors offer seven lifetimes from five minutes to twelve hours. The
 
 ## Production build
 
-Run `npm run build` from the repository root on Windows. It configures CMake, compiles the x64 Release client, and packages it at `release/<version>/evp-remote-windows-x64.zip`. The folder name and the executable's product version come from the root `package.json`. On a new build machine, set the paths to Qt, WebRTC and FFmpeg first. [Windows build prerequisites](docs/runbooks/native-windows.md#build-both-roles)
+Run `npm run build` from the repository root on Windows. It builds the x64 Release client and writes `evp-remote-windows-x64-portable.exe` and `evp-remote-windows-x64.zip` to `release/<version>/`. The root `package.json` supplies the version for both artifacts. On a new build machine, set the paths to Qt, WebRTC and FFmpeg first. [Windows build prerequisites](docs/runbooks/native-windows.md#build-both-roles)
 
 Run `npm run build:server` to load the versioned signaling image into local Docker. Run `npm run build:server:push` to build and publish its Linux amd64 and arm64 variants to GHCR. Both commands use the same script and the root package version. [Server image build and publishing](docs/runbooks/windows-session.md#build-and-publish-the-server-image)
 
