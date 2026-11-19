@@ -104,6 +104,7 @@ class DesktopController final : public QObject {
     bool connected_ = false, channel_ = false, audio_ = false, offered_ = false, relayOnly_ = false;
     bool everOpened_ = false, playout_ = false, inputFault_ = false;
     bool hostArmed_ = false, highRefresh_ = false, withAudio_ = true;
+    bool hostAudioUnavailable_ = false;
     bool trustedSession_ = false;
     QString route_, encoder_;
     QSize captureSize_;

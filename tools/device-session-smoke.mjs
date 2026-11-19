@@ -121,12 +121,13 @@ async function pair(stage, hostProfile, viewerProfile) {
   return [hostReport.id, viewerReport.id];
 }
 
-async function control(stage, hostProfile, hostId, viewerProfile, viewerId) {
+async function control(stage, hostProfile, hostId, viewerProfile, viewerId, probeCase) {
   const online = channel();
   const input = channel();
   let restart;
   const viewerDone = resolve(profiles, `${stage}.done`);
-  const host = launch('host', hostProfile, stage, { EVP_PROBE_VIEWER_DONE: viewerDone }, data => {
+  const caseEnv = probeCase ? { EVP_PROBE_CASE: probeCase } : {};
+  const host = launch('host', hostProfile, stage, { ...caseEnv, EVP_PROBE_VIEWER_DONE: viewerDone }, data => {
     if (data.registered) online.publish(data.id);
     if (data.inputDelivered && stage === 'disconnect' && !restart) {
       restart = (async () => {
@@ -138,7 +139,7 @@ async function control(stage, hostProfile, hostId, viewerProfile, viewerId) {
   });
   host.then(() => online.fail(new Error(`Host did not register for ${stage}`)), online.fail);
   assert.equal(await online.received, hostId);
-  const viewer = launch('viewer', viewerProfile, stage, { EVP_PROBE_TARGET: hostId })
+  const viewer = launch('viewer', viewerProfile, stage, { ...caseEnv, EVP_PROBE_TARGET: hostId })
     .then(async report => { await writeFile(viewerDone, 'done'); return report; });
   const [hostReport, viewerReport] = await Promise.all(stage === 'disconnect' ? [host, viewer, input.received] : [host, viewer]);
   assert.equal(hostReport.passed, true);
@@ -154,7 +155,7 @@ async function control(stage, hostProfile, hostId, viewerProfile, viewerId) {
   else assert.equal(hostReport.mediaStops, 1);
   if (stage === 'revoke') assert.equal(hostReport.releasedKeys, 1);
   assert.equal(viewerReport.route, route);
-  assert.equal(viewerReport.receivedAudio, true);
+  assert.equal(viewerReport.receivedAudio, probeCase !== 'audio-unavailable');
   assert.ok(viewerReport.presents >= 4);
   assert.ok(viewerReport.gpuDecoded + viewerReport.cpuDecoded >= 4);
   assert.equal(viewerReport.presentationFailures, 0);
@@ -179,6 +180,7 @@ async function verifyDevices() {
   await control('control', 'first', firstId, 'second', secondId);
   await control(route === 'direct' ? 'revoke' : 'control', 'second', secondId, 'first', firstId);
   if (route === 'direct') {
+    await control('control', 'first', firstId, 'second', secondId, 'audio-unavailable');
     await control('disabled', 'second', secondId, 'first', firstId);
     await control('locked', 'first', firstId, 'second', secondId);
     await control('lock-active', 'first', firstId, 'second', secondId);
@@ -195,7 +197,7 @@ async function verifyDevices() {
     inputDelivered: true, ...(route === 'direct' ? { wrongCodeRejected: true, pairingDeclined: true,
       codeReplacedOnEdit: true, preapprovedPairingWithoutMedia: true,
       consumedCodeRefused: true, lockedRefused: true, activeDesktopLossStopped: true, sessionDisconnectStopped: true,
-      disabledRefused: true, releasedKeysOnRevoke: true, reregisteredWithoutResuming: true,
+      disabledRefused: true, audioUnavailablePreservedControl: true, releasedKeysOnRevoke: true, reregisteredWithoutResuming: true,
       removedWhileOffline: true, rejectedAfterUnpair: true } : {}) }));
 }
 

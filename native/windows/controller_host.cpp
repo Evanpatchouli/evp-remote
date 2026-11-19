@@ -102,6 +102,13 @@ void DesktopController::hostReady(const std::vector<IceServer>& servers) {
                 c.finish(QStringLiteral("共享引擎无法继续运行，请检查显示器、编码设备和网络。"), true);
         });
     };
+    cb.audioUnavailable = [this] {
+        hostAudioUnavailable_ = true;
+        if (connected_)
+            updateHostStatus();
+        else
+            home_.setStatus(QStringLiteral("系统声音不可用，正在建立屏幕共享…"));
+    };
     cb.audioError = [gate](std::string) {
         gate->inputGrant = 0;
         gate->post([](DesktopController& c) {
@@ -110,10 +117,10 @@ void DesktopController::hostReady(const std::vector<IceServer>& servers) {
     };
     host_ = std::make_unique<RtcHost>(std::move(cb), hostAdapters_.media ? hostAdapters_.media() : nullptr);
     home_.setHostActive(true);
-    home_.setStatus(withAudio_ ? QStringLiteral("正在共享本机屏幕和系统声音，等待对方连接…")
+    home_.setStatus(withAudio_ ? QStringLiteral("正在准备共享本机屏幕和系统声音…")
                                : QStringLiteral("正在共享本机屏幕，等待对方连接…"));
     if (!host_->start(servers, relayOnly_, withAudio_, highRefresh_ ? 144 : 60)) {
-        finish(QStringLiteral("无法启动共享。请检查主显示器和声音输出，或取消「共享系统声音」再试。"), true);
+        finish(QStringLiteral("无法启动共享。请检查主显示器和编码设备后重试。"), true);
         return;
     }
     sampler_.start();
@@ -209,6 +216,8 @@ void DesktopController::updateHostStatus() {
         details << QStringLiteral("%1 × %2").arg(captureSize_.width()).arg(captureSize_.height());
     if (!encoder_.isEmpty())
         details << encoder_;
+    if (hostAudioUnavailable_)
+        details << QStringLiteral("系统声音不可用");
     home_.setStatus(details.join(QStringLiteral(" · ")));
 }
 } // namespace evp

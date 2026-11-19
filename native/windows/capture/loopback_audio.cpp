@@ -158,7 +158,8 @@ private:
     bool packed24_ = false;
 };
 
-void run(std::stop_token stop, const LoopbackAudio::AudioCallback& onAudio, bool& started) {
+void run(std::stop_token stop, const LoopbackAudio::AudioCallback& onAudio,
+         const LoopbackAudio::ErrorCallback& onStartupResult, bool& started) {
     const ComApartment apartment;
     const AudioEvent event;
     if (!event.handle) require(HRESULT_FROM_WIN32(GetLastError()), "WASAPI CreateEvent");
@@ -189,6 +190,7 @@ void run(std::stop_token stop, const LoopbackAudio::AudioCallback& onAudio, bool
         IAudioClient* client;
         ~StopClient() { client->Stop(); }
     } stopClient{client.Get()};
+    onStartupResult({});
 
     auto deadline = Clock::now() + 10ms;
     while (!stop.stop_requested()) {
@@ -227,16 +229,16 @@ void run(std::stop_token stop, const LoopbackAudio::AudioCallback& onAudio, bool
 
 LoopbackAudio::~LoopbackAudio() { stop(); }
 
-bool LoopbackAudio::start(AudioCallback onAudio, ErrorCallback onError, ErrorCallback onRuntimeError) {
-    if (worker_.joinable() || !onAudio) return false;
+bool LoopbackAudio::start(AudioCallback onAudio, ErrorCallback onStartupResult, ErrorCallback onRuntimeError) {
+    if (worker_.joinable() || !onAudio || !onStartupResult) return false;
     try {
-        worker_ = std::jthread([onAudio = std::move(onAudio), onError = std::move(onError),
+        worker_ = std::jthread([onAudio = std::move(onAudio), onStartupResult = std::move(onStartupResult),
                                onRuntimeError = std::move(onRuntimeError)](std::stop_token stop) {
             bool started = false;
             try {
-                run(stop, onAudio, started);
+                run(stop, onAudio, onStartupResult, started);
             } catch (const std::exception& error) {
-                const auto& notify = started && onRuntimeError ? onRuntimeError : onError;
+                const auto& notify = started ? onRuntimeError : onStartupResult;
                 if (!stop.stop_requested() && notify) notify(QString::fromUtf8(error.what()));
             }
         });

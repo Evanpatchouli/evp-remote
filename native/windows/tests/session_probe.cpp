@@ -5,6 +5,7 @@
 #include "ui/session_window.h"
 #include <QApplication>
 #include <QCheckBox>
+#include <QLabel>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLineEdit>
@@ -50,8 +51,9 @@ int runViewerProbe(int argc, char** argv) {
                          device == "wrong-pair" || device == "expired-pair";
     const bool expectBlocked = device == "disabled" || device == "locked" || device == "forgotten";
     const auto expectedRoute = qEnvironmentVariable("EVP_PROBE_ROUTE", "direct");
-    const bool expectDenial = qEnvironmentVariable("EVP_PROBE_CASE") == "deny";
-    const bool expectAudio = qEnvironmentVariable("EVP_PROBE_CASE") != "video-only";
+    const auto scenario = qEnvironmentVariable("EVP_PROBE_CASE");
+    const bool expectDenial = scenario == "deny";
+    const bool expectAudio = scenario != "video-only" && scenario != "audio-unavailable";
     if (url.host() != "127.0.0.1" || (device.isEmpty() && invite.isEmpty()) || (pairing && pairingCode.isEmpty()))
         return 2;
     evp::DesktopController client(home, {}, device_probe::storePath(preferences.path()), url);
@@ -135,6 +137,11 @@ int runViewerProbe(int argc, char** argv) {
                     break;
             if (!window)
                 return;
+            if (!expectAudio &&
+                !window->findChild<QLabel*>("sessionStatus")->text().contains(QStringLiteral("对方未共享声音"))) {
+                app.exit(5);
+                return;
+            }
             auto* surface = window->findChild<QWidget*>("remoteSurface");
             if (!surface)
                 return;

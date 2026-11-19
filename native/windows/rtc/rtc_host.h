@@ -18,7 +18,8 @@ public:
     virtual bool startVideo(webrtc_AdaptedVideoTrackSource* source, int maxFps, Error error, VideoSize size) = 0;
     // Submit 10 ms of 48 kHz interleaved signed 16-bit stereo at a time.
     // The second argument of Pcm counts frames per channel.
-    virtual bool startAudio(Pcm pcm, Error startupError, Error runtimeError) = 0;
+    // After returning true, report startup once with an empty message on success, unless stopped.
+    virtual bool startAudio(Pcm pcm, Error startupResult, Error runtimeError) = 0;
     // Stop and join producers before returning. The source may then be reused.
     virtual void stop() = 0;
 };
@@ -35,6 +36,7 @@ public:
         std::function<void(std::string)> error;
         std::function<void(std::function<void()>)> post;
         std::function<void(std::string)> encoder;
+        std::function<void()> audioUnavailable;
         std::function<void(std::string)> audioError;
         std::function<void(int, int)> videoSize;
     };

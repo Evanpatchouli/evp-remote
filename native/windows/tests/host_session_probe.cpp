@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSettings>
@@ -56,7 +57,7 @@ void publish(webrtc_AdaptedVideoTrackSource* source, unsigned counter) {
 // This source and the recording input sink are linked only to the probe executable.
 class SyntheticSource final : public evp::HostMediaSource {
   public:
-    explicit SyntheticSource(Observations& o) : seen(o) {}
+    SyntheticSource(Observations& o, bool audioUnavailable) : seen(o), audioUnavailable(audioUnavailable) {}
     ~SyntheticSource() override {
         stop();
     }
@@ -72,9 +73,15 @@ class SyntheticSource final : public evp::HostMediaSource {
         });
         return true;
     }
-    bool startAudio(Pcm pcm, Error, Error) override {
+    bool startAudio(Pcm pcm, Error startupResult, Error) override {
         ++seen.audioStarts;
-        audio = std::jthread([pcm = std::move(pcm)](std::stop_token stopped) {
+        audio = std::jthread([pcm = std::move(pcm), startupResult = std::move(startupResult),
+                              unavailable = audioUnavailable](std::stop_token stopped) {
+            if (unavailable) {
+                startupResult("WASAPI default render endpoint (0x80070490)");
+                return;
+            }
+            startupResult({});
             std::int16_t tone[960];
             std::uint64_t samples = 0;
             auto deadline = std::chrono::steady_clock::now();
@@ -100,6 +107,7 @@ class SyntheticSource final : public evp::HostMediaSource {
         ++seen.stops;
     }
     Observations& seen;
+    const bool audioUnavailable;
     std::jthread video, audio;
 };
 void print(const QJsonObject& obj) {
@@ -143,13 +151,14 @@ int runHostProbe(int argc, char** argv) {
     const bool legacyBroker = invitationCase == "auto-invite-legacy";
     const bool invalidProof = invitationCase == "auto-invite-invalid-proof";
     const bool autoInvite = invitationCase == "auto-invite" || legacyBroker || invalidProof;
-    const bool withAudio = qEnvironmentVariable("EVP_PROBE_CASE") != "video-only";
+    const bool withAudio = invitationCase != "video-only";
+    const bool audioUnavailable = invitationCase == "audio-unavailable";
     const bool delayedRelease = revoke || qEnvironmentVariable("EVP_PROBE_CASE") == "release-retry";
     const bool relay = qEnvironmentVariable("EVP_PROBE_ROUTE") == "relay";
     Observations seen;
     QElapsedTimer releaseDelay;
     evp::HostAdapters adapters;
-    adapters.media = [&] { return std::make_unique<SyntheticSource>(seen); };
+    adapters.media = [&] { return std::make_unique<SyntheticSource>(seen, audioUnavailable); };
     adapters.input = [&] {
         return std::make_unique<evp::HostInput>(
             [&](const INPUT& input) {
@@ -193,6 +202,7 @@ int runHostProbe(int argc, char** argv) {
     evp::DesktopController controller(home, std::move(adapters), device_probe::storePath(prefs.path()), url);
     home.show();
     auto button = [&](const char* name) { return home.findChild<QPushButton*>(name); };
+    auto* status = home.findChild<QLabel*>("bannerMessage");
     const QString preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
     const device_probe::Ui ui(home);
     if ((device.isEmpty() || pairing) && !ui.saveSettings(url, key))
@@ -320,7 +330,9 @@ int runHostProbe(int argc, char** argv) {
                 if (!shareStop || !shareStop->isVisible() || !shareStop->isEnabled() ||
                     !shareStop->window()->testAttribute(Qt::WA_DontShowOnScreen) || audio->isEnabled() ||
                     refresh->isEnabled() || relayOnly->isEnabled() || !inbound->isEnabled() ||
-                    button("saveSettings")->isEnabled()) {
+                    button("saveSettings")->isEnabled() ||
+                    (audioUnavailable && (!audio->isChecked() ||
+                     !status->text().contains(QStringLiteral("系统声音不可用"))))) {
                     app.exit(5);
                     return;
                 }
@@ -426,6 +438,10 @@ int runHostProbe(int argc, char** argv) {
             button("hostApprove")->click();
         }
         if (seen.receivedInput() && (!delayedRelease || seen.heldDown)) {
+            if (audioUnavailable && !status->text().contains(QStringLiteral("系统声音不可用"))) {
+                app.exit(5);
+                return;
+            }
             if (autoInvite) {
                 for (auto* widget : QApplication::allWidgets()) {
                     if (widget->objectName() == "trustedShareStop" && widget->isVisible()) {

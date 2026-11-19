@@ -615,6 +615,7 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
     else
         home_.setBusy(false);
     hostArmed_ = highRefresh_ = false;
+    hostAudioUnavailable_ = false;
     withAudio_ = true;
     encoder_.clear();
     captureSize_ = {};

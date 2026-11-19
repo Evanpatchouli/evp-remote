@@ -9,8 +9,8 @@ import { createSignalServer } from '../server/signaling.mjs';
 // devices, OS input, and local clicks use test adapters. Invitations stay in memory.
 const directory = process.argv[2];
 const mode = process.argv[3] || 'direct';
-if (!directory || !['direct', 'deny', 'relay', 'video-only', 'release-retry', 'auto-invite'].includes(mode)) {
-  throw new Error('Usage: node tools/unified-session-smoke.mjs <probe runtime directory> [direct|relay|deny|video-only|release-retry|auto-invite]');
+if (!directory || !['direct', 'deny', 'relay', 'video-only', 'release-retry', 'auto-invite', 'audio-unavailable'].includes(mode)) {
+  throw new Error('Usage: node tools/unified-session-smoke.mjs <probe runtime directory> [direct|relay|deny|video-only|release-retry|auto-invite|audio-unavailable]');
 }
 const key = randomBytes(24).toString('base64url');
 const turnUrls = (process.env.EVP_TURN_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
@@ -62,7 +62,7 @@ try {
     assert.equal(reports.host.inputDelivered,true);
     if(mode==='release-retry') assert.equal(reports.host.releasedAfterRevocation,1);
     assert.equal(reports.viewer.route,mode==='relay'?'relay':'direct');
-    assert.equal(reports.viewer.receivedAudio,mode!=='video-only');
+    assert.equal(reports.viewer.receivedAudio, !['video-only', 'audio-unavailable'].includes(mode));
     assert.ok(reports.viewer.gpuDecoded+reports.viewer.cpuDecoded>=4);
     assert.ok(reports.viewer.presents>=4);
     assert.equal(reports.viewer.presentationFailures,0);

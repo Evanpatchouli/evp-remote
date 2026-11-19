@@ -89,8 +89,8 @@ public:
         return desktop_.start(source, maxFps, asQtCallback(std::move(error)), std::move(size));
     }
 
-    bool startAudio(Pcm pcm, Error startupError, Error runtimeError) override {
-        return audio_.start(std::move(pcm), asQtCallback(std::move(startupError)), asQtCallback(std::move(runtimeError)));
+    bool startAudio(Pcm pcm, Error startupResult, Error runtimeError) override {
+        return audio_.start(std::move(pcm), asQtCallback(std::move(startupResult)), asQtCallback(std::move(runtimeError)));
     }
 
     void stop() override {
@@ -370,7 +370,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         signalingStarted = true;
 
         std::string error;
-        onSignalingThread([&] { error = createPeer(iceServers, relayOnly, withAudio, maxFps); });
+        onSignalingThread([&] { error = createPeer(iceServers, relayOnly, maxFps); });
         if (!error.empty()) return error;
 
         const auto captureError = [weak = weak_from_this()](std::string message) {
@@ -381,22 +381,43 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
             })) {
             return "Could not start desktop capture.";
         }
-        if (withAudio && !media.startAudio(
+        if (!withAudio) {
+            onSignalingThread([this] { createOffer(); });
+        } else if (!media.startAudio(
                 [this](const std::int16_t* samples, std::size_t frames) {
                     if (active && !failed) audioDevice.submit(samples, frames);
                 },
-                captureError,
+                [weak = weak_from_this()](std::string message) {
+                    if (const auto self = weak.lock()) {
+                        self->post([available = message.empty()](Session& session) {
+                            session.finishAudioStartup(available);
+                        });
+                    }
+                },
                 [weak = weak_from_this()](std::string message) {
                     if (const auto self = weak.lock()) self->notify(&Callbacks::audioError, std::move(message));
                 })) {
-            return "Could not start system audio capture.";
+            finishAudioStartup(false);
         }
-
-        onSignalingThread([this] { createOffer(); });
         return {};
     }
 
-    std::string createPeer(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, int maxFps) {
+    void finishAudioStartup(bool available) {
+        if (failed) return;
+        if (!available) notify(&Callbacks::audioUnavailable);
+        onSignalingThread([this, available] {
+            if (available) {
+                const auto sharedStream = own<std_string_unique_delete>(std_string_new_from_bytes(streamId.data(), streamId.size()));
+                if (auto error = addAudioTrack(std_string_unique_get(sharedStream.get())); !error.empty()) {
+                    reportError(std::move(error));
+                    return;
+                }
+            }
+            createOffer();
+        });
+    }
+
+    std::string createPeer(const std::vector<IceServer>& iceServers, bool relayOnly, int maxFps) {
         const auto dependencies = own<webrtc_PeerConnectionFactoryDependencies_delete>(
             webrtc_PeerConnectionFactoryDependencies_new());
         webrtc_PeerConnectionFactoryDependencies_set_network_thread(dependencies.get(), webrtc_Thread_unique_get(network.get()));
@@ -484,9 +505,6 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
 
         const auto sharedStream = own<std_string_unique_delete>(std_string_new_from_bytes(streamId.data(), streamId.size()));
         if (auto error = addVideoTrack(std_string_unique_get(sharedStream.get()), maxFps); !error.empty()) return error;
-        if (withAudio) {
-            if (auto error = addAudioTrack(std_string_unique_get(sharedStream.get())); !error.empty()) return error;
-        }
         return createInputChannel();
     }
 

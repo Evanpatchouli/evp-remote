@@ -19,6 +19,8 @@ Both invitation and pairing codes offer 5, 15 or 30 minutes and 1, 2, 5 or 12 ho
 
 The native sender captures desktop updates with DXGI Desktop Duplication, includes the pointer, and encodes H.264 using FFmpeg. It currently reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
 
+In both connection modes, a host with no default audio output can still share its screen and accept keyboard and mouse input. If enabled system audio cannot start, the host reports **系统声音不可用** and the viewer reports **对方未共享声音**. The saved preference applies again at the next connection.
+
 ## My Devices
 
 1. Save the same server address and its deployment key in **设置** on both PCs, then open **我的设备** and wait for **本机在线**. The server must support device registration. [Server upgrade](windows-session.md#enable-my-devices-on-the-same-server)
@@ -75,6 +77,7 @@ node tools/unified-session-smoke.mjs $testRuntime direct
 node tools/unified-session-smoke.mjs $testRuntime auto-invite
 node tools/invite-options-smoke.mjs $testRuntime
 node tools/unified-session-smoke.mjs $testRuntime video-only
+node tools/unified-session-smoke.mjs $testRuntime audio-unavailable
 node tools/unified-session-smoke.mjs $testRuntime release-retry
 node tools/native-session-smoke.mjs "$testRuntime/EvpSessionProbe.exe" direct
 node tools/device-session-smoke.mjs $testRuntime direct
