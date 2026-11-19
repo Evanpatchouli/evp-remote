@@ -62,11 +62,17 @@ On both Windows PCs, extract the same `evp-remote-windows-x64.zip` and open `Evp
 
 ## Enable My Devices on the same server
 
-From a checkout of the revision with invitation options on the Docker host, build `docker build -f deploy/linux/Dockerfile -t evp-remote-signal:code-options .`. In the existing deployment directory, record the old signal image, then set only `services.signal.image` in the effective Compose configuration to `evp-remote-signal:code-options`. Check it with `docker compose config --images`. This build supports My Devices and acknowledges the lifetime and verifier used by the new invitation options.
+From a checkout of the revision with invitation options on the Docker host, run `npm run build:server`. In the existing deployment directory, record the old signal image, then set `services.signal.image` in the effective Compose configuration to the exact versioned reference printed by the build. Check it with `docker compose config --images`. This build supports My Devices and acknowledges the lifetime and verifier used by the new invitation options.
 
 Apply with `docker compose up -d --no-deps --force-recreate --pull never signal`, then check `docker compose ps signal`. Replacing this container ends active sessions. Each Windows endpoint keeps its own trust records through the upgrade. To roll back to invitation-only service, restore the old image tag and rerun the same command.
 
 Enter the existing WSS address and deployment key once on both owned native clients, then pair them. Share only the one-time invitation with an assistance guest. Verify that both native clients show online and that an attended invitation works on the same deployment. [Pairing instructions](native-windows.md#my-devices)
+
+## Build and publish the server image
+
+Use Node.js, npm and Docker with a Linux Buildx builder. Run `npm run build:server` to build for the builder's default platform and load the image into local Docker. The image contains the signaling coordinator and the deployment kit. Compose uses the upstream coturn image for TURN traffic.
+
+To publish, set the intended release version in the root `package.json`, sign in with `docker login ghcr.io` using a credential with write access to the package, and select a builder that supports multi-platform output. Run `npm run build:server:push`. It passes `--push` to the same script and publishes a single Linux amd64/arm64 tag at `ghcr.io/evanpatchouli/evp-remote-signal:<version>`. Reusing a tag updates its contents. The deployment kit in the image references that exact tag. For versions with build metadata, the tag uses an underscore for the plus sign and the OCI version label retains the full package version. [Docker Buildx build reference](https://docs.docker.com/reference/cli/docker/buildx/build/)
 
 ## Public test node
 

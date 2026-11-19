@@ -15,6 +15,8 @@ Both code selectors offer seven lifetimes from five minutes to twelve hours. The
 
 Run `npm run build` from the repository root on Windows. It configures CMake, compiles the x64 Release client, and packages it at `release/<version>/evp-remote-windows-x64.zip`. The folder name and the executable's product version come from the root `package.json`. On a new build machine, set the paths to Qt, WebRTC and FFmpeg first. [Windows build prerequisites](docs/runbooks/native-windows.md#build-both-roles)
 
+Run `npm run build:server` to load the versioned signaling image into local Docker. Run `npm run build:server:push` to build and publish its Linux amd64 and arm64 variants to GHCR. Both commands use the same script and the root package version. [Server image build and publishing](docs/runbooks/windows-session.md#build-and-publish-the-server-image)
+
 ## Browser compatibility client for development
 
 **Portable endpoint.** Extract the Windows x64 ZIP on each PC, open `Start-EVP-Remote.cmd`, and enter the deployment's public `wss://` URL. Keep the launcher open during the session. The archive includes the Node runtime and dependencies. Build it from a Windows checkout with `npm ci` and `pwsh -File tools/package-windows.ps1`. Both the portable and source variants use the local browser and the built-in Windows .NET Framework x64 compiler.
