@@ -56,7 +56,7 @@ Look for three running services and a trusted certificate for the configured hos
 
 To upgrade, use the new release tag in `image`, run the pull and kit extraction again in the existing deployment directory, and apply the updated Compose file with `docker compose pull && docker compose up -d`. The kit contains only `compose.yaml` and `configure.sh`. If you customized either file, compare your copy before replacing it.
 
-On both Windows PCs, extract the same `evp-remote-windows-x64.zip` and open `EvpRemote.exe`. Use the same server URL from the table. Under **远程协助**, the host creates an invitation in the **共享本机** tab, and the viewer enters it in the **远程协助** tab. The default five-minute invitation prompts the host to confirm. [Native session setup](native-windows.md#remote-assistance)
+On both Windows PCs, launch the native client and save the same server URL from the table in **设置**. Save the deployment key on the host. Under **远程协助**, the host creates an invitation in **共享本机**, and the viewer enters it in **远程协助**. The default five-minute invitation prompts the host to confirm. [Native session setup](native-windows.md#remote-assistance)
 
 **Check the path.** A trusted HTTPS response of 404 at the root is expected from the signaling service for an ordinary HTTP request. Confirm a WebSocket connection by creating an invitation. Confirm TURN with a fresh session and the host's **Use TURN relay only** checkbox. To check automatic fallback, keep that box clear and use a network that blocks direct endpoint traffic while allowing the relay. Verify the selected route and actual media and input using the table below.
 
@@ -66,7 +66,7 @@ From a checkout of the revision with invitation options on the Docker host, run 
 
 Apply with `docker compose up -d --no-deps --force-recreate --pull never signal`, then check `docker compose ps signal`. Replacing this container ends active sessions. Each Windows endpoint keeps its own trust records through the upgrade. To roll back to invitation-only service, restore the old image tag and rerun the same command.
 
-Enter the existing WSS address and deployment key once on both owned native clients, then pair them. Share only the one-time invitation with an assistance guest. Verify that both native clients show online and that an attended invitation works on the same deployment. [Pairing instructions](native-windows.md#my-devices)
+Enter the existing WSS address and deployment key once in **设置** on both owned native clients, then pair them. An assistance guest saves the WSS address and uses the one-time invitation. Verify that both native clients show online and that an attended invitation works on the same deployment. [Pairing instructions](native-windows.md#my-devices)
 
 ## Build and publish the server image
 

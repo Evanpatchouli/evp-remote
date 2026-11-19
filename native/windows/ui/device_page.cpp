@@ -87,6 +87,9 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     registration_ = label({}, "deviceRegistration", 13, QFont::DemiBold);
     registration_->setWordWrap(true);
     page->addWidget(registration_);
+    settingsHint_ = label(QStringLiteral("请在左下角「设置」中保存服务器地址和部署密钥，以使用设备配对。"), "subtle", 13);
+    settingsHint_->setWordWrap(true);
+    page->addWidget(settingsHint_);
 
     auto* approval = addCard(page);
     pairApproval_ = approval->parentWidget();
@@ -166,7 +169,7 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     row(pairing, peerCode_, pair_);
 
     auto* settings = addCard(page);
-    settings->addWidget(label(QStringLiteral("远控权限与信令服务"), "fieldLabel", 14, QFont::DemiBold));
+    settings->addWidget(label(QStringLiteral("远控权限"), "fieldLabel", 14, QFont::DemiBold));
     incoming_ = new QCheckBox(QStringLiteral("允许可信设备远控本机（无需逐次确认）"));
     incoming_->setObjectName("allowTrustedControl");
     settings->addWidget(incoming_);
@@ -181,19 +184,6 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
         options->addWidget(option);
     options->addStretch();
     settings->addLayout(options);
-    url_ = field(QStringLiteral("信令服务器（wss://）"), "deviceServerUrl");
-    url_->setMaxLength(2048);
-    settings->addWidget(url_);
-    key_ = field(QStringLiteral("部署密钥（仅首次设置或更改时需要）"), "deviceDeploymentKey", true);
-    key_->setMaxLength(4096);
-    configure_ = button(QStringLiteral("保存并连接"), "configureDevices");
-    row(settings, key_, configure_);
-
-    connect(configure_, &QPushButton::clicked, this, [this] {
-        const auto secret = key_->text();
-        key_->clear();
-        emit configureRequested(QUrl(url_->text().trimmed(), QUrl::StrictMode), secret);
-    });
     connect(makeCode_, &QPushButton::clicked, this, [this] {
         const bool preapprove = code_->text().isEmpty() && autoAcceptPairing_->isChecked();
         emit codeRequested({pairingLifetime_->currentData().toInt(), preapprove});
@@ -229,7 +219,7 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     }
     setDevices({}, {});
     setPreferences({}, false);
-    setRegistration(false, QStringLiteral("配置信令服务器后即可添加设备。"));
+    setRegistration(false, QStringLiteral("本机尚未上线"));
 }
 
 void DevicePage::setIdentity(const QString& id) {
@@ -237,8 +227,8 @@ void DevicePage::setIdentity(const QString& id) {
     updateActions();
 }
 
-void DevicePage::setServer(const QUrl& url) {
-    url_->setText(url.toString(QUrl::FullyEncoded));
+void DevicePage::setConnectionConfigured(bool configured) {
+    settingsHint_->setVisible(!configured);
 }
 
 void DevicePage::setRegistration(bool online, const QString& status) {
@@ -343,9 +333,6 @@ void DevicePage::updateActions() {
     peerCode_->setEnabled(idle && registered_);
     pair_->setEnabled(peerCode_->isEnabled() && !peerCode_->text().trimmed().isEmpty());
     cancel_->setVisible(pending_ && !sessionBusy_);
-    url_->setEnabled(idle && !id_->text().isEmpty());
-    key_->setEnabled(url_->isEnabled());
-    configure_->setEnabled(url_->isEnabled());
     incoming_->setEnabled(preferencesEditable_ && (idle || incoming_->isChecked()));
     for (auto* option : {audio_, highRefresh_, relayOnly_})
         option->setEnabled(preferencesEditable_ && idle);

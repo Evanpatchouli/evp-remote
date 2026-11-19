@@ -26,7 +26,10 @@ public:
     void showDevicePage();
 
 public slots:
-    void setSignalingUrl(const QUrl& url);
+    void showSettingsPage();
+    void setConnectionSettings(const QUrl& url, bool hasKey);
+    void setConnectionSettingsEnabled(bool editable);
+    void setSettingsMessage(const QString& message);
     void setBusy(bool busy, bool trusted = false);
     void setSessionActive(bool active);
     bool setHostBusy(bool busy, bool trusted = false);
@@ -37,11 +40,11 @@ public slots:
     void showFailure(const QString& message);
 
 signals:
-    void joinRequested(const QUrl& signalingUrl, const QString& invitation);
+    void settingsRequested(const QUrl& url, const QString& key, bool forgetKey);
+    void joinRequested(const QString& invite);
     void cancelRequested();
     void sessionActivationRequested();
-    void hostRequested(const QUrl& signalingUrl, const QString& key, evp::CodeOptions options,
-                       bool highRefresh, bool relayOnly, bool withAudio);
+    void hostRequested(evp::CodeOptions options, bool highRefresh, bool relayOnly, bool withAudio);
     void hostApproved(quint64 requestId, bool highRefresh, bool relayOnly, bool withAudio);
     void hostDenied(quint64 requestId);
     void hostEndRequested();
@@ -51,9 +54,15 @@ protected:
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
 
 private:
+    enum class Page { Assistance, Devices, Settings };
     QWidget* createHostPage();
+    QWidget* createSettingsPage();
+    void selectPage(Page page);
+    void resetSettingsDraft();
+    void updateKeyPlaceholder();
+    void updateSettingsAvailability();
+    void saveSettings();
     void switchRole(bool host, bool focusTab = false);
-    QUrl requestedSignalingUrl(QLineEdit* field);
     void requestJoin();
     void requestHost();
     void pasteInvitation();
@@ -67,7 +76,6 @@ private:
     QLabel* bannerTitle_;
     QLabel* bannerMessage_;
     QLineEdit* invitation_;
-    QLineEdit* signalingUrl_;
     QPushButton* pasteButton_;
     QPushButton* joinButton_;
     QPushButton* cancelButton_;
@@ -77,6 +85,14 @@ private:
     QWidget* deviceTitle_;
     QWidget* deviceSummary_;
     QPushButton* deviceNavigation_;
+    QPushButton* settingsNavigation_;
+    QWidget* settingsPage_;
+    QWidget* settingsForm_;
+    QLineEdit* settingsServerUrl_;
+    QLineEdit* settingsDeploymentKey_;
+    QCheckBox* forgetDeploymentKey_;
+    QLabel* settingsMessage_;
+    QLabel* settingsBusyMessage_;
     QWidget* viewerFormPage_;
     QWidget* hostFormPage_;
     DevicePage* devicePage_;
@@ -89,8 +105,6 @@ private:
     QWidget* hostDecisions_;
     QPushButton* hostCreate_;
     QPushButton* hostDeny_;
-    QLineEdit* hostKey_;
-    QLineEdit* hostSignalingUrl_;
     QLineEdit* hostInvitation_;
     QLabel* invitationDetails_;
     QComboBox* invitationLifetime_;
@@ -106,7 +120,10 @@ private:
     bool busy_ = false;
     bool sessionActive_ = false;
     bool hostPage_ = false;
-    bool devicePageSelected_ = false;
+    Page page_ = Page::Assistance;
+    QUrl savedServerUrl_;
+    bool hasSavedKey_ = false;
+    bool settingsEditable_ = true;
     bool trustedSession_ = false;
     bool hostBusy_ = false;
     bool hostActive_ = false;

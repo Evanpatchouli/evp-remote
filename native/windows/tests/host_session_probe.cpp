@@ -117,6 +117,7 @@ int runHostProbe(int argc, char** argv) {
         return 2;
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, prefs.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, prefs.filePath("system"));
     app.setOrganizationName("EVP-Smoke");
     app.setApplicationName("Host");
     const QUrl url(qEnvironmentVariable("EVP_PROBE_URL"));
@@ -189,20 +190,21 @@ int runHostProbe(int argc, char** argv) {
     };
     HomeWindow home;
     home.setAttribute(Qt::WA_DontShowOnScreen);
-    home.setSignalingUrl(url);
-    evp::DesktopController controller(home, std::move(adapters), device_probe::storePath(prefs.path()));
+    evp::DesktopController controller(home, std::move(adapters), device_probe::storePath(prefs.path()), url);
     home.show();
     auto button = [&](const char* name) { return home.findChild<QPushButton*>(name); };
     const QString preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    const device_probe::Ui ui(home);
+    if ((device.isEmpty() || pairing) && !ui.saveSettings(url, key))
+        return 5;
     if (!device.isEmpty()) {
-        const device_probe::Ui ui(home);
         auto* inbound = home.findChild<QCheckBox*>("allowTrustedControl");
         auto* audio = home.findChild<QCheckBox*>("deviceShareAudio");
         auto* refresh = home.findChild<QCheckBox*>("deviceHighRefresh");
         auto* relayOnly = home.findChild<QCheckBox*>("deviceRelayOnly");
         auto* lifetime = home.findChild<QComboBox*>("pairingLifetime");
         auto* preapproved = home.findChild<QCheckBox*>("autoAcceptPairing");
-        ui.configure(key);
+        button("deviceNavigation")->click();
         if (ui.id().isEmpty())
             return 5;
         if (device == "offline-remove") {
@@ -286,7 +288,7 @@ int runHostProbe(int argc, char** argv) {
             }
             if (pairing) {
                 if (button("approveDevicePairing")->isVisible()) {
-                    if (decided || autoPair) {
+                    if (decided || autoPair || button("saveSettings")->isEnabled()) {
                         app.exit(5);
                         return;
                     }
@@ -317,7 +319,8 @@ int runHostProbe(int argc, char** argv) {
                 }
                 if (!shareStop || !shareStop->isVisible() || !shareStop->isEnabled() ||
                     !shareStop->window()->testAttribute(Qt::WA_DontShowOnScreen) || audio->isEnabled() ||
-                    refresh->isEnabled() || relayOnly->isEnabled() || !inbound->isEnabled()) {
+                    refresh->isEnabled() || relayOnly->isEnabled() || !inbound->isEnabled() ||
+                    button("saveSettings")->isEnabled()) {
                     app.exit(5);
                     return;
                 }
@@ -364,6 +367,7 @@ int runHostProbe(int argc, char** argv) {
         });
         return app.exec();
     }
+    button("navigation")->click();
     if (!preview.isEmpty())
         home.grab().save(QDir(preview).filePath("unified-home.png"));
     auto* tabs = home.findChild<QTabBar*>("assistanceTabs");
@@ -382,7 +386,6 @@ int runHostProbe(int argc, char** argv) {
     }
     if (!preview.isEmpty())
         home.grab().save(QDir(preview).filePath("unified-share.png"));
-    home.findChild<QLineEdit*>("hostKey")->setText(key);
     auto* invite = home.findChild<QLineEdit*>("hostInvitation");
     bool quietAtIssue = false;
     bool inviteEmitted = false;
@@ -463,9 +466,11 @@ int runHostProbe(int argc, char** argv) {
                                  button("join")->isEnabled();
             tabs->setCurrentIndex(1);
             const bool canSwitch = canJoin && button("hostCreate")->isVisible() &&
-                                   home.findChild<QLineEdit*>("hostKey")->text().isEmpty() &&
                                    invite->text().isEmpty() && !invitationApproval->isChecked();
-            print({{"passed", passed && cleanupOk && canSwitch},
+            button("settingsNavigation")->click();
+            const bool keyCleared = ui.field("settingsDeploymentKey")->isVisible() &&
+                                    ui.field("settingsDeploymentKey")->text().isEmpty();
+            print({{"passed", passed && cleanupOk && canSwitch && keyCleared},
                    {"roleSwitch", canSwitch},
                    {"denied", deny},
                    {"videoStarts", seen.starts},
@@ -474,7 +479,7 @@ int runHostProbe(int argc, char** argv) {
                    {"releasedAfterRevocation", seen.heldUp},
                    {"inputDelivered", seen.receivedInput()},
                    {"highRefreshRequested", seen.requested144}});
-            app.exit(passed && cleanupOk && canSwitch ? 0 : 1);
+            app.exit(passed && cleanupOk && canSwitch && keyCleared ? 0 : 1);
         });
     });
     watch.start();

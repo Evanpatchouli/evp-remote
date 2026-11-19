@@ -25,9 +25,8 @@ int main(int argc, char** argv) {
     HomeWindow home;
     const QSettings defaults(QCoreApplication::applicationDirPath() + "/evp-remote.ini",
                              QSettings::IniFormat);
-    const auto saved = QSettings().value("signaling/url", defaults.value("signalingUrl")).toString();
-    home.setSignalingUrl(QUrl(qEnvironmentVariable("EVP_SIGNAL_URL", saved)));
-    evp::DesktopController controller(home);
+    const auto address = qEnvironmentVariable("EVP_SIGNAL_URL", defaults.value("signalingUrl").toString());
+    evp::DesktopController controller(home, {}, {}, QUrl(address, QUrl::StrictMode));
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &controller, &evp::DesktopController::endSession);
     home.show();
     return app.exec();

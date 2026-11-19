@@ -19,9 +19,11 @@ class DesktopController;
 
 class DeviceConnection final : public QObject {
 public:
-    DeviceConnection(DesktopController& controller, HomeWindow& home, QString storePath);
+    DeviceConnection(DesktopController& controller, HomeWindow& home, QString storePath, const QUrl& initialAddress);
     ~DeviceConnection() override;
     bool busy() const;
+    QUrl signalingUrl() const;
+    QString deploymentKey() const;
     void updateActivity();
     bool sendMedia(const QJsonObject& data);
     void sessionEnded(const QString& message, bool notify, bool declined);
@@ -44,7 +46,7 @@ private:
         bool relayOnly = false;
     };
 
-    void configure(const QUrl& url, const QString& key);
+    void configure(const QUrl& url, const QString& key, bool forgetKey);
     void openSocket();
     void closeSocket();
     void offline(const QString& message, bool retry);
@@ -53,6 +55,7 @@ private:
     void pollPresence();
     void setOnlinePeers(QSet<QString> online);
     bool persist();
+    void storageUnavailable(QString message);
     void changePreferences(DevicePreferences options);
     void removePeer(const QString& id);
     void makePairingCode(CodeOptions options);
@@ -90,6 +93,7 @@ private:
     CodeOptions pairingOptions_;
     std::optional<Attempt> attempt_;
     bool storageFault_ = false;
+    bool storeOpen_ = false;
 };
 
 }

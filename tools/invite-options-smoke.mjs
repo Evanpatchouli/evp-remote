@@ -32,15 +32,13 @@ async function runCase(probeCase) {
       }
 
       server.on('connection', socket => {
-        socket.on('error', () => fail('Host socket failed.'));
-        if (host) {
-          fail('Unexpected second host connection.');
-          return;
-        }
-        host = socket;
+        let role;
+        socket.on('error', () => fail('Signaling socket failed.'));
         socket.on('close', () => {
-          disconnected = true;
-          checkDone();
+          if (socket === host) {
+            disconnected = true;
+            checkDone();
+          }
         });
         socket.on('message', (raw, binary) => {
           let message;
@@ -49,16 +47,28 @@ async function runCase(probeCase) {
           } catch {
             return fail('Malformed signaling frame.');
           }
-          if (!verifier) {
+          if (!role) {
+            if (message?.type === 'device-hello') {
+              if (message.key !== key) return fail('Unauthenticated device registration.');
+              role = 'device';
+              socket.send(JSON.stringify({ type: 'error', message: 'The message type is unsupported.' }),
+                error => { if (error) fail('Device protocol rejection failed.'); });
+              return;
+            }
+            if (host) return fail('Unexpected second host connection.');
             if (message?.type !== 'host' || message.key !== key || message.inviteTtlMinutes !== 720
                 || !canonicalToken(message.inviteVerifier) || Object.hasOwn(message, 'invite')) {
               return fail('Expected an authenticated 12-hour verifier registration.');
             }
+            role = 'host';
+            host = socket;
             verifier = message.inviteVerifier;
             const reply = legacy
               ? { type: 'invitation', invite: legacyCode }
               : { type: 'invitation', inviteTtlMinutes: 720, inviteVerifier: verifier };
             host.send(JSON.stringify(reply), error => { if (error) fail('Invitation response failed.'); });
+          } else if (role === 'device') {
+            fail('Device continued after protocol rejection.');
           } else if (message?.type !== 'end' && message?.type !== 'reject') {
             fail('Host sent unexpected signaling during a denied session.');
           }

@@ -18,7 +18,7 @@ class DevicePage final : public QWidget {
 public:
     explicit DevicePage(QWidget* parent = nullptr);
     void setIdentity(const QString& id);
-    void setServer(const QUrl& url);
+    void setConnectionConfigured(bool configured);
     void setRegistration(bool online, const QString& status);
     void setActivity(bool sessionBusy, bool pending);
     void setPreferences(const evp::DevicePreferences& preferences, bool editable);
@@ -29,7 +29,6 @@ public:
     void setReturnVisible(bool visible);
 
 signals:
-    void configureRequested(const QUrl& url, const QString& key);
     void codeRequested(evp::CodeOptions options);
     void pairingOptionsEdited();
     void pairingRequested(const QString& code);
@@ -49,8 +48,7 @@ private:
     QLineEdit* id_;
     QLineEdit* code_;
     QLineEdit* peerCode_;
-    QLineEdit* url_;
-    QLineEdit* key_;
+    QLabel* settingsHint_;
     QListWidget* list_;
     QLabel* emptyList_;
     QComboBox* pairingLifetime_;
@@ -64,7 +62,6 @@ private:
     QPushButton* pair_;
     QPushButton* connect_;
     QPushButton* remove_;
-    QPushButton* configure_;
     QPushButton* cancel_;
     QPushButton* return_;
     QCheckBox* incoming_;

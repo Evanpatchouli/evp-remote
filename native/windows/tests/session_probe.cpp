@@ -36,6 +36,7 @@ int runViewerProbe(int argc, char** argv) {
     app.setApplicationName("NativeSession");
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, preferences.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, preferences.filePath("system"));
     InvisibleTestWindows hidden;
     app.installEventFilter(&hidden);
     HomeWindow home;
@@ -53,17 +54,25 @@ int runViewerProbe(int argc, char** argv) {
     const bool expectAudio = qEnvironmentVariable("EVP_PROBE_CASE") != "video-only";
     if (url.host() != "127.0.0.1" || (device.isEmpty() && invite.isEmpty()) || (pairing && pairingCode.isEmpty()))
         return 2;
-    home.setSignalingUrl(url);
-    evp::DesktopController client(home, {}, device_probe::storePath(preferences.path()));
+    evp::DesktopController client(home, {}, device_probe::storePath(preferences.path()), url);
     home.show();
+    const device_probe::Ui deviceUi(home);
+    if (device.isEmpty()) {
+        if (!deviceUi.saveSettings(url))
+            return 5;
+        deviceUi.button("navigation")->click();
+    } else {
+        const auto key = qEnvironmentVariable("EVP_PROBE_KEY");
+        if (pairing && (key.isEmpty() || !deviceUi.saveSettings(url, key)))
+            return 5;
+        deviceUi.button("deviceNavigation")->click();
+    }
     home.findChild<QLineEdit*>("invitation")->setText(invite);
     auto* join = home.findChild<QPushButton*>("join");
-    const device_probe::Ui deviceUi(home);
     bool requested = false;
     bool retriedCode = false;
     QTimer watch;
     if (!device.isEmpty()) {
-        deviceUi.configure(pairing ? qEnvironmentVariable("EVP_PROBE_KEY") : QString{});
         const auto expectedPeer = qEnvironmentVariable("EVP_PROBE_TARGET");
         if (deviceUi.id().isEmpty() || (pairing ? !deviceUi.peer().isEmpty() : deviceUi.peer() != expectedPeer))
             return 5;

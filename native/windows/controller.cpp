@@ -12,7 +12,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
-#include <QSettings>
 #include <QCryptographicHash>
 #include <QUrl>
 #include <QWebSocket>
@@ -54,12 +53,6 @@ QString peerMessage(const QString& raw) {
         return QStringLiteral("对方已结束会话。");
     return QStringLiteral("信令服务未能完成请求。请检查服务器地址及邀请码。");
 }
-bool validUrl(const QUrl& u) {
-    const bool local = u.host() == "localhost" || u.host() == "127.0.0.1" || u.host() == "::1";
-    return u.isValid() && !u.host().isEmpty() && (u.scheme() == "wss" || (u.scheme() == "ws" && local)) &&
-           u.userInfo().isEmpty() && !u.hasQuery() && !u.hasFragment() &&
-           (u.path().isEmpty() || u.path() == "/");
-}
 } // namespace
 
 void DesktopController::Dispatch::frame(const I420Frame& f) {
@@ -78,13 +71,14 @@ void DesktopController::Dispatch::decoded(const DecodedVideoFrame& frame, int ro
         ++cpuDecoded;
 }
 
-DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters, QString deviceStorePath)
+DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters, QString deviceStorePath,
+                                     const QUrl& initialAddress)
     : home_(home), hostAdapters_(std::move(adapters)) {
     connect(&home, &HomeWindow::joinRequested, this, &DesktopController::join);
     connect(&home, &HomeWindow::cancelRequested, this, &DesktopController::endSession);
-    connect(&home, &HomeWindow::hostRequested, this, [this](const QUrl& url, const QString& key,
-            CodeOptions options, bool highRefresh, bool relayOnly, bool withAudio) {
-        openSignaling(Role::Host, url, key, options, highRefresh, relayOnly, withAudio);
+    connect(&home, &HomeWindow::hostRequested, this, [this](CodeOptions options, bool highRefresh,
+                                                            bool relayOnly, bool withAudio) {
+        openSignaling(Role::Host, {}, options, highRefresh, relayOnly, withAudio);
     });
     connect(&home, &HomeWindow::hostApproved, this, &DesktopController::hostApproved);
     connect(&home, &HomeWindow::hostDenied, this, &DesktopController::hostDenied);
@@ -128,19 +122,19 @@ DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters, QS
     connect(&sampler_, &QTimer::timeout, this, &DesktopController::updateStats);
     releaseRetry_.setInterval(500);
     connect(&releaseRetry_, &QTimer::timeout, this, &DesktopController::retryInputRelease);
-    devices_ = std::make_unique<DeviceConnection>(*this, home, std::move(deviceStorePath));
+    devices_ = std::make_unique<DeviceConnection>(*this, home, std::move(deviceStorePath), initialAddress);
 }
 DesktopController::~DesktopController() {
     endSession();
 }
-void DesktopController::join(const QUrl& url, const QString& invite) {
+void DesktopController::join(const QString& invite) {
     if (invite.trimmed().startsWith(QStringLiteral("EVP1."), Qt::CaseInsensitive)) {
         home_.showFailure(QStringLiteral("这是配对码，请在「我的设备」中请求配对。"));
         return;
     }
-    openSignaling(Role::Viewer, url, invite);
+    openSignaling(Role::Viewer, invite);
 }
-void DesktopController::openSignaling(Role role, const QUrl& url, const QString& credential, CodeOptions options,
+void DesktopController::openSignaling(Role role, const QString& invite, CodeOptions options,
                                       bool highRefresh, bool relayOnly, bool withAudio) {
     if (phase_ != Phase::Idle)
         return;
@@ -148,9 +142,16 @@ void DesktopController::openSignaling(Role role, const QUrl& url, const QString&
         home_.showFailure(QStringLiteral("请先结束「我的设备」中的待处理请求。"));
         return;
     }
-    if (!validUrl(url) || credential.trimmed().isEmpty()) {
-        home_.showFailure(role == Role::Viewer ? QStringLiteral("请填写有效的信令地址和邀请码。")
-                                               : QStringLiteral("请填写有效的信令地址和部署访问密钥。"));
+    const QUrl url = devices_->signalingUrl();
+    const auto credential = role == Role::Host ? devices_->deploymentKey() : invite.trimmed();
+    if (url.isEmpty() || (role == Role::Host && credential.isEmpty())) {
+        home_.showSettingsPage();
+        home_.setSettingsMessage(url.isEmpty() ? QStringLiteral("请先保存信令服务器地址。")
+                                              : QStringLiteral("创建邀请码前，请检查部署密钥和本机存储状态。"));
+        return;
+    }
+    if (credential.isEmpty()) {
+        home_.showFailure(QStringLiteral("请输入对方发来的邀请码。"));
         return;
     }
     if (role == Role::Host) {
@@ -183,7 +184,6 @@ void DesktopController::openSignaling(Role role, const QUrl& url, const QString&
         home_.setBusy(true);
     }
     home_.setStatus(QStringLiteral("正在连接信令服务…"));
-    QSettings().setValue("signaling/url", url.toString());
     socket_ = new QWebSocket(QString{}, QWebSocketProtocol::VersionLatest, this);
     socket_->setMaxAllowedIncomingMessageSize(65536);
     socket_->setMaxAllowedIncomingFrameSize(65536);

@@ -1,5 +1,12 @@
 # Current task
 
+## Shared Windows connection settings
+
+- **Execute / S2.** Place the signaling address and deployment key in Settings at the bottom of the sidebar. Use the same committed, endpoint-scoped configuration for My Devices and both assistance roles. Preserve existing credentials, pairings, and invitation-only guest access.
+- **Verify / S0.** Exercise one-time configuration, legacy profiles, key rotation and address changes, active-session editing and all three connection paths. Commit and push the verified changes before producing the Windows ZIP and portable EXE.
+
+The native Qt suite passed all 18 checks, including address-only guest joins, v1 profile migration, key rotation, failed saves and locked profiles. Both assisted sessions and trusted-device control passed the loopback direct and forced TURN tests using the global settings.
+
 ## Single-file Windows client
 
 - **Execute / S2.** Package the verified native runtime as both the existing ZIP and a double-clickable x64 portable EXE in the manifest version's release directory.

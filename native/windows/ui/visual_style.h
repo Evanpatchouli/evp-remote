@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPixmap>
+#include <QPolygonF>
+#include <QTransform>
 
 namespace native_ui {
 
@@ -17,6 +19,7 @@ enum class Symbol {
     Clipboard,
     Warning,
     End,
+    Settings,
 };
 
 inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
@@ -72,6 +75,20 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
     case Symbol::End:
         painter.drawRoundedRect(QRectF(5.5, 5.5, 13, 13), 2.4, 2.4);
         break;
+    case Symbol::Settings: {
+        QPolygonF outline;
+        QTransform rotation;
+        rotation.translate(12, 12);
+        for (int tooth = 0; tooth < 8; ++tooth) {
+            for (const QPointF point : {QPointF(-2.6, -7.1), QPointF(-1.6, -9.4),
+                                        QPointF(1.6, -9.4), QPointF(2.6, -7.1)})
+                outline << rotation.map(point);
+            rotation.rotate(45);
+        }
+        painter.drawPolygon(outline);
+        painter.drawEllipse(QPointF(12, 12), 3.1, 3.1);
+        break;
+    }
     }
     return pixmap;
 }

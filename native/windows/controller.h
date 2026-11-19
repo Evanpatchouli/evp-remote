@@ -6,6 +6,7 @@
 #include <QSize>
 #include <QObject>
 #include <QTimer>
+#include <QUrl>
 #include <memory>
 #include "rtc/rtc_viewer.h"
 #include <functional>
@@ -30,7 +31,8 @@ struct HostAdapters {
 class DesktopController final : public QObject {
     Q_OBJECT
   public:
-    explicit DesktopController(HomeWindow& home, HostAdapters adapters = {}, QString deviceStorePath = {});
+    explicit DesktopController(HomeWindow& home, HostAdapters adapters = {}, QString deviceStorePath = {},
+                               const QUrl& initialAddress = {});
     ~DesktopController() override;
     void endSession();
   signals:
@@ -53,8 +55,8 @@ class DesktopController final : public QObject {
         Negotiating,
         Streaming
     };
-    void join(const QUrl& url, const QString& invite);
-    void openSignaling(Role role, const QUrl& url, const QString& credential, CodeOptions options = {},
+    void join(const QString& invite);
+    void openSignaling(Role role, const QString& invite, CodeOptions options = {},
                        bool highRefresh = false, bool relayOnly = false, bool withAudio = true);
     void invitationIssued(const QJsonObject& message);
     void invitationRedeemed(const QJsonObject& message);

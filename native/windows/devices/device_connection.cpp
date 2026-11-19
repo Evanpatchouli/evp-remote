@@ -7,6 +7,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMessageAuthenticationCode>
+#include <QSettings>
 #include <QSysInfo>
 #include <QWebSocket>
 #include <algorithm>
@@ -19,7 +20,8 @@ constexpr int presenceMs = 4000;
 constexpr int pendingMs = 60000;
 constexpr int sessionMs = 60 * 60 * 1000;
 const auto secureFailure = QStringLiteral("设备身份或会话验证失败，已停止连接。可检查配对关系后重试。");
-const auto storageFailure = QStringLiteral("本地设置尚未保存，可信设备远控已暂停。请恢复存储、核对配对和权限，再点击「保存并连接」。");
+const auto storageFailure = QStringLiteral("本地设置尚未保存，可信设备远控已暂停。请恢复存储、核对配对和权限，再到「设置」点击「保存设置」。");
+const auto storageHold = QStringLiteral("存储停用标记仍然有效，设备注册和创建邀请已暂停。请恢复写入权限后再次保存设置。");
 
 QString modeName(bool pair) {
     return pair ? QStringLiteral("pair") : QStringLiteral("control");
@@ -48,7 +50,8 @@ QString errorMessage(const QString& code) {
 
 }
 
-DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& home, QString storePath)
+DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& home, QString storePath,
+                                   const QUrl& initialAddress)
     : controller_(controller), home_(home), page_(home.devices()), store_(std::move(storePath)),
       name_(deviceName(QSysInfo::machineHostName())) {
     reconnect_.setSingleShot(true);
@@ -73,17 +76,32 @@ DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& ho
         page_.setMessage(QStringLiteral("配对码已过期。需要配对时，请重新生成。"));
     });
     if (!store_.open() || (id_ = deviceId(store_.identity.publicKey())).isEmpty()) {
-        page_.setRegistration(false, QStringLiteral("设备存储不可用，或已有另一个客户端在运行。仍可使用远程协助。"));
+        store_.url = QUrl{};
+        store_.deploymentKey.clear();
+        const auto unavailable = QStringLiteral("无法打开本机设置。请关闭其他客户端，或检查当前用户的存储权限后重试。");
+        home_.setConnectionSettings(store_.url, false);
+        home_.setConnectionSettingsEnabled(false);
+        home_.setSettingsMessage(unavailable);
+        page_.setRegistration(false, unavailable);
         return;
     }
-    page_.setIdentity(id_);
-    if (!store_.url.isEmpty()) {
-        page_.setServer(store_.url);
-        home_.showDevicePage();
+    storeOpen_ = true;
+    if (store_.url.isEmpty()) {
+        const auto legacy = deviceServerUrl(QUrl(QSettings().value("signaling/url").toString(), QUrl::StrictMode));
+        const auto fallback = legacy.isEmpty() || legacy.toEncoded().size() > 2048 ? deviceServerUrl(initialAddress) : legacy;
+        if (fallback.toEncoded().size() <= 2048)
+            store_.url = fallback;
     }
+    home_.setConnectionSettings(store_.url, !store_.deploymentKey.isEmpty());
+    home_.setConnectionSettingsEnabled(true);
+    page_.setIdentity(id_);
+    if (!store_.deploymentKey.isEmpty())
+        home_.showDevicePage();
+    else
+        page_.setRegistration(false, QStringLiteral("请在「设置」中配置连接，以添加设备。"));
     page_.setPreferences(store_.preferences, true);
     page_.setDevices(store_.peers, {});
-    connect(&page_, &DevicePage::configureRequested, this, &DeviceConnection::configure);
+    connect(&home_, &HomeWindow::settingsRequested, this, &DeviceConnection::configure);
     connect(&page_, &DevicePage::codeRequested, this, &DeviceConnection::makePairingCode);
     connect(&page_, &DevicePage::pairingOptionsEdited, this, [this] {
         if (!pairingSecret_.isEmpty()) {
@@ -109,12 +127,13 @@ DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& ho
         storageFault_ = true;
         store_.preferences.allowIncoming = false;
         page_.setPreferences(store_.preferences, true);
-        page_.setRegistration(false, storageFailure);
+        page_.setRegistration(false, storageHold);
+        home_.setSettingsMessage(storageHold);
         return;
     }
     if (store_.preferences.allowIncoming && !persist())
         return;
-    if (!store_.url.isEmpty())
+    if (!store_.deploymentKey.isEmpty())
         reconnect_.start(0);
 }
 
@@ -126,41 +145,70 @@ bool DeviceConnection::busy() const {
     return attempt_.has_value();
 }
 
+QUrl DeviceConnection::signalingUrl() const {
+    return store_.url;
+}
+
+QString DeviceConnection::deploymentKey() const {
+    return storeOpen_ && !storageFault_ ? store_.deploymentKey : QString{};
+}
+
 void DeviceConnection::updateActivity() {
     const bool sessionBusy = controller_.phase_ != DesktopController::Phase::Idle;
     if (sessionBusy && !pairingSecret_.isEmpty())
         clearPairingCode();
     page_.setActivity(sessionBusy, busy());
+    home_.setConnectionSettingsEnabled(storeOpen_ && !sessionBusy && !busy());
 }
 
-void DeviceConnection::configure(const QUrl& input, const QString& key) {
-    if (busy() || controller_.phase_ != DesktopController::Phase::Idle)
+void DeviceConnection::configure(const QUrl& input, const QString& key, bool forgetKey) {
+    if (!storeOpen_ || busy() || controller_.phase_ != DesktopController::Phase::Idle)
         return;
     const auto url = deviceServerUrl(input);
-    const auto secret = (key.isEmpty() && url == store_.url) ? store_.deploymentKey : key;
     if (url.isEmpty() || url.toEncoded().size() > 2048) {
-        page_.setMessage(QStringLiteral("请输入有效的 wss:// 信令地址。"));
+        home_.setSettingsMessage(QStringLiteral("请输入有效的 wss:// 信令地址。"));
         return;
     }
-    if (secret.trimmed().isEmpty() || secret.toUtf8().size() > 4096) {
-        page_.setMessage(QStringLiteral("请输入此信令服务器的部署密钥。"));
+    if ((!key.isEmpty() && key.trimmed().isEmpty()) || key.toUtf8().size() > 4096) {
+        home_.setSettingsMessage(QStringLiteral("部署密钥不能仅含空格，且不能超过 4096 字节。"));
         return;
     }
+    const auto previousUrl = store_.url;
+    const auto previousKey = store_.deploymentKey;
     store_.url = url;
-    store_.deploymentKey = secret;
-    if (!persist())
+    if (forgetKey || url != previousUrl || !key.isEmpty())
+        store_.deploymentKey = forgetKey ? QString{} : key;
+    const auto result = store_.write();
+    if (result == DeviceStore::WriteResult::Failed) {
+        store_.url = previousUrl;
+        store_.deploymentKey = previousKey;
+        storageUnavailable(storageFailure);
         return;
-    page_.setServer(url);
+    }
+    QSettings().remove("signaling/url");
+    home_.setConnectionSettings(url, !store_.deploymentKey.isEmpty());
+    if (result == DeviceStore::WriteResult::Held) {
+        storageUnavailable(QStringLiteral("连接设置已保存。存储停用标记仍无法清除，设备注册和创建邀请已暂停。请恢复写入权限后再次保存。"));
+        return;
+    }
+    storageFault_ = false;
+    home_.setSettingsMessage(store_.deploymentKey.isEmpty()
+        ? QStringLiteral("已保存信令地址。可以使用邀请码连接，添加设备或共享本机需要部署密钥。")
+        : QStringLiteral("连接设置已保存。"));
     page_.setMessage({});
     retryMs_ = 1000;
     reconnect_.stop();
     closeSocket();
     clearPairingCode();
-    openSocket();
+    setOnlinePeers({});
+    if (store_.deploymentKey.isEmpty())
+        page_.setRegistration(false, QStringLiteral("信令地址已保存。请在「设置」中添加部署密钥以注册本机。"));
+    else
+        openSocket();
 }
 
 void DeviceConnection::openSocket() {
-    if (socket_ || store_.url.isEmpty() || storageFault_)
+    if (socket_ || store_.url.isEmpty() || store_.deploymentKey.isEmpty() || storageFault_)
         return;
     registration_ = Registration::Connecting;
     page_.setRegistration(false, QStringLiteral("正在连接设备信令服务…"));
@@ -215,6 +263,7 @@ void DeviceConnection::offline(const QString& message, bool retry) {
     clearPairingCode();
     setOnlinePeers({});
     page_.setRegistration(false, message);
+    home_.setSettingsMessage(message);
     if (retry && !storageFault_) {
         reconnect_.start(retryMs_);
         retryMs_ = std::min(retryMs_ * 2, 30000);
@@ -245,6 +294,7 @@ void DeviceConnection::receive(const QJsonObject& message) {
             handshake_.stop();
             retryMs_ = 1000;
             page_.setRegistration(true, QStringLiteral("本机在线 · 无需登录"));
+            home_.setSettingsMessage(QStringLiteral("已连接信令服务，本机在线。"));
             presenceAge_.start();
             presence_.start();
             pollPresence();
@@ -325,19 +375,24 @@ void DeviceConnection::setOnlinePeers(QSet<QString> online) {
 }
 
 bool DeviceConnection::persist() {
-    if (store_.save()) {
+    const auto result = store_.write();
+    if (result == DeviceStore::WriteResult::Saved) {
         storageFault_ = false;
         return true;
     }
+    storageUnavailable(result == DeviceStore::WriteResult::Failed ? storageFailure :
+        QStringLiteral("本地数据已保存。存储停用标记仍无法清除，可信设备远控已暂停。"));
+    return false;
+}
+
+void DeviceConnection::storageUnavailable(QString message) {
     storageFault_ = true;
-    auto message = storageFailure;
     if (!store_.markStorageHold())
         message += QStringLiteral(" 无法记录停用状态，重启后可能恢复旧授权。");
     store_.preferences.allowIncoming = false;
     page_.setPreferences(store_.preferences, true);
     offline(message, false);
     page_.setMessage(message);
-    return false;
 }
 
 void DeviceConnection::changePreferences(DevicePreferences options) {
@@ -356,10 +411,10 @@ void DeviceConnection::changePreferences(DevicePreferences options) {
     const bool recovering = storageFault_;
     if (persist() && recovering) {
         page_.setMessage({});
-        if (!store_.url.isEmpty())
+        if (!store_.deploymentKey.isEmpty())
             reconnect_.start(0);
         else
-            page_.setRegistration(false, QStringLiteral("配置信令服务器后即可添加设备。"));
+            page_.setRegistration(false, QStringLiteral("请在「设置」中配置连接，以添加设备。"));
     }
 }
 

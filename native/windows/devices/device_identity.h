@@ -52,10 +52,12 @@ struct DevicePreferences {
 
 class DeviceStore {
 public:
+    enum class WriteResult { Failed, Held, Saved };
     explicit DeviceStore(QString path);
     ~DeviceStore();
     bool open();
-    bool save() const;
+    WriteResult write() const;
+    bool save() const { return write() == WriteResult::Saved; }
     bool hasStorageHold() const;
     bool markStorageHold() const;
 

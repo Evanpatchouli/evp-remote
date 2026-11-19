@@ -279,20 +279,20 @@ bool DeviceStore::open() {
     const auto savedUrl = state.value("url").toString();
     url = deviceServerUrl(QUrl(savedUrl, QUrl::StrictMode));
     deploymentKey = state.value("key").toString();
-    if ((!savedUrl.isEmpty() && url.isEmpty()) || deploymentKey.toUtf8().size() > 4096 ||
-        (url.isEmpty() != deploymentKey.isEmpty()))
+    if ((!savedUrl.isEmpty() && url.isEmpty()) || url.toEncoded().size() > 2048 ||
+        deploymentKey.toUtf8().size() > 4096 || (url.isEmpty() && !deploymentKey.isEmpty()))
         return false;
     preferences = {state.value("allowIncoming").toBool(), state.value("audio").toBool(true),
                    state.value("highRefresh").toBool(), state.value("relayOnly").toBool()};
     return true;
 }
 
-bool DeviceStore::save() const {
+DeviceStore::WriteResult DeviceStore::write() const {
     if (!lock_ || !lock_->isLocked())
-        return false;
+        return WriteResult::Failed;
     auto plain = identity.privateKey();
     if (plain.size() != privateSize)
-        return false;
+        return WriteResult::Failed;
     QJsonArray entries;
     for (const auto& peer : peers)
         entries.append(QJsonObject{{"publicKey", encodeDeviceBytes(peer.publicKey)}, {"name", peer.name}});
@@ -304,19 +304,19 @@ bool DeviceStore::save() const {
     const auto encrypted = dpapi(plain, true);
     erase(plain);
     if (encrypted.isEmpty() || encrypted.size() > maxStoreBytes)
-        return false;
+        return WriteResult::Failed;
     QSaveFile file(path_);
     if (!file.open(QIODevice::WriteOnly) || file.write(encrypted) != encrypted.size() || !file.commit())
-        return false;
+        return WriteResult::Failed;
     const auto marker = path_ + ".hold";
     if (QFileInfo::exists(marker) && !QFile::remove(marker))
-        return false;
+        return WriteResult::Held;
     QSettings settings;
     if (!settings.contains(holdSetting_))
-        return true;
+        return WriteResult::Saved;
     settings.remove(holdSetting_);
     settings.sync();
-    return settings.status() == QSettings::NoError;
+    return settings.status() == QSettings::NoError ? WriteResult::Saved : WriteResult::Held;
 }
 
 }

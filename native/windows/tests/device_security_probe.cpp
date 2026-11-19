@@ -8,6 +8,8 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QHostAddress>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QMouseEvent>
@@ -22,9 +24,61 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QVBoxLayout>
+#include <QWebSocket>
+#include <QWebSocketServer>
 #include <Windows.h>
+#include <dpapi.h>
 
 namespace {
+
+struct LoopbackBroker {
+    QList<QJsonObject> frames;
+    int connections = 0, closed = 0;
+    QWebSocketServer server{"Settings probe", QWebSocketServer::NonSecureMode};
+
+    bool listen() {
+        QObject::connect(&server, &QWebSocketServer::newConnection, &server, [this] {
+            auto* socket = server.nextPendingConnection();
+            socket->setParent(&server);
+            ++connections;
+            QObject::connect(socket, &QWebSocket::disconnected, socket, [this] { ++closed; });
+            QObject::connect(socket, &QWebSocket::textMessageReceived, socket, [this](const QString& text) {
+                frames.append(QJsonDocument::fromJson(text.toUtf8()).object());
+            });
+        });
+        return server.listen(QHostAddress::LocalHost, 0);
+    }
+    QUrl url() const {
+        auto result = server.serverUrl();
+        result.setPath("/");
+        return result;
+    }
+};
+
+auto lockAgainstReplacement(const QString& path) {
+    const auto nativePath = QDir::toNativeSeparators(path).toStdWString();
+    const auto handle = CreateFileW(nativePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const auto close = [](void* value) { CloseHandle(value); };
+    return std::unique_ptr<void, decltype(close)>(handle == INVALID_HANDLE_VALUE ? nullptr : handle, close);
+}
+
+bool writeLegacyProfile(const QString& path, const evp::DeviceIdentity& owner, const QJsonObject& state) {
+    auto plain = owner.privateKey() + QJsonDocument(state).toJson(QJsonDocument::Compact);
+    QByteArray context("evp-device-store-v1");
+    DATA_BLOB source{static_cast<DWORD>(plain.size()), reinterpret_cast<BYTE*>(plain.data())};
+    DATA_BLOB entropy{static_cast<DWORD>(context.size()), reinterpret_cast<BYTE*>(context.data())};
+    DATA_BLOB encrypted{};
+    const bool ok = CryptProtectData(&source, L"EVP Remote devices", &entropy, nullptr, nullptr,
+                                     CRYPTPROTECT_UI_FORBIDDEN, &encrypted);
+    SecureZeroMemory(plain.data(), static_cast<SIZE_T>(plain.size()));
+    if (!ok)
+        return false;
+    const auto cleanup = qScopeGuard([&] { LocalFree(encrypted.pbData); });
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::NewOnly) &&
+           file.write(reinterpret_cast<const char*>(encrypted.pbData), encrypted.cbData) == encrypted.cbData;
+}
 
 void verifyElevation(const QPixmap& layer, const QRect& panel) {
     const auto pixels = layer.toImage().convertToFormat(QImage::Format_ARGB32);
@@ -49,6 +103,14 @@ class DeviceSecurityProbe : public QObject {
 private slots:
     void bindsProofToPeerAttemptNonceAndPayload();
     void pausesOnUnwritableSettingsAcrossRestarts();
+    void lockedProfileRejectsFallbackJoin();
+    void retriesFailedForgetWithoutEditing();
+    void committedAddressSurvivesHeldMarker();
+    void settingsEditorDiscardsDrafts();
+    void guestJoinsWithAddressOnly();
+    void storedKeyIsScopedToAddress();
+    void readsLegacyConnectionSettings_data();
+    void readsLegacyConnectionSettings();
     void assistanceTabsAndScrollableDeviceList();
     void cleanTabFocus();
     void themedLifetimeSelectors_data();
@@ -104,12 +166,8 @@ void DeviceSecurityProbe::pausesOnUnwritableSettingsAcrossRestarts() {
         initial.preferences.allowIncoming = true;
         QVERIFY(initial.save());
     }
-    const auto nativePath = QDir::toNativeSeparators(path).toStdWString();
-    const auto open = CreateFileW(nativePath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    QVERIFY(open != INVALID_HANDLE_VALUE);
-    const auto close = [](void* handle) { CloseHandle(handle); };
-    std::unique_ptr<void, decltype(close)> heldFile(open, close);
+    auto heldFile = lockAgainstReplacement(path);
+    QVERIFY(heldFile);
     {
         HomeWindow window;
         evp::DesktopController controller(window, {}, path);
@@ -117,7 +175,10 @@ void DeviceSecurityProbe::pausesOnUnwritableSettingsAcrossRestarts() {
         QCOMPARE(ui.id(), id);
         QVERIFY(!ui.online());
         QVERIFY(!window.findChild<QCheckBox*>("allowTrustedControl")->isChecked());
-        QVERIFY(ui.message().contains(QStringLiteral("尚未保存")));
+        auto* settingsMessage = window.findChild<QLabel*>("settingsMessage");
+        QVERIFY(settingsMessage);
+        QVERIFY(ui.message().contains(QStringLiteral("尚未保存")) ||
+                settingsMessage->text().contains(QStringLiteral("尚未保存")));
         QVERIFY(QFile::exists(path + ".hold"));
     }
     heldFile.reset();
@@ -137,6 +198,382 @@ void DeviceSecurityProbe::pausesOnUnwritableSettingsAcrossRestarts() {
     QVERIFY(!recovered.preferences.audio);
 }
 
+void DeviceSecurityProbe::lockedProfileRejectsFallbackJoin() {
+    QTemporaryDir profile;
+    LoopbackBroker original, fallback;
+    QVERIFY(profile.isValid() && original.listen() && fallback.listen());
+    const auto path = profile.filePath("devices.dat");
+    evp::DeviceStore owner(path);
+    QVERIFY(owner.open());
+    owner.url = original.url();
+    owner.deploymentKey = "synthetic-owner-key";
+    QVERIFY(owner.save());
+
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    evp::DesktopController controller(window, {}, path, fallback.url());
+    window.show();
+    const device_probe::Ui ui(window);
+    ui.button("navigation")->click();
+    window.findChild<QTabBar*>("assistanceTabs")->setCurrentIndex(0);
+    QSignalSpy joins(&window, &HomeWindow::joinRequested);
+    ui.field("invitation")->setText("synthetic-private-invitation");
+    ui.button("join")->click();
+    QTest::qWait(150);
+    QCOMPARE(fallback.connections, 0);
+    QCOMPARE(original.connections, 0);
+    QCOMPARE(joins.count(), 0);
+    ui.button("settingsNavigation")->click();
+    for (const auto* name : {"settingsServerUrl", "settingsDeploymentKey"}) {
+        auto* field = ui.field(name);
+        QVERIFY(field->isVisible() && !field->isEnabled() && field->text().isEmpty());
+    }
+    QVERIFY(!ui.button("saveSettings")->isEnabled());
+}
+
+void DeviceSecurityProbe::retriesFailedForgetWithoutEditing() {
+    QTemporaryDir profile;
+    LoopbackBroker original;
+    QVERIFY(profile.isValid() && original.listen());
+    const auto path = profile.filePath("devices.dat");
+    {
+        HomeWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        evp::DesktopController controller(window, {}, path, original.url());
+        window.show();
+        const device_probe::Ui ui(window);
+        const QString key = "synthetic-key-to-forget";
+        QVERIFY(ui.saveSettings(original.url(), key));
+        QTRY_COMPARE(original.frames.size(), 1);
+        QCOMPARE(original.frames.first().value("type").toString(), QString("device-hello"));
+        QCOMPARE(original.frames.first().value("key").toString(), key);
+        QCOMPARE(original.closed, 0);
+
+        auto* forget = window.findChild<QCheckBox*>("forgetDeploymentKey");
+        auto* message = window.findChild<QLabel*>("settingsMessage");
+        auto* save = ui.button("saveSettings");
+        QVERIFY(forget && forget->isVisible() && message && save);
+        forget->click();
+        auto held = lockAgainstReplacement(path);
+        QVERIFY(held);
+        save->click();
+        QVERIFY(forget->isChecked());
+        QVERIFY(message->isVisible() && message->text().contains(QStringLiteral("尚未保存")));
+        QTRY_COMPARE(original.closed, 1);
+        held.reset();
+        QVERIFY(save->isEnabled());
+        save->click();
+        QVERIFY(!forget->isChecked() && !QFile::exists(path + ".hold"));
+        QTest::qWait(150);
+        QCOMPARE(original.connections, 1);
+        QCOMPARE(original.frames.size(), 1);
+    }
+    {
+        evp::DeviceStore restarted(path);
+        QVERIFY(restarted.open());
+        QCOMPARE(restarted.url, original.url());
+        QVERIFY(restarted.deploymentKey.isEmpty() && !restarted.hasStorageHold());
+    }
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    evp::DesktopController controller(window, {}, path);
+    window.show();
+    const device_probe::Ui ui(window);
+    ui.button("settingsNavigation")->click();
+    QCOMPARE(QUrl(ui.field("settingsServerUrl")->text()), original.url());
+    QVERIFY(!window.findChild<QCheckBox*>("forgetDeploymentKey")->isVisible());
+    QTest::qWait(150);
+    QCOMPARE(original.connections, 1);
+}
+
+void DeviceSecurityProbe::committedAddressSurvivesHeldMarker() {
+    QTemporaryDir profile;
+    LoopbackBroker original, changed;
+    QVERIFY(profile.isValid() && original.listen() && changed.listen());
+    const auto path = profile.filePath("devices.dat");
+    const QString newKey = "synthetic-held-key";
+    {
+        evp::DeviceStore seed(path);
+        QVERIFY(seed.open());
+        seed.url = original.url();
+        seed.deploymentKey = "synthetic-previous-key";
+        QVERIFY(seed.save());
+        QVERIFY(seed.markStorageHold());
+    }
+    const auto marker = lockAgainstReplacement(path + ".hold");
+    QVERIFY(marker);
+    for (int launch = 0; launch < 2; ++launch) {
+        {
+            HomeWindow window;
+            window.setAttribute(Qt::WA_DontShowOnScreen);
+            evp::DesktopController controller(window, {}, path, original.url());
+            window.show();
+            const device_probe::Ui ui(window);
+            ui.button("settingsNavigation")->click();
+            if (launch == 0) {
+                QCOMPARE(QUrl(ui.field("settingsServerUrl")->text()), original.url());
+                QVERIFY(ui.saveSettings(changed.url(), newKey));
+                auto* message = window.findChild<QLabel*>("settingsMessage");
+                QVERIFY(message && message->isVisible());
+                QVERIFY(message->text().contains(QStringLiteral("已保存")));
+                QVERIFY(message->text().contains(QStringLiteral("标记仍无法清除")));
+                ui.button("deviceNavigation")->click();
+                ui.button("settingsNavigation")->click();
+            }
+            QCOMPARE(QUrl(ui.field("settingsServerUrl")->text()), changed.url());
+            QVERIFY(ui.field("settingsDeploymentKey")->text().isEmpty());
+            QVERIFY(!ui.online());
+            ui.button("navigation")->click();
+            window.findChild<QTabBar*>("assistanceTabs")->setCurrentIndex(0);
+            const auto invite = QString("synthetic-held-invitation-%1").arg(launch);
+            ui.field("invitation")->setText(invite);
+            ui.button("join")->click();
+            const QJsonObject expected{{"type", "join"}, {"invite", invite}};
+            QTRY_VERIFY(changed.frames.contains(expected));
+            QTest::qWait(150);
+            QCOMPARE(changed.connections, launch + 1);
+            QCOMPARE(original.connections, 0);
+        }
+        evp::DeviceStore reopened(path);
+        QVERIFY(reopened.open() && reopened.hasStorageHold());
+        QCOMPARE(reopened.url, changed.url());
+        QCOMPARE(reopened.deploymentKey, newKey);
+    }
+}
+
+void DeviceSecurityProbe::settingsEditorDiscardsDrafts() {
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    const device_probe::Ui ui(window);
+    for (const auto* name : {"settingsNavigation", "settingsServerUrl", "settingsDeploymentKey",
+                             "saveSettings", "settingsMessage", "forgetDeploymentKey"})
+        QCOMPARE(window.findChildren<QWidget*>(name).size(), 1);
+    for (const auto* name : {"hostKey", "hostSignalingUrl", "signalingUrl", "deviceDeploymentKey",
+                             "deviceServerUrl", "configureDevices"})
+        QVERIFY2(window.findChildren<QWidget*>(name).isEmpty(), name);
+
+    const QUrl committed("ws://127.0.0.1:8881/");
+    window.setConnectionSettings(committed, true);
+    auto* address = ui.field("settingsServerUrl");
+    auto* key = ui.field("settingsDeploymentKey");
+    auto* forget = window.findChild<QCheckBox*>("forgetDeploymentKey");
+    QVERIFY(address && key && forget);
+    QSignalSpy saves(&window, &HomeWindow::settingsRequested);
+    for (const auto* destination : {"navigation", "deviceNavigation"}) {
+        ui.button("settingsNavigation")->click();
+        QVERIFY(address->isVisible() && key->isVisible());
+        QCOMPARE(QUrl(address->text()), committed);
+        QCOMPARE(key->echoMode(), QLineEdit::Password);
+        QVERIFY(key->text().isEmpty() && !forget->isChecked());
+        key->setText("draft-for-previous-address");
+        address->setText("ws://127.0.0.1:8882/");
+        QVERIFY(key->text().isEmpty());
+        key->setText("draft-only");
+        ui.button(destination)->click();
+        QVERIFY(!key->isVisible() && key->text().isEmpty());
+    }
+    QCOMPARE(saves.count(), 0);
+    ui.button("settingsNavigation")->click();
+    QCOMPARE(QUrl(address->text()), committed);
+    QVERIFY(key->text().isEmpty());
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty()) {
+        QCoreApplication::processEvents();
+        QTest::qWait(100);
+        QVERIFY(window.grab().save(QDir(preview).filePath("settings.png")));
+    }
+}
+
+void DeviceSecurityProbe::guestJoinsWithAddressOnly() {
+    QTemporaryDir profile;
+    LoopbackBroker fallback, broker;
+    QVERIFY(profile.isValid() && fallback.listen() && broker.listen());
+    const auto path = profile.filePath("guest.dat");
+    {
+        HomeWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        evp::DesktopController controller(window, {}, path, fallback.url());
+        window.show();
+        const device_probe::Ui ui(window);
+        ui.button("settingsNavigation")->click();
+        QCOMPARE(QUrl(ui.field("settingsServerUrl")->text()), fallback.url());
+        QVERIFY(ui.saveSettings(broker.url()));
+        QTest::qWait(150);
+        QCOMPARE(broker.connections, 0);
+        QCOMPARE(fallback.connections, 0);
+    }
+    QSettings().setValue("signaling/url", fallback.url().toString());
+    const auto cleanup = qScopeGuard([] { QSettings().remove("signaling/url"); });
+    {
+        HomeWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        evp::DesktopController controller(window, {}, path, fallback.url());
+        window.show();
+        const device_probe::Ui ui(window);
+        ui.button("settingsNavigation")->click();
+        QCOMPARE(QUrl(ui.field("settingsServerUrl")->text()), broker.url());
+        QVERIFY(ui.field("settingsDeploymentKey")->text().isEmpty());
+        ui.button("deviceNavigation")->click();
+        QVERIFY(!ui.online() && !ui.button("generatePairingCode")->isEnabled());
+        QTest::qWait(150);
+        QCOMPARE(broker.connections, 0);
+
+        ui.button("navigation")->click();
+        auto* tabs = window.findChild<QTabBar*>("assistanceTabs");
+        tabs->setCurrentIndex(1);
+        QSignalSpy hostRequests(&window, &HomeWindow::hostRequested);
+        ui.button("hostCreate")->click();
+        QCOMPARE(hostRequests.count(), 0);
+        QVERIFY(ui.field("settingsServerUrl")->isVisible());
+        QVERIFY(!window.findChild<QLabel*>("settingsMessage")->text().isEmpty());
+        ui.button("navigation")->click();
+        tabs->setCurrentIndex(0);
+        const QString invite = "probe-guest-invitation";
+        ui.field("invitation")->setText(invite);
+        ui.button("join")->click();
+        QTRY_COMPARE(broker.frames.size(), 1);
+        const QJsonObject expected{{"type", "join"}, {"invite", invite}};
+        QCOMPARE(broker.frames.first(), expected);
+        ui.button("settingsNavigation")->click();
+        auto* save = ui.button("saveSettings");
+        QVERIFY(save->isVisible() && !save->isEnabled());
+        QSignalSpy saves(&window, &HomeWindow::settingsRequested);
+        save->click();
+        QCOMPARE(saves.count(), 0);
+        QCOMPARE(broker.connections, 1);
+        QCOMPARE(fallback.connections, 0);
+    }
+}
+
+void DeviceSecurityProbe::storedKeyIsScopedToAddress() {
+    QTemporaryDir profile;
+    LoopbackBroker original, changed;
+    QVERIFY(profile.isValid() && original.listen() && changed.listen());
+    const auto path = profile.filePath("scoped.dat");
+    const QString key = "synthetic-original", rotated = "synthetic-rotation";
+    {
+        HomeWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        evp::DesktopController controller(window, {}, path, original.url());
+        window.show();
+        const device_probe::Ui ui(window);
+        QVERIFY(ui.saveSettings(original.url(), key));
+        QTRY_COMPARE(original.frames.size(), 1);
+        QCOMPARE(original.frames.first().value("type").toString(), QString("device-hello"));
+        QCOMPARE(original.frames.first().value("key").toString(), key);
+        auto equivalent = original.url();
+        equivalent.setPath({});
+        QVERIFY(ui.saveSettings(equivalent));
+    }
+    {
+        evp::DeviceStore store(path);
+        QVERIFY(store.open());
+        QCOMPARE(store.url, original.url());
+        QCOMPARE(store.deploymentKey, key);
+    }
+    {
+        HomeWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        evp::DesktopController controller(window, {}, path, changed.url());
+        window.show();
+        const device_probe::Ui ui(window);
+        ui.button("settingsNavigation")->click();
+        QCOMPARE(QUrl(ui.field("settingsServerUrl")->text()), original.url());
+        QVERIFY(ui.field("settingsDeploymentKey")->text().isEmpty());
+        QVERIFY(ui.saveSettings(changed.url()));
+        QTest::qWait(150);
+        QCOMPARE(changed.connections, 0);
+    }
+    {
+        evp::DeviceStore store(path);
+        QVERIFY(store.open());
+        QCOMPARE(store.url, changed.url());
+        QVERIFY(store.deploymentKey.isEmpty());
+    }
+    {
+        HomeWindow window;
+        window.setAttribute(Qt::WA_DontShowOnScreen);
+        evp::DesktopController controller(window, {}, path, original.url());
+        window.show();
+        const device_probe::Ui ui(window);
+        QVERIFY(ui.saveSettings(changed.url(), key));
+        QTRY_COMPARE(changed.frames.size(), 1);
+        QVERIFY(ui.saveSettings(changed.url(), rotated));
+        QTRY_COMPARE(changed.frames.size(), 2);
+        QCOMPARE(changed.frames.last().value("type").toString(), QString("device-hello"));
+        QCOMPARE(changed.frames.last().value("key").toString(), rotated);
+        ui.button("settingsNavigation")->click();
+        auto* forget = window.findChild<QCheckBox*>("forgetDeploymentKey");
+        QVERIFY(forget && forget->isVisible() && forget->isEnabled());
+        forget->click();
+        ui.button("saveSettings")->click();
+        QTRY_COMPARE(changed.closed, changed.connections);
+        QVERIFY(!ui.online() && !ui.button("generatePairingCode")->isEnabled());
+    }
+    evp::DeviceStore store(path);
+    QVERIFY(store.open());
+    QCOMPARE(store.url, changed.url());
+    QVERIFY(store.deploymentKey.isEmpty());
+}
+
+void DeviceSecurityProbe::readsLegacyConnectionSettings_data() {
+    QTest::addColumn<bool>("savedEndpoint");
+    QTest::newRow("protected-url-and-key-win") << true;
+    QTest::newRow("legacy-settings-url-before-package") << false;
+}
+
+void DeviceSecurityProbe::readsLegacyConnectionSettings() {
+    QFETCH(bool, savedEndpoint);
+    QTemporaryDir profile;
+    LoopbackBroker owned, legacy, fallback;
+    QVERIFY(profile.isValid() && owned.listen() && legacy.listen() && fallback.listen());
+    evp::DeviceIdentity owner, peer;
+    QVERIFY(owner.load({}) && peer.load({}));
+    const QString key = "synthetic-v1-key";
+    const QJsonArray peers{QJsonObject{{"publicKey", evp::encodeDeviceBytes(peer.publicKey())}, {"name", "Test peer"}}};
+    const QJsonObject v1{{"version", 1}, {"peers", peers}, {"url", savedEndpoint ? owned.url().toString() : QString{}},
+                         {"key", savedEndpoint ? key : QString{}}, {"audio", false}, {"highRefresh", true},
+                         {"allowIncoming", false}, {"relayOnly", true}};
+    const auto path = profile.filePath("v1.dat");
+    QVERIFY(writeLegacyProfile(path, owner, v1));
+    QSettings().setValue("signaling/url", legacy.url().toString());
+    const auto cleanup = qScopeGuard([] { QSettings().remove("signaling/url"); });
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    evp::DesktopController controller(window, {}, path, fallback.url());
+    window.show();
+    const device_probe::Ui ui(window);
+    ui.button("settingsNavigation")->click();
+    QCOMPARE(QUrl(ui.field("settingsServerUrl")->text()), savedEndpoint ? owned.url() : legacy.url());
+    QVERIFY(ui.field("settingsDeploymentKey")->text().isEmpty());
+    QCOMPARE(ui.id(), evp::deviceId(owner.publicKey()));
+    QCOMPARE(ui.peer(), evp::deviceId(peer.publicKey()));
+    QVERIFY(!window.findChild<QCheckBox*>("deviceShareAudio")->isChecked());
+    QVERIFY(window.findChild<QCheckBox*>("deviceHighRefresh")->isChecked());
+    QVERIFY(window.findChild<QCheckBox*>("deviceRelayOnly")->isChecked());
+    if (savedEndpoint) {
+        QTRY_COMPARE(owned.frames.size(), 1);
+        QVERIFY(!ui.field("settingsDeploymentKey")->placeholderText().contains(key));
+        QCOMPARE(owned.frames.first().value("type").toString(), QString("device-hello"));
+        QCOMPARE(owned.frames.first().value("key").toString(), key);
+        ui.button("navigation")->click();
+        window.findChild<QTabBar*>("assistanceTabs")->setCurrentIndex(0);
+        const QString invite = "synthetic-owned-viewer-invitation";
+        ui.field("invitation")->setText(invite);
+        ui.button("join")->click();
+        QTRY_COMPARE(owned.frames.size(), 2);
+        const QJsonObject expected{{"type", "join"}, {"invite", invite}};
+        QCOMPARE(owned.frames.last(), expected);
+        QCOMPARE(owned.connections, 2);
+    } else {
+        QTest::qWait(150);
+        QCOMPARE(owned.connections, 0);
+    }
+    QCOMPARE(legacy.connections, 0);
+    QCOMPARE(fallback.connections, 0);
+}
+
 void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     HomeWindow window;
     window.setAttribute(Qt::WA_DontShowOnScreen);
@@ -151,7 +588,7 @@ void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     QCOMPARE(tabs->tabText(0), QStringLiteral("远程协助"));
     QCOMPARE(tabs->tabText(1), QStringLiteral("共享本机"));
     QCOMPARE(tabs->currentIndex(), 0);
-    window.setSignalingUrl(QUrl("wss://first.example.invalid/"));
+    window.setConnectionSettings(QUrl("ws://127.0.0.1/"), false);
     QSignalSpy joinRequest(&window, &HomeWindow::joinRequested);
     window.findChild<QLineEdit*>("invitation")->setText("EVP1.preview.private");
     window.findChild<QPushButton*>("join")->click();
@@ -162,13 +599,6 @@ void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     QTest::keyClick(tabs, Qt::Key_Right);
     QCOMPARE(tabs->currentIndex(), 1);
     QVERIFY(window.findChild<QPushButton*>("hostCreate")->isVisible());
-    auto* key = window.findChild<QLineEdit*>("hostKey");
-    key->setText("ui-test-credential");
-    tabs->setCurrentIndex(0);
-    window.findChild<QLineEdit*>("signalingUrl")->setText("wss://second.example.invalid/");
-    tabs->setCurrentIndex(1);
-    QVERIFY(key->text().isEmpty());
-    window.setSignalingUrl({});
     const QList<int> minutes{5, 15, 30, 60, 120, 300, 720};
     for (const auto* name : {"invitationLifetime", "pairingLifetime"}) {
         auto* combo = window.findChild<QComboBox*>(name);
@@ -500,6 +930,7 @@ int runDeviceSecurityProbe(int argc, char** argv) {
         return 2;
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, preferences.path());
+    QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, preferences.filePath("system"));
     app.setOrganizationName("EVP-Smoke");
     app.setApplicationName("DeviceChecks");
     DeviceSecurityProbe tests;

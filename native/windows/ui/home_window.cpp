@@ -1,6 +1,7 @@
 #include "home_window.h"
 
 #include "device_page.h"
+#include "devices/device_identity.h"
 #include "floating_surface.h"
 #include "select_field.h"
 #include "visual_style.h"
@@ -83,14 +84,14 @@ constexpr auto homeStyle = R"(
     QPushButton#paste:pressed, QPushButton#cancel:pressed, QPushButton#copyHostInvitation:pressed, QPushButton#hostDeny:pressed { background: #e0ecff; }
     QPushButton#paste:focus, QPushButton#cancel:focus, QPushButton#copyHostInvitation:focus, QPushButton#hostDeny:focus { border-color: #3475e4; }
     QPushButton#paste:disabled { color: #667899; border-color: #dfe6f1; background: #f4f7fc; }
-    QPushButton#join, QPushButton#hostCreate, QPushButton#hostApprove {
+    QPushButton#join, QPushButton#hostCreate, QPushButton#hostApprove, QPushButton#saveSettings {
         background: #2463da; color: #ffffff; border: 2px solid transparent;
         border-radius: 8px; padding: 0 17px;
     }
-    QPushButton#join:hover, QPushButton#hostCreate:hover, QPushButton#hostApprove:hover { background: #1956c5; }
-    QPushButton#join:pressed, QPushButton#hostCreate:pressed, QPushButton#hostApprove:pressed { background: #1348ac; }
-    QPushButton#join:focus, QPushButton#hostCreate:focus, QPushButton#hostApprove:focus { border-color: #8db5ff; }
-    QPushButton#join:disabled { color: #43608f; background: #e2eafb; }
+    QPushButton#join:hover, QPushButton#hostCreate:hover, QPushButton#hostApprove:hover, QPushButton#saveSettings:hover { background: #1956c5; }
+    QPushButton#join:pressed, QPushButton#hostCreate:pressed, QPushButton#hostApprove:pressed, QPushButton#saveSettings:pressed { background: #1348ac; }
+    QPushButton#join:focus, QPushButton#hostCreate:focus, QPushButton#hostApprove:focus, QPushButton#saveSettings:focus { border-color: #8db5ff; }
+    QPushButton#join:disabled, QPushButton#saveSettings:disabled { color: #43608f; background: #e2eafb; }
     QPushButton#hostEnd {
         background: #922f31; color: white; border: 2px solid transparent;
         border-radius: 8px; padding: 0 11px;
@@ -236,6 +237,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     auto* role = label(QStringLiteral("Windows"), "subtle", 12);
     role->setContentsMargins(8, 0, 0, 0);
     railLayout->addWidget(role);
+    railLayout->addSpacing(6);
+    settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation", Symbol::Settings);
+    railLayout->addWidget(settingsNavigation_);
 
     auto* mainLayout = new QVBoxLayout;
     mainLayout->setSpacing(0);
@@ -364,17 +368,6 @@ HomeWindow::HomeWindow(QWidget* parent)
     formLayout->addLayout(invitationRow);
     formLayout->addSpacing(13);
 
-    auto* serverLabel = label(QStringLiteral("信令服务器"), "fieldLabel", 13, QFont::DemiBold);
-    signalingUrl_ = new QLineEdit;
-    signalingUrl_->setObjectName(QStringLiteral("signalingUrl"));
-    signalingUrl_->setAccessibleName(serverLabel->text());
-    signalingUrl_->setPlaceholderText(QStringLiteral("wss://服务器地址/"));
-    signalingUrl_->setMinimumHeight(41);
-    serverLabel->setBuddy(signalingUrl_);
-    formLayout->addWidget(serverLabel);
-    formLayout->addSpacing(6);
-    formLayout->addWidget(signalingUrl_);
-    formLayout->addSpacing(15);
     joinButton_ = new QPushButton(QStringLiteral("请求连接"));
     joinButton_->setObjectName(QStringLiteral("join"));
     joinButton_->setFont(uiFont(14, QFont::DemiBold));
@@ -401,23 +394,24 @@ HomeWindow::HomeWindow(QWidget* parent)
     contentLayout->addWidget(hostFormPage_);
     devicePage_ = new DevicePage;
     contentLayout->addWidget(devicePage_);
+    settingsPage_ = createSettingsPage();
+    contentLayout->addWidget(settingsPage_);
 
+    setTabOrder(hostEndButton_, settingsNavigation_);
+    setTabOrder(settingsNavigation_, deviceNavigation_);
     setTabOrder(deviceNavigation_, assistanceNavigation_);
     setTabOrder(assistanceNavigation_, assistanceTabs_);
     setTabOrder(assistanceTabs_, invitation_);
     setTabOrder(invitation_, pasteButton_);
-    setTabOrder(pasteButton_, signalingUrl_);
-    setTabOrder(signalingUrl_, joinButton_);
+    setTabOrder(pasteButton_, joinButton_);
     setTabOrder(joinButton_, cancelButton_);
-    setTabOrder(cancelButton_, hostSignalingUrl_);
+    setTabOrder(cancelButton_, invitationLifetime_);
     connect(assistanceNavigation_, &QPushButton::clicked, this, [this] { switchRole(hostPage_); });
     connect(assistanceTabs_, &QTabBar::currentChanged, this, [this](int index) { switchRole(index == 1, true); });
     connect(deviceNavigation_, &QPushButton::clicked, this, &HomeWindow::showDevicePage);
+    connect(settingsNavigation_, &QPushButton::clicked, this, &HomeWindow::showSettingsPage);
     connect(devicePage_, &DevicePage::returnRequested, this, &HomeWindow::sessionActivationRequested);
     connect(hostEndButton_, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
-    connect(signalingUrl_, &QLineEdit::textChanged, hostSignalingUrl_, &QLineEdit::setText);
-    connect(hostSignalingUrl_, &QLineEdit::textChanged, hostKey_, &QLineEdit::clear);
-    connect(hostSignalingUrl_, &QLineEdit::textChanged, signalingUrl_, &QLineEdit::setText);
     connect(pasteButton_, &QPushButton::clicked, this, &HomeWindow::pasteInvitation);
     connect(joinButton_, &QPushButton::clicked, this, [this] {
         if (sessionActive_) {
@@ -428,7 +422,6 @@ HomeWindow::HomeWindow(QWidget* parent)
     });
     connect(cancelButton_, &QPushButton::clicked, this, &HomeWindow::cancelRequested);
     connect(invitation_, &QLineEdit::returnPressed, this, &HomeWindow::requestJoin);
-    connect(signalingUrl_, &QLineEdit::returnPressed, this, &HomeWindow::requestJoin);
     invitation_->setFocus(Qt::OtherFocusReason);
     updateForm();
     updateBanner();
@@ -476,26 +469,6 @@ QWidget* HomeWindow::createHostPage()
     fields->setHorizontalSpacing(14);
     fields->setVerticalSpacing(8);
     setupLayout->addLayout(fields);
-    auto* serverLabel = label(QStringLiteral("信令服务器"), "fieldLabel", 13, QFont::DemiBold);
-    hostSignalingUrl_ = new QLineEdit;
-    hostSignalingUrl_->setObjectName(QStringLiteral("hostSignalingUrl"));
-    hostSignalingUrl_->setAccessibleName(serverLabel->text());
-    hostSignalingUrl_->setPlaceholderText(QStringLiteral("wss://服务器地址/"));
-    hostSignalingUrl_->setMinimumHeight(41);
-    serverLabel->setBuddy(hostSignalingUrl_);
-    fields->addRow(serverLabel, hostSignalingUrl_);
-
-    auto* keyLabel = label(QStringLiteral("部署密钥"), "fieldLabel", 13, QFont::DemiBold);
-    hostKey_ = new QLineEdit;
-    hostKey_->setObjectName(QStringLiteral("hostKey"));
-    hostKey_->setAccessibleName(keyLabel->text());
-    hostKey_->setPlaceholderText(QStringLiteral("输入部署时配置的主机密钥"));
-    hostKey_->setEchoMode(QLineEdit::Password);
-    hostKey_->setInputMethodHints(Qt::ImhHiddenText | Qt::ImhSensitiveData | Qt::ImhNoPredictiveText |
-                                  Qt::ImhNoAutoUppercase);
-    hostKey_->setMinimumHeight(41);
-    keyLabel->setBuddy(hostKey_);
-    fields->addRow(keyLabel, hostKey_);
     auto* lifetimeLabel = label(QStringLiteral("邀请码有效期"), "fieldLabel", 13, QFont::DemiBold);
     invitationLifetime_ = native_ui::codeLifetimeSelector(lifetimeLabel, "invitationLifetime");
     invitationLifetime_->setMaximumWidth(200);
@@ -575,8 +548,6 @@ QWidget* HomeWindow::createHostPage()
     pageLayout->addWidget(invite);
     pageLayout->addStretch();
 
-    setTabOrder(hostSignalingUrl_, hostKey_);
-    setTabOrder(hostKey_, invitationLifetime_);
     setTabOrder(invitationLifetime_, autoAcceptInvitation_);
     setTabOrder(autoAcceptInvitation_, shareAudio_);
     setTabOrder(shareAudio_, highRefresh_);
@@ -587,19 +558,145 @@ QWidget* HomeWindow::createHostPage()
     setTabOrder(approve, hostDeny_);
     connect(autoAcceptInvitation_, &QCheckBox::toggled, this, &HomeWindow::updateForm);
     connect(hostCreate_, &QPushButton::clicked, this, &HomeWindow::requestHost);
-    connect(hostKey_, &QLineEdit::returnPressed, this, &HomeWindow::requestHost);
-    connect(hostSignalingUrl_, &QLineEdit::returnPressed, hostKey_,
-            [this] { hostKey_->setFocus(); });
     connect(copy, &QPushButton::clicked, this, &HomeWindow::copyHostInvitation);
     connect(approve, &QPushButton::clicked, this, [this] { respondToHostRequest(true); });
     connect(hostDeny_, &QPushButton::clicked, this, [this] { respondToHostRequest(false); });
     return page;
 }
 
-void HomeWindow::setSignalingUrl(const QUrl& url)
+QWidget* HomeWindow::createSettingsPage()
 {
-    signalingUrl_->setText(url.toString(QUrl::FullyEncoded));
-    devicePage_->setServer(url);
+    auto* page = new QWidget;
+    auto* layout = new QVBoxLayout(page);
+    layout->setContentsMargins(0, 8, 0, 0);
+    layout->setSpacing(13);
+    layout->addWidget(label(QStringLiteral("设置"), "title", 29, QFont::DemiBold));
+    auto* card = new QFrame;
+    auto* form = hostCard(card);
+    settingsForm_ = card;
+    layout->addWidget(card);
+    form->addWidget(label(QStringLiteral("连接设置"), "sectionTitle", 17, QFont::DemiBold));
+    auto* serverLabel = label(QStringLiteral("信令服务器"), "fieldLabel", 13, QFont::DemiBold);
+    settingsServerUrl_ = new QLineEdit;
+    settingsServerUrl_->setObjectName(QStringLiteral("settingsServerUrl"));
+    settingsServerUrl_->setAccessibleName(serverLabel->text());
+    settingsServerUrl_->setPlaceholderText(QStringLiteral("wss://服务器地址/"));
+    settingsServerUrl_->setMinimumHeight(41);
+    settingsServerUrl_->setMaxLength(2048);
+    serverLabel->setBuddy(settingsServerUrl_);
+    form->addWidget(serverLabel);
+    form->addWidget(settingsServerUrl_);
+    auto* keyLabel = label(QStringLiteral("部署密钥"), "fieldLabel", 13, QFont::DemiBold);
+    settingsDeploymentKey_ = new QLineEdit;
+    settingsDeploymentKey_->setObjectName(QStringLiteral("settingsDeploymentKey"));
+    settingsDeploymentKey_->setAccessibleName(keyLabel->text());
+    settingsDeploymentKey_->setMinimumHeight(41);
+    settingsDeploymentKey_->setMaxLength(4096);
+    settingsDeploymentKey_->setEchoMode(QLineEdit::Password);
+    settingsDeploymentKey_->setInputMethodHints(Qt::ImhHiddenText | Qt::ImhSensitiveData |
+                                               Qt::ImhNoPredictiveText | Qt::ImhNoAutoUppercase);
+    keyLabel->setBuddy(settingsDeploymentKey_);
+    form->addWidget(keyLabel);
+    form->addWidget(settingsDeploymentKey_);
+    forgetDeploymentKey_ = new QCheckBox(QStringLiteral("清除已保存的密钥"));
+    forgetDeploymentKey_->setObjectName(QStringLiteral("forgetDeploymentKey"));
+    form->addWidget(forgetDeploymentKey_);
+    auto* save = hostButton(QStringLiteral("保存设置"), "saveSettings");
+    form->addWidget(save, 0, Qt::AlignLeft);
+    settingsBusyMessage_ = label(QStringLiteral("当前连接设置只读。"), "subtle", 13);
+    settingsBusyMessage_->setWordWrap(true);
+    layout->addWidget(settingsBusyMessage_);
+    settingsMessage_ = label({}, "settingsMessage", 13);
+    settingsMessage_->setWordWrap(true);
+    layout->addWidget(settingsMessage_);
+    settingsMessage_->hide();
+
+    connect(settingsServerUrl_, &QLineEdit::textChanged, this, [this] {
+        settingsDeploymentKey_->setText({});
+        forgetDeploymentKey_->setChecked(false);
+        updateKeyPlaceholder();
+        setSettingsMessage({});
+    });
+    connect(forgetDeploymentKey_, &QCheckBox::toggled, this, [this](bool forget) {
+        settingsDeploymentKey_->setText({});
+        settingsDeploymentKey_->setEnabled(!forget);
+    });
+    connect(settingsServerUrl_, &QLineEdit::returnPressed, this, [this] {
+        if (forgetDeploymentKey_->isChecked())
+            forgetDeploymentKey_->setFocus();
+        else
+            settingsDeploymentKey_->setFocus();
+    });
+    connect(save, &QPushButton::clicked, this, &HomeWindow::saveSettings);
+    setTabOrder(settingsServerUrl_, settingsDeploymentKey_);
+    setTabOrder(settingsDeploymentKey_, forgetDeploymentKey_);
+    setTabOrder(forgetDeploymentKey_, save);
+    updateKeyPlaceholder();
+    return page;
+}
+
+void HomeWindow::updateKeyPlaceholder()
+{
+    const QUrl draft(settingsServerUrl_->text().trimmed(), QUrl::StrictMode);
+    const bool matchingKey = hasSavedKey_ && evp::deviceServerUrl(draft) == savedServerUrl_;
+    settingsDeploymentKey_->setPlaceholderText(matchingKey ? QStringLiteral("已保存，留空保留现有密钥")
+                                                          : QStringLiteral("未保存密钥，可留空使用邀请码连接"));
+    forgetDeploymentKey_->setVisible(matchingKey);
+}
+
+void HomeWindow::resetSettingsDraft()
+{
+    settingsDeploymentKey_->setText({});
+    forgetDeploymentKey_->setChecked(false);
+    settingsServerUrl_->setText(savedServerUrl_.toString(QUrl::FullyEncoded));
+    updateKeyPlaceholder();
+}
+
+void HomeWindow::setConnectionSettings(const QUrl& url, bool hasKey)
+{
+    const auto server = evp::deviceServerUrl(url);
+    hasKey = hasKey && !server.isEmpty();
+    savedServerUrl_ = server;
+    hasSavedKey_ = hasKey;
+    devicePage_->setConnectionConfigured(hasKey);
+    resetSettingsDraft();
+}
+
+void HomeWindow::setConnectionSettingsEnabled(bool editable)
+{
+    settingsEditable_ = editable;
+    updateSettingsAvailability();
+}
+
+void HomeWindow::updateSettingsAvailability()
+{
+    const bool enabled = settingsEditable_ && !busy_ && !hostBusy_;
+    const bool moveFocus = !enabled && settingsForm_->isAncestorOf(focusWidget());
+    settingsForm_->setEnabled(enabled);
+    settingsBusyMessage_->setVisible(!enabled);
+    if (moveFocus)
+        settingsNavigation_->setFocus(Qt::OtherFocusReason);
+}
+
+void HomeWindow::setSettingsMessage(const QString& message)
+{
+    settingsMessage_->setText(message);
+    settingsMessage_->setVisible(!message.isEmpty());
+}
+
+void HomeWindow::saveSettings()
+{
+    if (page_ != Page::Settings || !settingsForm_->isEnabled())
+        return;
+    const auto url = evp::deviceServerUrl(QUrl(settingsServerUrl_->text().trimmed(), QUrl::StrictMode));
+    if (url.isEmpty()) {
+        setSettingsMessage(QStringLiteral("请输入有效的 wss:// 信令服务器地址。"));
+        settingsServerUrl_->setFocus();
+        return;
+    }
+    const auto key = settingsDeploymentKey_->text();
+    const bool forget = forgetDeploymentKey_->isChecked() && hasSavedKey_ && url == savedServerUrl_;
+    emit settingsRequested(url, key, forget);
 }
 
 DevicePage& HomeWindow::devices()
@@ -609,7 +706,23 @@ DevicePage& HomeWindow::devices()
 
 void HomeWindow::showDevicePage()
 {
-    devicePageSelected_ = true;
+    selectPage(Page::Devices);
+}
+
+void HomeWindow::showSettingsPage()
+{
+    selectPage(Page::Settings);
+    if (settingsForm_->isEnabled())
+        settingsServerUrl_->setFocus(Qt::ShortcutFocusReason);
+    else
+        settingsNavigation_->setFocus(Qt::ShortcutFocusReason);
+}
+
+void HomeWindow::selectPage(Page page)
+{
+    if (page_ == Page::Settings && page != page_)
+        resetSettingsDraft();
+    page_ = page;
     updateForm();
     updateBanner();
     scroll_->ensureVisible(0, 0, 0, 0);
@@ -621,9 +734,8 @@ void HomeWindow::setBusy(bool busy, bool trusted)
         return;
     }
     if (busy) {
-        hostKey_->clear();
         autoAcceptInvitation_->setChecked(false);
-        if (trusted)
+        if (trusted || page_ == Page::Settings)
             hostPage_ = false;
         else
             switchRole(false);
@@ -639,12 +751,12 @@ void HomeWindow::setBusy(bool busy, bool trusted)
             statusMessage_ = idleMessage;
         }
     }
-    if (trustedSession_)
+    if (trustedSession_ && page_ != Page::Settings)
         showDevicePage();
     else {
         updateForm();
         updateBanner();
-        if (!devicePageSelected_ && !assistanceTabs_->hasFocus()) {
+        if (page_ == Page::Assistance && !assistanceTabs_->hasFocus()) {
             if (busy)
                 cancelButton_->setFocus(Qt::OtherFocusReason);
             else
@@ -668,7 +780,7 @@ void HomeWindow::setSessionActive(bool active)
     sessionActive_ = active;
     updateForm();
     updateBanner();
-    if (active && !devicePageSelected_ && !assistanceTabs_->hasFocus())
+    if (active && page_ == Page::Assistance && !assistanceTabs_->hasFocus())
         joinButton_->setFocus(Qt::OtherFocusReason);
 }
 
@@ -677,14 +789,13 @@ bool HomeWindow::setHostBusy(bool busy, bool trusted)
     if (hostBusy_ == busy || (busy && busy_)) {
         return hostBusy_ == busy;
     }
-    hostKey_->setText({});
     autoAcceptInvitation_->setChecked(false);
     if (busy) {
         const WId id = winId();
         if (!WTSRegisterSessionNotification(reinterpret_cast<HWND>(id), NOTIFY_FOR_THIS_SESSION))
             return false;
         notificationWindow_ = id;
-        if (trusted)
+        if (trusted || page_ == Page::Settings)
             hostPage_ = true;
         else
             switchRole(true);
@@ -707,16 +818,16 @@ bool HomeWindow::setHostBusy(bool busy, bool trusted)
     }
     hostBusy_ = busy;
     trustedSession_ = busy && trusted;
-    if (trustedSession_)
+    if (trustedSession_ && page_ != Page::Settings)
         showDevicePage();
     else {
         updateForm();
         updateBanner();
-        if (!devicePageSelected_ && !assistanceTabs_->hasFocus()) {
+        if (page_ == Page::Assistance && !assistanceTabs_->hasFocus()) {
             if (busy)
                 hostEndButton_->setFocus(Qt::OtherFocusReason);
             else
-                hostKey_->setFocus(Qt::OtherFocusReason);
+                invitationLifetime_->setFocus(Qt::OtherFocusReason);
         }
     }
     return true;
@@ -735,7 +846,7 @@ void HomeWindow::setHostInvitation(const QString& invitation, int minutes, bool 
     }
     hostInvitation_->setText(invitation);
     updateForm();
-    if (!invitation.isEmpty() && !devicePageSelected_) {
+    if (!invitation.isEmpty() && page_ == Page::Assistance) {
         scroll_->ensureWidgetVisible(hostInvitation_);
     }
 }
@@ -752,7 +863,7 @@ void HomeWindow::setHostPending(quint64 requestId)
     updateForm();
     updateBanner();
     if (requestId) {
-        if (!devicePageSelected_) {
+        if (page_ == Page::Assistance) {
             hostDeny_->setFocus(Qt::OtherFocusReason);
             scroll_->ensureWidgetVisible(hostDecisions_, 0, 12);
         }
@@ -786,7 +897,8 @@ void HomeWindow::showFailure(const QString& message)
     failed_ = true;
     statusMessage_ = message;
     updateBanner();
-    scroll_->ensureWidgetVisible(banner_, 0, 12);
+    if (page_ != Page::Settings)
+        scroll_->ensureWidgetVisible(banner_, 0, 12);
 }
 
 void HomeWindow::switchRole(bool host, bool focusTab)
@@ -800,10 +912,7 @@ void HomeWindow::switchRole(bool host, bool focusTab)
         failed_ = false;
         statusMessage_ = host ? hostIdleMessage : idleMessage;
     }
-    devicePageSelected_ = false;
-    updateBanner();
-    updateForm();
-    scroll_->ensureVisible(0, 0, 0, 0);
+    selectPage(Page::Assistance);
     if (focusTab) {
         assistanceTabs_->setFocus(Qt::OtherFocusReason);
         return;
@@ -817,7 +926,7 @@ void HomeWindow::switchRole(bool host, bool focusTab)
         }
         return;
     }
-    QWidget* target = host ? hostKey_ : invitation_;
+    QWidget* target = host ? static_cast<QWidget*>(invitationLifetime_) : invitation_;
     if (busy_) {
         target = sessionActive_ ? joinButton_ : cancelButton_;
     }
@@ -825,26 +934,15 @@ void HomeWindow::switchRole(bool host, bool focusTab)
     scroll_->ensureWidgetVisible(target);
 }
 
-QUrl HomeWindow::requestedSignalingUrl(QLineEdit* field)
-{
-    const QUrl url(field->text().trimmed(), QUrl::StrictMode);
-    const auto host = url.host();
-    const bool loopback = host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1")
-                         || host == QStringLiteral("::1");
-    const bool allowedScheme = url.scheme() == QStringLiteral("wss")
-                               || (loopback && url.scheme() == QStringLiteral("ws"));
-    if (!url.isValid() || host.isEmpty() || !allowedScheme || !url.userInfo().isEmpty()
-        || url.hasQuery() || url.hasFragment() || (!url.path().isEmpty() && url.path() != "/")) {
-        showFailure(QStringLiteral("请输入部署使用的有效 wss:// 信令地址。"));
-        field->setFocus();
-        return {};
-    }
-    return url;
-}
-
 void HomeWindow::requestJoin()
 {
-    if (busy_ || hostBusy_ || hostPage_) {
+    if (page_ != Page::Assistance || busy_ || hostBusy_ || hostPage_) {
+        return;
+    }
+    if (savedServerUrl_.isEmpty()) {
+        showSettingsPage();
+        if (settingsForm_->isEnabled())
+            setSettingsMessage(QStringLiteral("请先保存信令服务器地址，再返回远程协助使用邀请码连接。"));
         return;
     }
 
@@ -860,32 +958,26 @@ void HomeWindow::requestJoin()
         return;
     }
 
-    const auto url = requestedSignalingUrl(signalingUrl_);
-    if (!url.isEmpty()) {
-        emit joinRequested(url, invitation);
-    }
+    emit joinRequested(invitation);
 }
 
 void HomeWindow::requestHost()
 {
-    if (busy_ || hostBusy_ || !hostPage_) {
+    if (page_ != Page::Assistance || busy_ || hostBusy_ || !hostPage_) {
         return;
     }
-    const auto key = hostKey_->text();
-    if (key.trimmed().isEmpty()) {
-        showFailure(QStringLiteral("请输入此信令服务的部署密钥。"));
-        hostKey_->setFocus();
+    if (!hasSavedKey_) {
+        showSettingsPage();
+        if (settingsForm_->isEnabled()) {
+            setSettingsMessage(QStringLiteral("创建邀请码需要保存信令服务器地址和部署密钥。"));
+            if (!savedServerUrl_.isEmpty())
+                settingsDeploymentKey_->setFocus(Qt::ShortcutFocusReason);
+        }
         return;
     }
-    const auto url = requestedSignalingUrl(hostSignalingUrl_);
-    if (!url.isEmpty()) {
-        const evp::CodeOptions options{invitationLifetime_->currentData().toInt(),
-                                       autoAcceptInvitation_->isChecked()};
-        hostKey_->setText({});
-        autoAcceptInvitation_->setChecked(false);
-        emit hostRequested(url, key, options, highRefresh_->isChecked(), relayOnly_->isChecked(),
-                           shareAudio_->isChecked());
-    }
+    const evp::CodeOptions options{invitationLifetime_->currentData().toInt(), autoAcceptInvitation_->isChecked()};
+    autoAcceptInvitation_->setChecked(false);
+    emit hostRequested(options, highRefresh_->isChecked(), relayOnly_->isChecked(), shareAudio_->isChecked());
 }
 
 void HomeWindow::pasteInvitation()
@@ -926,14 +1018,19 @@ void HomeWindow::respondToHostRequest(bool approved)
 
 void HomeWindow::updateForm()
 {
-    viewerFormPage_->setVisible(!devicePageSelected_ && !hostPage_);
-    hostFormPage_->setVisible(!devicePageSelected_ && hostPage_);
-    devicePage_->setVisible(devicePageSelected_);
-    deviceNavigation_->setChecked(devicePageSelected_);
-    assistanceNavigation_->setChecked(!devicePageSelected_);
-    deviceTitle_->setVisible(devicePageSelected_);
-    deviceSummary_->setVisible(devicePageSelected_);
-    assistanceHeader_->setVisible(!devicePageSelected_);
+    const bool assistance = page_ == Page::Assistance;
+    const bool devices = page_ == Page::Devices;
+    viewerFormPage_->setVisible(assistance && !hostPage_);
+    hostFormPage_->setVisible(assistance && hostPage_);
+    devicePage_->setVisible(devices);
+    deviceNavigation_->setChecked(devices);
+    assistanceNavigation_->setChecked(assistance);
+    deviceTitle_->setVisible(devices);
+    deviceSummary_->setVisible(devices);
+    assistanceHeader_->setVisible(assistance);
+    settingsPage_->setVisible(page_ == Page::Settings);
+    settingsNavigation_->setChecked(page_ == Page::Settings);
+    updateSettingsAvailability();
     {
         const QSignalBlocker blocker(assistanceTabs_);
         assistanceTabs_->setTabEnabled(0, !hostBusy_);
@@ -966,7 +1063,6 @@ void HomeWindow::updateForm()
     hostEndButton_->setText(hostActive_ ? QStringLiteral("结束共享")
                                       : QStringLiteral("取消共享"));
     invitation_->setEnabled(!busy_);
-    signalingUrl_->setEnabled(!busy_);
     pasteButton_->setEnabled(!busy_);
     joinButton_->setEnabled(!busy_ || sessionActive_);
     cancelButton_->setVisible(busy_ && !sessionActive_);
@@ -1010,6 +1106,6 @@ void HomeWindow::updateBanner()
             bannerTitle_->setText(busy_ ? QStringLiteral("正在连接") : QStringLiteral("等待连接"));
         }
     }
-    banner_->setVisible(!devicePageSelected_ || hostBusy_ || busy_ || failed_);
+    banner_->setVisible(page_ == Page::Assistance || (page_ == Page::Devices && (hostBusy_ || busy_ || failed_)));
     bannerMessage_->setText(statusMessage_);
 }

@@ -36,12 +36,23 @@ public:
     }
     QString message() const { return home_.findChild<QLabel*>("deviceMessage")->text(); }
 
-    void configure(const QString& key) const {
-        home_.showDevicePage();
-        if (!key.isEmpty()) {
-            field("deviceDeploymentKey")->setText(key);
-            button("configureDevices")->click();
-        }
+    bool saveSettings(const QUrl& url, const QString& key = {}) const {
+        auto* navigation = button("settingsNavigation");
+        auto* address = field("settingsServerUrl");
+        auto* secret = field("settingsDeploymentKey");
+        auto* save = button("saveSettings");
+        if (!navigation || !address || !secret || !save)
+            return false;
+        navigation->click();
+        if (!address->isVisible() || !secret->isVisible() || !secret->text().isEmpty() ||
+            secret->echoMode() != QLineEdit::Password)
+            return false;
+        address->setText(url.toString());
+        secret->setText(key);
+        if (!save->isVisible() || !save->isEnabled())
+            return false;
+        save->click();
+        return secret->text().isEmpty() && (key.isEmpty() || !secret->placeholderText().contains(key));
     }
 
 private:

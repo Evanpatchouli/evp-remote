@@ -1,10 +1,16 @@
 # Unified Windows client
 
-## Remote Assistance
-
 On each Windows PC, double-click **`evp-remote-windows-x64-portable.exe`**. Alternatively, extract **`evp-remote-windows-x64.zip`** and open **EvpRemote.exe**. A configuration that already has My Devices set up opens its device list. Use the sidebar to start Remote Assistance. The active viewer gets its own control window, and a machine can switch roles after ending its current invitation or session.
 
-1. On the PC to share, open **远程协助** and choose the **共享本机** tab. Enter the signaling address and deployment key, choose the invitation lifetime, and select **创建邀请码**. Send the one-time code privately to the intended viewer. The app clears the deployment key field after use.
+## Shared settings
+
+Open **设置** at the bottom of the sidebar and enter the deployment's `wss://` address. Add the deployment key if this PC will create invitations or use My Devices, then save. An invitation guest can save just the address. Both modes use these settings for the current Windows user, including after restarting the portable EXE.
+
+An upgrade reuses the protected address and key previously saved in My Devices. If there is no saved endpoint, the client uses a valid previous Remote Assistance address, then the `EVP_SIGNAL_URL` or packaged default address. Existing device IDs and pairings carry over. For the same address, a blank key field retains its saved key. To rotate it, type the new key and save. To remove it, use the forget-key option. Changing to a different address with a blank key saves an address-only configuration. End the current invitation, pairing request or session before applying new settings.
+
+## Remote Assistance
+
+1. On the PC to share, open **远程协助** and choose the **共享本机** tab. Choose the invitation lifetime and select **创建邀请码**. The host uses the key saved in Settings. Send the one-time code privately to the intended viewer.
 2. On the controlling PC, open **远程协助** in the sidebar. In its **远程协助** tab, paste the invitation and select **请求连接**. Both PCs use the same signaling address. The host normally reviews this request and selects **同意并开始共享** or **拒绝**.
 3. For direct entry with a particular invitation, select **持码免本机确认** before creating it. Set system sound, refresh and TURN-only for this session. The first successful redemption starts sharing the primary screen and grants keyboard and mouse on the unlocked single-monitor desktop. The issued code displays its lifetime and confirmation mode. To withdraw it, cancel sharing. The floating stop button is available while a preapproved session is active.
 4. The viewer opens **远程控制**. The toolbar shows the selected ICE route, source resolution, successful presentation submissions per second, and input permission. Click the picture to send keyboard/mouse input. Choose **全屏** to hide the toolbar; **Ctrl+Alt+F11** restores it. The host's **结束共享** or the viewer's **结束控制** ends the session. Use a fresh invitation to reconnect.
@@ -15,7 +21,7 @@ The native sender captures desktop updates with DXGI Desktop Duplication, includ
 
 ## My Devices
 
-1. On each PC, open **我的设备**. Under **远控权限与信令服务**, enter the same `wss://` address and the deployment key, then select **保存并连接**. Wait for **本机在线** on both PCs. Use a device-capable server for this accountless setup. My Devices remembers its own address and key. Enter the key again after changing the address or rotating the key. [Server upgrade](windows-session.md#enable-my-devices-on-the-same-server)
+1. Save the same server address and its deployment key in **设置** on both PCs, then open **我的设备** and wait for **本机在线**. The server must support device registration. [Server upgrade](windows-session.md#enable-my-devices-on-the-same-server)
 
    A local device ID is available before registration. The pairing options, code generator and request field become available when the client is online and idle. **复制** becomes available after generating a local code, and **请求配对** after entering the other PC's code. The incoming-control switch is only needed to host a control session.
 2. On one PC select the pairing lifetime and choose **生成配对码**. Copy the code privately to the other PC and select **请求配对** there. Normally, verify the displayed ID on the issuing PC and select **确认配对**. Selecting **持码免本机确认** when generating the code authorizes its first valid pairing request in advance. Editing the options invalidates the current code. The paired device appears in the scrollable list. Screen sharing requires a separate control request and the incoming-control switch.
@@ -24,7 +30,7 @@ The native sender captures desktop updates with DXGI Desktop Duplication, includ
 
 The online indicator tracks the target's signaling connection. The target also needs one active display and an unlocked Windows session. Locking the desktop or losing signaling ends the session. After re-registration, select the device again to reconnect. Choose system sound, high refresh, and TURN-only before starting a session. A floating **正在共享本机 · 停止共享** button stays available on the host while sharing, including when its main window is minimized. The local session limit is one hour.
 
-If the app reports a local storage error, restore write access to the Windows user's application data directory. Review the trusted list and inbound switch and select **保存并连接**. Repeat any revocation that was reported as unsaved.
+If the app reports a local storage error, restore write access to the Windows user's application data directory. Review the trusted list and inbound switch, then save the connection settings again in **设置**. Repeat any revocation that was reported as unsaved.
 
 ## Build both roles
 
