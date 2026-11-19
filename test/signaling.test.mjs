@@ -117,6 +117,29 @@ test('releases invitation capacity and consumes the invite even when the host de
   assert.notEqual(await createInvitation(otherHost), invite);
 });
 
+test('reports actionable session failures to both peers using bounded reason codes', { timeout: 5000 }, async t => {
+  const open = await listen(t);
+  const [host, viewer] = await Promise.all([open(), open()]);
+  for (const [peer, type, reason, expected] of [
+    [host, 'reject', 'audio-unavailable', /Share system audio/],
+    [host, 'reject', 'capture-denied', /choose the entire/],
+    [host, 'end', 'input-unavailable', /Reopen the host launcher/],
+    [viewer, 'end', 'transport-failed', /TURN service/],
+    [viewer, 'end', 'arbitrary text', /^The viewer ended the session\.$/],
+  ]) {
+    await join(host, viewer);
+    if (type === 'end') {
+      host.send({ type: 'accept', relayOnly: false });
+      await Promise.all([host.receive(), viewer.receive()]);
+    }
+    peer.send({ type, reason });
+    const result = await Promise.all([host.receive(), viewer.receive()]);
+    assert.deepEqual(result[0], result[1]);
+    assert.equal(result[0].type, 'ended');
+    assert.match(result[0].reason, expected);
+  }
+});
+
 test('expires unused invitations and unanswered requests', { timeout: 5000 }, async t => {
   const open = await listen(t, { inviteTtlMs: 400, consentTtlMs: 200 });
   const [host, viewer] = await Promise.all([open(), open()]);

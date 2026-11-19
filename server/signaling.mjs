@@ -10,6 +10,13 @@ const MESSAGE_BURST = 128;
 const MESSAGES_PER_SECOND = 64;
 const IDLE_TIMEOUT_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 20_000;
+const failureMessages = new Map([
+  ['capture-denied', 'Screen sharing was not approved. Create a new invitation and choose the entire host display.'],
+  ['audio-unavailable', 'System audio is unavailable. Check the host output device and select Share system audio when reconnecting.'],
+  ['display-unavailable', 'The shared display is unavailable. Check that one host monitor is active and share the entire screen again.'],
+  ['input-unavailable', 'The Windows input adapter is unavailable. Reopen the host launcher and check the interactive desktop.'],
+  ['transport-failed', 'The media connection failed. Check both networks and the TURN service, then reconnect.'],
+]);
 
 function digest(value) {
   return createHash('sha256').update(value).digest();
@@ -214,7 +221,7 @@ export function createSignalServer({
           return 'Only the host can respond to a pending request.';
         }
         if (message.type === 'accept') return accept(room, message.relayOnly);
-        finishRoom(room, 'The host declined the request.');
+        finishRoom(room, failureMessages.get(message.reason) ?? 'The host declined the request.');
         return;
       case 'signal': {
         if (room?.state !== 'accepted') return 'The host must accept before signaling can start.';
@@ -228,9 +235,14 @@ export function createSignalServer({
         }
         return;
       }
-      case 'end':
-        if (room) finishRoom(room, `The ${room.host === peer ? 'host' : 'viewer'} ended the session.`);
+      case 'end': {
+        if (!room) return;
+        const role = room.host === peer ? 'host' : 'viewer';
+        const permitted = role === 'host' || ['transport-failed', 'audio-unavailable', 'display-unavailable'].includes(message.reason);
+        const diagnostic = permitted ? failureMessages.get(message.reason) : undefined;
+        finishRoom(room, diagnostic ?? `The ${role} ended the session.`);
         return;
+      }
       default:
         return 'The message type is unsupported.';
     }
