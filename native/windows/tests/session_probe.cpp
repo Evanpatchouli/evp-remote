@@ -25,7 +25,7 @@ class InvisibleTestWindows final : public QObject {
 } // namespace
 
 // Separate test binary: drive the actual Qt form, session and input path without OS-level input.
-int main(int argc, char** argv) {
+int runViewerProbe(int argc, char** argv) {
     QApplication app(argc, argv);
     QTemporaryDir preferences;
     if (!preferences.isValid())
@@ -43,6 +43,8 @@ int main(int argc, char** argv) {
     const auto url = QUrl(qEnvironmentVariable("EVP_PROBE_URL"));
     const auto invite = qEnvironmentVariable("EVP_PROBE_INVITE");
     const auto expectedRoute = qEnvironmentVariable("EVP_PROBE_ROUTE", "direct");
+    const bool expectDenial = qEnvironmentVariable("EVP_PROBE_CASE") == "deny";
+    const bool expectAudio = qEnvironmentVariable("EVP_PROBE_CASE") != "video-only";
     if (url.host() != "127.0.0.1" || invite.isEmpty())
         return 2;
     home.setSignalingUrl(url);
@@ -53,9 +55,13 @@ int main(int argc, char** argv) {
     QObject::connect(
         &client, &evp::DesktopController::sample, &app,
         [&](quint64 presents, QSize size, QString route, bool audio, bool ready, quint64 gpu, quint64 cpu) {
-            if (exercised || presents < 4 || size != QSize(640, 360) || route != expectedRoute || !audio ||
-                !ready)
+            if (exercised || presents < 4 || size != QSize(640, 360) || route != expectedRoute ||
+                audio != expectAudio || !ready)
                 return;
+            if (expectDenial) {
+                app.exit(4);
+                return;
+            }
             SessionWindow* window = nullptr;
             for (auto* top : QApplication::topLevelWidgets())
                 if ((window = qobject_cast<SessionWindow*>(top)))
@@ -72,6 +78,8 @@ int main(int argc, char** argv) {
             QWheelEvent wheel(position, surface->mapToGlobal(position.toPoint()), {}, QPoint(0, 120),
                               Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
             QApplication::sendEvent(surface, &wheel);
+            if (qEnvironmentVariable("EVP_PROBE_CASE") == "release-retry")
+                QTest::keyPress(surface, Qt::Key_B);
             const auto* renderer = static_cast<evp::VideoSurface*>(surface);
             const auto data =
                 QJsonObject{{"presents", static_cast<qint64>(presents)},
@@ -88,7 +96,8 @@ int main(int argc, char** argv) {
     QObject::connect(&client, &evp::DesktopController::sessionFinished, &app, [&](const QString& message) {
         ended = true;
         fprintf(stderr, "%s\n", message.toUtf8().constData());
-        app.exit(exercised ? 0 : 1);
+        app.exit((expectDenial ? (!exercised && message.contains(QStringLiteral("拒绝"))) : exercised) ? 0
+                                                                                                       : 1);
     });
     QTimer::singleShot(0, join, &QPushButton::click);
     QTimer::singleShot(60000, &app, [&] {
@@ -97,3 +106,9 @@ int main(int argc, char** argv) {
     });
     return app.exec();
 }
+
+#ifndef EVP_UNIFIED_PROBE
+int main(int argc, char** argv) {
+    return runViewerProbe(argc, argv);
+}
+#endif

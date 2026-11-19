@@ -1,4 +1,9 @@
 export const inputChannelLabel = "input";
+
+export function expectsIncomingAudio(connection) {
+  return connection.getTransceivers().some(track => track.receiver.track.kind === "audio" &&
+    (track.currentDirection === "recvonly" || track.currentDirection === "sendrecv"));
+}
 export class PeerNegotiationError extends Error {}
 const highRefreshTargetFps = 144;
 

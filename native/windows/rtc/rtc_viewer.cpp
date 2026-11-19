@@ -1,8 +1,6 @@
 #include "rtc_viewer.h"
+#include "rtc_runtime.h"
 #include "../media/webrtc_ffmpeg_decoder.h"
-
-#include <winsock2.h>
-#include <webrtc_c.h>
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -10,7 +8,6 @@
 #include <QHash>
 
 #include <atomic>
-#include <mutex>
 #include <utility>
 
 namespace evp {
@@ -40,25 +37,6 @@ std::string readError(webrtc_RTCError_unique* error) {
     std::size_t size = 0;
     webrtc_RTCError_message(value, &message, &size);
     return message && size ? std::string(message, size) : "Unknown WebRTC error.";
-}
-
-std::mutex runtimeMutex;
-unsigned runtimeUsers = 0;
-
-bool acquireRuntime() {
-    const std::scoped_lock lock(runtimeMutex);
-    if (runtimeUsers == 0) {
-        WSADATA winsock{};
-        if (WSAStartup(MAKEWORD(2, 2), &winsock) != 0) return false;
-        webrtc_InitializeSSL();
-    }
-    ++runtimeUsers;
-    return true;
-}
-
-void releaseRuntime() {
-    const std::scoped_lock lock(runtimeMutex);
-    if (--runtimeUsers == 0) WSACleanup();
 }
 
 const char* connectionStateName(int state) {
@@ -504,7 +482,7 @@ RtcViewer::RtcViewer(Callbacks callbacks) : callbacks_(std::move(callbacks)) {}
 
 RtcViewer::~RtcViewer() {
     close();
-    if (initialized_) releaseRuntime();
+    if (initialized_) rtc::releaseRuntime();
 }
 
 bool RtcViewer::start(const std::vector<IceServer>& iceServers, bool relayOnly, ID3D11Device* device) {
@@ -513,7 +491,7 @@ bool RtcViewer::start(const std::vector<IceServer>& iceServers, bool relayOnly, 
         if (callbacks_.error) callbacks_.error("The WebRTC owner thread dispatcher is missing.");
         return false;
     }
-    if (!initialized_) initialized_ = acquireRuntime();
+    if (!initialized_) initialized_ = rtc::acquireRuntime();
     if (!initialized_) {
         if (callbacks_.error) callbacks_.error("Could not initialize native WebRTC.");
         return false;

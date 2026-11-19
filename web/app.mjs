@@ -1,5 +1,5 @@
 import { bindViewerInput, parseInput } from "./input.mjs";
-import { captureStatus, createPeer, displayCaptureOptions, inputChannelLabel, PeerNegotiationError,
+import { captureStatus, createPeer, displayCaptureOptions, expectsIncomingAudio, inputChannelLabel, PeerNegotiationError,
   selectedRoute, watchTrackMute } from "./peer.mjs";
 
 // These wire messages are part of the signaling and launcher protocols.
@@ -213,8 +213,14 @@ function handleSignal(ctx, message) {
         finish(ctx, "被控端尚未同意，信令服务器已发来连接详情。");
         break;
       }
-      ctx.inbound = ctx.inbound.then(() => {
-        if (active(ctx)) return ctx.peer.receive(message.data);
+      ctx.inbound = ctx.inbound.then(async () => {
+        if (!active(ctx)) return;
+        await ctx.peer.receive(message.data);
+        if (active(ctx) && ctx.role === "viewer" && message.data?.description?.type === "offer") {
+          ctx.withAudio = expectsIncomingAudio(ctx.peer.connection);
+          if (ctx.firstFrame && !ctx.withAudio) clearTimeout(ctx.connectTimeout);
+          updateViewerControls(ctx);
+        }
       }).catch(error => negotiationFailed(ctx, error));
       break;
     case "ended":
@@ -286,6 +292,7 @@ function updateCaptureStatus(ctx) {
 
 function startPeer(ctx, { iceServers, relayOnly }) {
   ctx.relayOnly = relayOnly;
+  ctx.withAudio = true;
   if (ctx.role === "viewer") {
     ctx.received = new MediaStream();
     stage.textContent = "正在等待被控端共享屏幕…";
@@ -485,6 +492,8 @@ function updateViewerControls(ctx) {
   playback.textContent = ctx.playbackRequired ? "开始播放" : video.muted ? "开启声音" : "静音";
   if (ctx.audioTrack) {
     audioStatus.textContent = ctx.audioTrack.muted ? "等待系统音频" : video.muted ? "已收到音频 · 静音" : "声音已开启";
+  } else if (!ctx.withAudio) {
+    audioStatus.textContent = "对方未共享声音";
   }
 }
 
@@ -520,7 +529,7 @@ function receiveTrack(ctx, track) {
 function firstFrame(ctx) {
   if (!active(ctx) || ctx.firstFrame) return;
   ctx.firstFrame = true;
-  if (ctx.audioTrack) clearTimeout(ctx.connectTimeout);
+  if (ctx.audioTrack || !ctx.withAudio) clearTimeout(ctx.connectTimeout);
   screenStatus.textContent = `${video.videoWidth} × ${video.videoHeight} · 播放中`;
   stage.hidden = true;
   updateViewerControls(ctx);

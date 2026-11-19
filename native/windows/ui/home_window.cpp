@@ -3,16 +3,19 @@
 #include "visual_style.h"
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QStackedWidget>
 #include <QSysInfo>
 #include <QVBoxLayout>
 
 #include <limits>
+#include <utility>
 
 namespace {
 
@@ -24,6 +27,7 @@ using native_ui::uiFont;
 
 const auto idleMessage = QStringLiteral("输入对方发来的邀请码，在对方确认后开始控制。");
 const auto waitingMessage = QStringLiteral("正在向对方发送连接请求。");
+const auto hostIdleMessage = QStringLiteral("创建一次性邀请码，收到请求后由你决定是否共享本机。");
 
 constexpr auto homeStyle = R"(
     QWidget#home, QWidget#homeBody, QScrollArea#homeScroll { background: #f7f9fd; }
@@ -40,31 +44,69 @@ constexpr auto homeStyle = R"(
     QLineEdit:hover { border-color: #9fb7d8; }
     QLineEdit:focus { border: 2px solid #3475e4; padding: 0 11px; }
     QLineEdit:disabled { background: #f4f7fc; color: #566986; }
-    QPushButton#navigation {
-        background: #dbe8ff; color: #214c98; border: 1px solid transparent;
+    QPushButton[roleNavigation="true"] {
+        background: transparent; color: #214c98; border: 1px solid transparent;
         border-radius: 9px; padding: 0 12px; text-align: left;
     }
-    QPushButton#navigation:hover { background: #cddfff; }
-    QPushButton#navigation:pressed { background: #c2d6fa; }
-    QPushButton#navigation:focus { border-color: #3475e4; }
-    QPushButton#navigation:disabled { color: #4a6592; }
-    QPushButton#paste, QPushButton#cancel {
+    QPushButton[roleNavigation="true"]:checked { background: #dbe8ff; }
+    QPushButton[roleNavigation="true"]:hover { background: #cddfff; }
+    QPushButton[roleNavigation="true"]:pressed { background: #c2d6fa; }
+    QPushButton[roleNavigation="true"]:focus { border-color: #3475e4; }
+    QPushButton[roleNavigation="true"]:disabled { color: #4a6592; }
+    QPushButton#paste, QPushButton#cancel, QPushButton#copyHostInvitation, QPushButton#hostDeny {
         background: #f8faff; color: #284675; border: 1px solid #ccd9ec;
         border-radius: 8px; padding: 0 12px;
     }
-    QPushButton#paste:hover, QPushButton#cancel:hover { background: #edf4ff; border-color: #a4bce4; }
-    QPushButton#paste:pressed, QPushButton#cancel:pressed { background: #e0ecff; }
-    QPushButton#paste:focus, QPushButton#cancel:focus { border-color: #3475e4; }
+    QPushButton#paste:hover, QPushButton#cancel:hover, QPushButton#copyHostInvitation:hover, QPushButton#hostDeny:hover { background: #edf4ff; border-color: #a4bce4; }
+    QPushButton#paste:pressed, QPushButton#cancel:pressed, QPushButton#copyHostInvitation:pressed, QPushButton#hostDeny:pressed { background: #e0ecff; }
+    QPushButton#paste:focus, QPushButton#cancel:focus, QPushButton#copyHostInvitation:focus, QPushButton#hostDeny:focus { border-color: #3475e4; }
     QPushButton#paste:disabled { color: #667899; border-color: #dfe6f1; background: #f4f7fc; }
-    QPushButton#join {
+    QPushButton#join, QPushButton#hostCreate, QPushButton#hostApprove {
         background: #2463da; color: #ffffff; border: 2px solid transparent;
         border-radius: 8px; padding: 0 17px;
     }
-    QPushButton#join:hover { background: #1956c5; }
-    QPushButton#join:pressed { background: #1348ac; }
-    QPushButton#join:focus { border-color: #8db5ff; }
+    QPushButton#join:hover, QPushButton#hostCreate:hover, QPushButton#hostApprove:hover { background: #1956c5; }
+    QPushButton#join:pressed, QPushButton#hostCreate:pressed, QPushButton#hostApprove:pressed { background: #1348ac; }
+    QPushButton#join:focus, QPushButton#hostCreate:focus, QPushButton#hostApprove:focus { border-color: #8db5ff; }
     QPushButton#join:disabled { color: #43608f; background: #e2eafb; }
+    QPushButton#hostEnd {
+        background: #922f31; color: white; border: 2px solid transparent;
+        border-radius: 8px; padding: 0 11px;
+    }
+    QPushButton#hostEnd:hover { background: #7c2225; }
+    QPushButton#hostEnd:pressed { background: #61191d; }
+    QPushButton#hostEnd:focus { border-color: #f3aab0; }
 )";
+
+QPushButton* roleButton(const QString& text, const char* name, Symbol symbol) {
+    auto* button = new QPushButton(text);
+    button->setObjectName(QString::fromLatin1(name));
+    button->setProperty("roleNavigation", true);
+    button->setFont(uiFont(14, QFont::DemiBold));
+    button->setIcon(symbolIcon(symbol, QColor("#275cae"), 19));
+    button->setIconSize(QSize(19, 19));
+    button->setMinimumHeight(44);
+    button->setCursor(Qt::PointingHandCursor);
+    button->setCheckable(true);
+    return button;
+}
+
+QPushButton* hostButton(const QString& text, const char* name) {
+    auto* button = new QPushButton(text);
+    button->setObjectName(QString::fromLatin1(name));
+    button->setFont(uiFont(14, QFont::DemiBold));
+    button->setMinimumHeight(41);
+    button->setCursor(Qt::PointingHandCursor);
+    return button;
+}
+
+QVBoxLayout* hostCard(QFrame* card) {
+    card->setObjectName(QStringLiteral("card"));
+    auto* layout = new QVBoxLayout(card);
+    layout->setContentsMargins(17, 15, 17, 16);
+    layout->setSpacing(10);
+    return layout;
+}
 
 } // namespace
 
@@ -105,16 +147,18 @@ HomeWindow::HomeWindow(QWidget* parent)
     brand->addWidget(label(QStringLiteral("EVP 远程"), "brandName", 17, QFont::DemiBold), 1);
     railLayout->addLayout(brand);
     railLayout->addSpacing(34);
-    auto* navigation = new QPushButton(QStringLiteral("远程连接"));
-    navigation->setObjectName(QStringLiteral("navigation"));
-    navigation->setFont(uiFont(14, QFont::DemiBold));
-    navigation->setIcon(symbolIcon(Symbol::Connect, QColor("#275cae"), 19));
-    navigation->setIconSize(QSize(19, 19));
-    navigation->setMinimumHeight(44);
-    navigation->setCursor(Qt::PointingHandCursor);
-    railLayout->addWidget(navigation);
+    viewerNavigation_ = roleButton(QStringLiteral("远程连接"), "navigation", Symbol::Connect);
+    hostNavigation_ = roleButton(QStringLiteral("共享本机"), "hostNavigation", Symbol::Display);
+    railLayout->addWidget(viewerNavigation_);
+    railLayout->addSpacing(6);
+    railLayout->addWidget(hostNavigation_);
     railLayout->addStretch();
-    auto* role = label(QStringLiteral("Windows 控制端"), "subtle", 12);
+    hostEndButton_ = hostButton(QStringLiteral("结束共享"), "hostEnd");
+    hostEndButton_->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
+    hostEndButton_->setIconSize(QSize(17, 17));
+    railLayout->addWidget(hostEndButton_);
+    railLayout->addSpacing(16);
+    auto* role = label(QStringLiteral("Windows"), "subtle", 12);
     role->setContentsMargins(8, 0, 0, 0);
     railLayout->addWidget(role);
 
@@ -185,8 +229,13 @@ HomeWindow::HomeWindow(QWidget* parent)
     contentLayout->addWidget(deviceCard);
     contentLayout->addSpacing(25);
 
-    contentLayout->addWidget(label(QStringLiteral("连接远程设备"), "sectionTitle", 17, QFont::DemiBold));
-    contentLayout->addSpacing(9);
+    pages_ = new QStackedWidget;
+    contentLayout->addWidget(pages_);
+    auto* viewerPage = new QWidget;
+    auto* viewerLayout = new QVBoxLayout(viewerPage);
+    viewerLayout->setContentsMargins(0, 0, 0, 0);
+    viewerLayout->setSpacing(9);
+    viewerLayout->addWidget(label(QStringLiteral("连接远程设备"), "sectionTitle", 17, QFont::DemiBold));
     auto* form = new QFrame;
     form->setObjectName(QStringLiteral("card"));
     auto* formLayout = new QVBoxLayout(form);
@@ -247,21 +296,22 @@ HomeWindow::HomeWindow(QWidget* parent)
     actions->addWidget(cancelButton_);
     actions->addStretch();
     formLayout->addLayout(actions);
-    contentLayout->addWidget(form);
+    viewerLayout->addWidget(form);
+    viewerLayout->addStretch();
+    pages_->addWidget(viewerPage);
+    pages_->addWidget(createHostPage());
 
-    setTabOrder(navigation, invitation_);
+    setTabOrder(viewerNavigation_, hostNavigation_);
+    setTabOrder(hostNavigation_, invitation_);
     setTabOrder(invitation_, pasteButton_);
     setTabOrder(pasteButton_, signalingUrl_);
     setTabOrder(signalingUrl_, joinButton_);
     setTabOrder(joinButton_, cancelButton_);
-    connect(navigation, &QPushButton::clicked, this, [this] {
-        QWidget* target = invitation_;
-        if (busy_) {
-            target = sessionActive_ ? joinButton_ : cancelButton_;
-        }
-        target->setFocus(Qt::ShortcutFocusReason);
-        scroll_->ensureWidgetVisible(target);
-    });
+    connect(viewerNavigation_, &QPushButton::clicked, this, [this] { switchRole(false); });
+    connect(hostNavigation_, &QPushButton::clicked, this, [this] { switchRole(true); });
+    connect(hostEndButton_, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
+    connect(signalingUrl_, &QLineEdit::textChanged, hostSignalingUrl_, &QLineEdit::setText);
+    connect(hostSignalingUrl_, &QLineEdit::textChanged, signalingUrl_, &QLineEdit::setText);
     connect(pasteButton_, &QPushButton::clicked, this, &HomeWindow::pasteInvitation);
     connect(joinButton_, &QPushButton::clicked, this, [this] {
         if (sessionActive_) {
@@ -278,6 +328,114 @@ HomeWindow::HomeWindow(QWidget* parent)
     updateBanner();
 }
 
+QWidget* HomeWindow::createHostPage()
+{
+    auto* page = new QWidget;
+    auto* pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->setSpacing(9);
+    pageLayout->addWidget(label(QStringLiteral("共享本机"), "sectionTitle", 17, QFont::DemiBold));
+
+    auto* setup = new QFrame;
+    hostSetup_ = setup;
+    auto* setupLayout = hostCard(setup);
+    auto* serverLabel = label(QStringLiteral("信令服务器"), "fieldLabel", 13, QFont::DemiBold);
+    hostSignalingUrl_ = new QLineEdit;
+    hostSignalingUrl_->setObjectName(QStringLiteral("hostSignalingUrl"));
+    hostSignalingUrl_->setAccessibleName(serverLabel->text());
+    hostSignalingUrl_->setPlaceholderText(QStringLiteral("wss://服务器地址/"));
+    hostSignalingUrl_->setMinimumHeight(41);
+    serverLabel->setBuddy(hostSignalingUrl_);
+    setupLayout->addWidget(serverLabel);
+    setupLayout->addWidget(hostSignalingUrl_);
+
+    auto* keyLabel = label(QStringLiteral("部署密钥"), "fieldLabel", 13, QFont::DemiBold);
+    hostKey_ = new QLineEdit;
+    hostKey_->setObjectName(QStringLiteral("hostKey"));
+    hostKey_->setAccessibleName(keyLabel->text());
+    hostKey_->setPlaceholderText(QStringLiteral("输入部署时配置的主机密钥"));
+    hostKey_->setEchoMode(QLineEdit::Password);
+    hostKey_->setInputMethodHints(Qt::ImhHiddenText | Qt::ImhSensitiveData | Qt::ImhNoPredictiveText |
+                                  Qt::ImhNoAutoUppercase);
+    hostKey_->setMinimumHeight(41);
+    keyLabel->setBuddy(hostKey_);
+    setupLayout->addWidget(keyLabel);
+    setupLayout->addWidget(hostKey_);
+    auto* create = hostButton(QStringLiteral("创建邀请码"), "hostCreate");
+    setupLayout->addWidget(create, 0, Qt::AlignLeft);
+    pageLayout->addWidget(setup);
+
+    auto* invite = new QFrame;
+    hostInvite_ = invite;
+    auto* inviteLayout = hostCard(invite);
+    auto* inviteLabel = label(QStringLiteral("一次性邀请码"), "fieldLabel", 13, QFont::DemiBold);
+    hostInvitation_ = new QLineEdit;
+    hostInvitation_->setObjectName(QStringLiteral("hostInvitation"));
+    hostInvitation_->setAccessibleName(inviteLabel->text());
+    hostInvitation_->setReadOnly(true);
+    hostInvitation_->setMinimumHeight(41);
+    inviteLabel->setBuddy(hostInvitation_);
+    inviteLayout->addWidget(inviteLabel);
+    auto* inviteRow = new QHBoxLayout;
+    inviteRow->setSpacing(8);
+    inviteRow->addWidget(hostInvitation_, 1);
+    auto* copy = hostButton(QStringLiteral("复制邀请码"), "copyHostInvitation");
+    copy->setIcon(symbolIcon(Symbol::Clipboard, QColor("#456594"), 17));
+    copy->setIconSize(QSize(17, 17));
+    inviteRow->addWidget(copy);
+    inviteLayout->addLayout(inviteRow);
+    auto* inviteHint = label(QStringLiteral("请仅将邀请码发给你信任的人。"), "subtle", 13);
+    inviteHint->setWordWrap(true);
+    inviteLayout->addWidget(inviteHint);
+    pageLayout->addWidget(invite);
+
+    auto* consent = new QFrame;
+    hostConsent_ = consent;
+    auto* consentLayout = hostCard(consent);
+    consentLayout->addWidget(
+        label(QStringLiteral("收到远程控制请求"), "fieldLabel", 16, QFont::DemiBold));
+    auto* disclosure = label(
+        QStringLiteral("使用此邀请码的设备请求连接。同意后，对方可以查看整个屏幕，并使用键盘和鼠标控制本机。"),
+        "subtle", 14);
+    disclosure->setWordWrap(true);
+    consentLayout->addWidget(disclosure);
+    shareAudio_ = new QCheckBox(QStringLiteral("共享系统声音"));
+    shareAudio_->setObjectName(QStringLiteral("hostShareAudio"));
+    shareAudio_->setChecked(true);
+    consentLayout->addWidget(shareAudio_);
+    highRefresh_ = new QCheckBox(QStringLiteral("原生分辨率，目标 144 帧/秒"));
+    highRefresh_->setObjectName(QStringLiteral("hostHighRefresh"));
+    relayOnly_ = new QCheckBox(QStringLiteral("仅使用 TURN 中继"));
+    relayOnly_->setObjectName(QStringLiteral("hostRelayOnly"));
+    consentLayout->addWidget(highRefresh_);
+    consentLayout->addWidget(relayOnly_);
+    auto* decisions = new QHBoxLayout;
+    decisions->setSpacing(8);
+    auto* approve = hostButton(QStringLiteral("同意并开始共享"), "hostApprove");
+    auto* deny = hostButton(QStringLiteral("拒绝"), "hostDeny");
+    decisions->addWidget(approve);
+    decisions->addWidget(deny);
+    decisions->addStretch();
+    consentLayout->addLayout(decisions);
+    pageLayout->addWidget(consent);
+    pageLayout->addStretch();
+
+    setTabOrder(hostSignalingUrl_, hostKey_);
+    setTabOrder(hostKey_, create);
+    setTabOrder(hostInvitation_, copy);
+    setTabOrder(highRefresh_, relayOnly_);
+    setTabOrder(relayOnly_, approve);
+    setTabOrder(approve, deny);
+    connect(create, &QPushButton::clicked, this, &HomeWindow::requestHost);
+    connect(hostKey_, &QLineEdit::returnPressed, this, &HomeWindow::requestHost);
+    connect(hostSignalingUrl_, &QLineEdit::returnPressed, hostKey_,
+            [this] { hostKey_->setFocus(); });
+    connect(copy, &QPushButton::clicked, this, &HomeWindow::copyHostInvitation);
+    connect(approve, &QPushButton::clicked, this, [this] { respondToHostRequest(true); });
+    connect(deny, &QPushButton::clicked, this, [this] { respondToHostRequest(false); });
+    return page;
+}
+
 void HomeWindow::setSignalingUrl(const QUrl& url)
 {
     signalingUrl_->setText(url.toString(QUrl::FullyEncoded));
@@ -285,8 +443,11 @@ void HomeWindow::setSignalingUrl(const QUrl& url)
 
 void HomeWindow::setBusy(bool busy)
 {
-    if (busy_ == busy) {
+    if (busy_ == busy || (busy && hostBusy_)) {
         return;
+    }
+    if (busy) {
+        switchRole(false);
     }
     busy_ = busy;
     if (busy) {
@@ -319,6 +480,75 @@ void HomeWindow::setSessionActive(bool active)
     updateBanner();
 }
 
+void HomeWindow::setHostBusy(bool busy)
+{
+    if (hostBusy_ == busy || (busy && busy_)) {
+        return;
+    }
+    hostKey_->setText({});
+    if (busy) {
+        switchRole(true);
+        failed_ = false;
+        statusMessage_ = QStringLiteral("正在创建邀请码。");
+    } else {
+        hostActive_ = false;
+        hostRequestId_ = 0;
+        hostInvitation_->clear();
+        shareAudio_->setChecked(true);
+        highRefresh_->setChecked(false);
+        relayOnly_->setChecked(false);
+        if (!failed_) {
+            statusMessage_ = hostIdleMessage;
+        }
+    }
+    hostBusy_ = busy;
+    updateForm();
+    updateBanner();
+}
+
+void HomeWindow::setHostInvitation(const QString& invitation)
+{
+    if (!hostBusy_ || hostRequestId_ || hostActive_) {
+        return;
+    }
+    hostInvitation_->setText(invitation);
+    updateForm();
+    if (!invitation.isEmpty()) {
+        scroll_->ensureWidgetVisible(hostInvitation_);
+    }
+}
+
+void HomeWindow::setHostPending(quint64 requestId)
+{
+    if (!hostBusy_ || hostActive_) {
+        return;
+    }
+    hostRequestId_ = requestId;
+    if (requestId) {
+        hostInvitation_->clear();
+    }
+    updateForm();
+    updateBanner();
+    if (requestId) {
+        scroll_->ensureWidgetVisible(hostConsent_, 0, 12);
+        QApplication::alert(this);
+    }
+}
+
+void HomeWindow::setHostActive(bool active)
+{
+    if (!hostBusy_ || hostActive_ == active) {
+        return;
+    }
+    hostActive_ = active;
+    if (active) {
+        hostInvitation_->clear();
+        hostRequestId_ = 0;
+    }
+    updateForm();
+    updateBanner();
+}
+
 void HomeWindow::setStatus(const QString& message)
 {
     failed_ = false;
@@ -334,9 +564,56 @@ void HomeWindow::showFailure(const QString& message)
     scroll_->ensureWidgetVisible(banner_, 0, 12);
 }
 
+void HomeWindow::switchRole(bool host)
+{
+    if ((host && busy_) || (!host && hostBusy_)) {
+        updateForm();
+        return;
+    }
+    if (host != hostPage_) {
+        hostPage_ = host;
+        hostKey_->setText({});
+        failed_ = false;
+        statusMessage_ = host ? hostIdleMessage : idleMessage;
+        updateBanner();
+    }
+    updateForm();
+    if (hostBusy_) {
+        if (hostRequestId_) {
+            scroll_->ensureWidgetVisible(hostConsent_, 0, 12);
+        } else {
+            hostEndButton_->setFocus(Qt::ShortcutFocusReason);
+        }
+        return;
+    }
+    QWidget* target = host ? hostKey_ : invitation_;
+    if (busy_) {
+        target = sessionActive_ ? joinButton_ : cancelButton_;
+    }
+    target->setFocus(Qt::ShortcutFocusReason);
+    scroll_->ensureWidgetVisible(target);
+}
+
+QUrl HomeWindow::requestedSignalingUrl(QLineEdit* field)
+{
+    const QUrl url(field->text().trimmed(), QUrl::StrictMode);
+    const auto host = url.host();
+    const bool loopback = host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1")
+                         || host == QStringLiteral("::1");
+    const bool allowedScheme = url.scheme() == QStringLiteral("wss")
+                               || (loopback && url.scheme() == QStringLiteral("ws"));
+    if (!url.isValid() || host.isEmpty() || !allowedScheme || !url.userInfo().isEmpty()
+        || url.hasQuery() || url.hasFragment() || (!url.path().isEmpty() && url.path() != "/")) {
+        showFailure(QStringLiteral("请输入部署使用的有效 wss:// 信令地址。"));
+        field->setFocus();
+        return {};
+    }
+    return url;
+}
+
 void HomeWindow::requestJoin()
 {
-    if (busy_) {
+    if (busy_ || hostBusy_ || hostPage_) {
         return;
     }
 
@@ -347,20 +624,28 @@ void HomeWindow::requestJoin()
         return;
     }
 
-    const QUrl url(signalingUrl_->text().trimmed(), QUrl::StrictMode);
-    const auto host = url.host();
-    const bool loopback = host == QStringLiteral("localhost") || host == QStringLiteral("127.0.0.1")
-                         || host == QStringLiteral("::1");
-    const bool allowedScheme = url.scheme() == QStringLiteral("wss")
-                               || (loopback && url.scheme() == QStringLiteral("ws"));
-    if (!url.isValid() || host.isEmpty() || !allowedScheme || !url.userInfo().isEmpty()
-        || url.hasFragment()) {
-        showFailure(QStringLiteral("请输入对方使用的有效 wss:// 信令地址。"));
-        signalingUrl_->setFocus();
+    const auto url = requestedSignalingUrl(signalingUrl_);
+    if (!url.isEmpty()) {
+        emit joinRequested(url, invitation);
+    }
+}
+
+void HomeWindow::requestHost()
+{
+    if (busy_ || hostBusy_ || !hostPage_) {
         return;
     }
-
-    emit joinRequested(url, invitation);
+    const auto key = hostKey_->text();
+    if (key.trimmed().isEmpty()) {
+        showFailure(QStringLiteral("请输入此信令服务的部署密钥。"));
+        hostKey_->setFocus();
+        return;
+    }
+    const auto url = requestedSignalingUrl(hostSignalingUrl_);
+    if (!url.isEmpty()) {
+        hostKey_->setText({});
+        emit hostRequested(url, key);
+    }
 }
 
 void HomeWindow::pasteInvitation()
@@ -375,8 +660,43 @@ void HomeWindow::pasteInvitation()
     invitation_->setFocus();
 }
 
+void HomeWindow::copyHostInvitation()
+{
+    const auto invitation = hostInvitation_->text();
+    if (!invitation.isEmpty() && hostBusy_ && !hostRequestId_) {
+        QApplication::clipboard()->setText(invitation);
+        setStatus(QStringLiteral("已复制邀请码，等待对方发起连接。"));
+    }
+}
+
+void HomeWindow::respondToHostRequest(bool approved)
+{
+    if (!hostBusy_ || !hostRequestId_ || hostActive_) {
+        return;
+    }
+    const auto requestId = std::exchange(hostRequestId_, 0);
+    updateForm();
+    updateBanner();
+    if (approved) {
+        emit hostApproved(requestId, highRefresh_->isChecked(), relayOnly_->isChecked(), shareAudio_->isChecked());
+    } else {
+        emit hostDenied(requestId);
+    }
+}
+
 void HomeWindow::updateForm()
 {
+    pages_->setCurrentIndex(hostPage_ ? 1 : 0);
+    viewerNavigation_->setChecked(!hostPage_);
+    hostNavigation_->setChecked(hostPage_);
+    viewerNavigation_->setEnabled(!hostBusy_);
+    hostNavigation_->setEnabled(!busy_);
+    hostSetup_->setVisible(!hostBusy_);
+    hostInvite_->setVisible(hostBusy_ && !hostInvitation_->text().isEmpty());
+    hostConsent_->setVisible(hostBusy_ && hostRequestId_);
+    hostEndButton_->setVisible(hostBusy_);
+    hostEndButton_->setText(hostActive_ ? QStringLiteral("结束共享")
+                                      : QStringLiteral("取消共享"));
     invitation_->setEnabled(!busy_);
     signalingUrl_->setEnabled(!busy_);
     pasteButton_->setEnabled(!busy_);
@@ -399,7 +719,7 @@ void HomeWindow::updateBanner()
             QLabel#bannerMessage { color: #75473e; }
         )"));
         bannerIcon_->setPixmap(symbolPixmap(Symbol::Warning, QColor("#a54737"), 22));
-        bannerTitle_->setText(QStringLiteral("无法连接"));
+        bannerTitle_->setText(hostPage_ ? QStringLiteral("共享操作失败") : QStringLiteral("无法连接"));
     } else {
         banner_->setStyleSheet(QStringLiteral(R"(
             QFrame#statusBanner { background: #eaf2ff; border: 1px solid #dce9fd; border-radius: 13px; }
@@ -408,7 +728,15 @@ void HomeWindow::updateBanner()
             QLabel#bannerMessage { color: #405b85; }
         )"));
         bannerIcon_->setPixmap(symbolPixmap(Symbol::Connect, QColor("#2864c2"), 24));
-        if (sessionActive_) {
+        if (hostPage_) {
+            if (hostActive_) {
+                bannerTitle_->setText(QStringLiteral("正在共享本机"));
+            } else if (hostRequestId_) {
+                bannerTitle_->setText(QStringLiteral("等待确认"));
+            } else {
+                bannerTitle_->setText(hostBusy_ ? QStringLiteral("共享准备中") : QStringLiteral("等待共享"));
+            }
+        } else if (sessionActive_) {
             bannerTitle_->setText(QStringLiteral("控制会话进行中"));
         } else {
             bannerTitle_->setText(busy_ ? QStringLiteral("正在连接") : QStringLiteral("等待连接"));

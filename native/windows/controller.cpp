@@ -1,4 +1,7 @@
 #include "controller.h"
+#include "controller_dispatch.h"
+#include "host_input.h"
+#include "rtc/rtc_host.h"
 #include "media/video_surface.h"
 #include "media/ffmpeg_decoder.h"
 #include "ui/home_window.h"
@@ -19,6 +22,10 @@
 namespace evp {
 namespace {
 QString peerMessage(const QString& raw) {
+    if (raw.contains("Relay-only mode requires", Qt::CaseInsensitive))
+        return QStringLiteral("信令服务未配置 TURN。请配置中继，或重新邀请并取消「仅使用 TURN 中继」。");
+    if (raw.contains("access key", Qt::CaseInsensitive))
+        return QStringLiteral("部署访问密钥不正确，请核对后重试。");
     if (raw.contains("invalid, expired", Qt::CaseInsensitive))
         return QStringLiteral("邀请码无效、已过期或已使用。请对方重新创建邀请。");
     if (raw.contains("declined", Qt::CaseInsensitive))
@@ -47,51 +54,31 @@ bool validUrl(const QUrl& u) {
 }
 } // namespace
 
-// SDK callbacks can outlive a session. Detach the target before closing the peer or either window.
-struct DesktopController::Dispatch {
-    std::mutex lock;
-    DesktopController* target;
-    VideoSurface* surface;
-    quint64 generation;
-    std::atomic<quint64> gpuDecoded{0}, cpuDecoded{0};
-    Dispatch(DesktopController* c, VideoSurface* v, quint64 g) : target(c), surface(v), generation(g) {}
-    template <class F> void post(F work) {
-        std::lock_guard guard(lock);
-        if (!target)
-            return;
-        QMetaObject::invokeMethod(
-            target,
-            [c = target, g = generation, work = std::move(work)]() mutable {
-                if (c->generation_ == g)
-                    work(*c);
-            },
-            Qt::QueuedConnection);
-    }
-    void frame(const I420Frame& f) {
-        std::lock_guard guard(lock);
-        if (surface)
-            surface->submitI420(f.width, f.height, f.y, f.strideY, f.u, f.strideU, f.v, f.strideV, f.rotation,
-                                f.owner);
-    }
-    void decoded(const DecodedVideoFrame& frame, int rotation) {
-        std::lock_guard guard(lock);
-        if (!surface || !frame.submit(*surface, rotation))
-            return;
-        if (frame.isHardware())
-            ++gpuDecoded;
-        else
-            ++cpuDecoded;
-    }
-    void detach() {
-        std::lock_guard guard(lock);
-        target = nullptr;
-        surface = nullptr;
-    }
-};
+void DesktopController::Dispatch::frame(const I420Frame& f) {
+    std::lock_guard guard(lock);
+    if (surface)
+        surface->submitI420(f.width, f.height, f.y, f.strideY, f.u, f.strideU, f.v, f.strideV, f.rotation,
+                            f.owner);
+}
+void DesktopController::Dispatch::decoded(const DecodedVideoFrame& frame, int rotation) {
+    std::lock_guard guard(lock);
+    if (!surface || !frame.submit(*surface, rotation))
+        return;
+    if (frame.isHardware())
+        ++gpuDecoded;
+    else
+        ++cpuDecoded;
+}
 
-DesktopController::DesktopController(HomeWindow& home) : home_(home) {
+DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters)
+    : home_(home), hostAdapters_(std::move(adapters)) {
     connect(&home, &HomeWindow::joinRequested, this, &DesktopController::join);
     connect(&home, &HomeWindow::cancelRequested, this, &DesktopController::endSession);
+    connect(&home, &HomeWindow::hostRequested, this,
+            [this](const QUrl& url, const QString& key) { openSignaling(Role::Host, url, key); });
+    connect(&home, &HomeWindow::hostApproved, this, &DesktopController::hostApproved);
+    connect(&home, &HomeWindow::hostDenied, this, &DesktopController::hostDenied);
+    connect(&home, &HomeWindow::hostEndRequested, this, &DesktopController::endSession);
     connect(&home, &HomeWindow::sessionActivationRequested, this, [this] {
         if (window_) {
             window_->showNormal();
@@ -101,6 +88,13 @@ DesktopController::DesktopController(HomeWindow& home) : home_(home) {
     });
     deadline_.setSingleShot(true);
     connect(&deadline_, &QTimer::timeout, this, [this] {
+        if (role_ == Role::Host) {
+            const bool invitation = phase_ == Phase::Inviting || phase_ == Phase::PendingApproval;
+            finish(invitation ? QStringLiteral("邀请或授权请求已过期，请重新创建。")
+                              : QStringLiteral("连接超时，本机共享已结束。"),
+                   true);
+            return;
+        }
         if (phase_ == Phase::Waiting)
             finish(QStringLiteral("等待对方同意超时，请获取新的邀请码。"), true);
         else if (!rtc_)
@@ -117,32 +111,48 @@ DesktopController::DesktopController(HomeWindow& home) : home_(home) {
     });
     sampler_.setInterval(500);
     connect(&sampler_, &QTimer::timeout, this, &DesktopController::updateStats);
+    releaseRetry_.setInterval(500);
+    connect(&releaseRetry_, &QTimer::timeout, this, &DesktopController::retryInputRelease);
 }
 DesktopController::~DesktopController() {
     endSession();
 }
 void DesktopController::join(const QUrl& url, const QString& invite) {
+    openSignaling(Role::Viewer, url, invite);
+}
+void DesktopController::openSignaling(Role role, const QUrl& url, const QString& credential) {
     if (phase_ != Phase::Idle)
         return;
-    if (!validUrl(url) || invite.trimmed().isEmpty()) {
-        home_.showFailure(QStringLiteral("请填写有效的信令地址和邀请码。"));
+    if (!validUrl(url) || credential.trimmed().isEmpty()) {
+        home_.showFailure(role == Role::Viewer ? QStringLiteral("请填写有效的信令地址和邀请码。")
+                                               : QStringLiteral("请填写有效的信令地址和部署访问密钥。"));
         return;
     }
     ++generation_;
+    role_ = role;
     phase_ = Phase::Connecting;
-    home_.setBusy(true);
+    if (role == Role::Host)
+        home_.setHostBusy(true);
+    else
+        home_.setBusy(true);
     home_.setStatus(QStringLiteral("正在连接信令服务…"));
     QSettings().setValue("signaling/url", url.toString());
     socket_ = new QWebSocket(QString{}, QWebSocketProtocol::VersionLatest, this);
     socket_->setMaxAllowedIncomingMessageSize(65536);
     socket_->setMaxAllowedIncomingFrameSize(65536);
-    connect(socket_, &QWebSocket::connected, this, [this, invite] {
-        if (phase_ != Phase::Connecting)
-            return;
-        phase_ = Phase::Joining;
-        if (!sendSignal({{"type", "join"}, {"invite", invite.trimmed()}}))
-            finish(QStringLiteral("无法发送连接请求。"), true, false);
-    });
+    connect(
+        socket_, &QWebSocket::connected, this,
+        [this, credential] {
+            if (phase_ != Phase::Connecting)
+                return;
+            phase_ = Phase::Joining;
+            const bool sent = role_ == Role::Host
+                                  ? sendSignal({{"type", "host"}, {"key", credential}})
+                                  : sendSignal({{"type", "join"}, {"invite", credential.trimmed()}});
+            if (!sent)
+                finish(QStringLiteral("无法发送连接请求。"), true, false);
+        },
+        Qt::SingleShotConnection);
     connect(socket_, &QWebSocket::textMessageReceived, this, [this](const QString& text) {
         const auto msg = QJsonDocument::fromJson(text.toUtf8());
         if (!msg.isObject()) {
@@ -169,33 +179,63 @@ void DesktopController::received(const QJsonObject& m) {
     if (type == "error" || type == "ended") {
         finish(peerMessage(m.value(type == "error" ? "message" : "reason").toString()), type == "error",
                false);
-    } else if (type == "waiting" && phase_ == Phase::Joining) {
+    } else if (type == "invitation" && role_ == Role::Host && phase_ == Phase::Joining) {
+        const QString invite = m.value("invite").toString();
+        if (invite.isEmpty() || invite.size() > 256) {
+            finish(QStringLiteral("信令服务未返回有效的邀请码。"), true);
+            return;
+        }
+        phase_ = Phase::Inviting;
+        home_.setHostInvitation(invite);
+        home_.setStatus(QStringLiteral("请将一次性邀请码发给对方，等待连接请求。"));
+        deadline_.start(310000);
+    } else if (type == "request" && role_ == Role::Host && phase_ == Phase::Inviting) {
+        phase_ = Phase::PendingApproval;
+        home_.setHostPending(generation_);
+        home_.setStatus(QStringLiteral("对方请求控制本机。请确认是否允许共享。"));
+        deadline_.start(60000);
+    } else if (type == "waiting" && role_ == Role::Viewer && phase_ == Phase::Joining) {
         phase_ = Phase::Waiting;
         home_.setStatus(QStringLiteral("已发送请求，等待对方同意共享…"));
         deadline_.start(65000);
     } else if (type == "ready") {
-        if (phase_ != Phase::Waiting || m.value("role") != "viewer") {
+        const bool authorized = role_ == Role::Host
+                                    ? phase_ == Phase::Approved && m.value("role") == "host" &&
+                                          m.value("relayOnly").isBool() &&
+                                          m.value("relayOnly").toBool() == relayOnly_
+                                    : phase_ == Phase::Waiting && m.value("role") == "viewer";
+        if (!authorized) {
             finish(QStringLiteral("授权状态不一致，请重新邀请。"), true);
             return;
         }
         ready(m);
-    } else if (type == "signal" && rtc_) {
+    } else if (type == "signal" && (rtc_ || host_)) {
         const auto data = m.value("data").toObject();
         if (data.contains("description")) {
             const auto d = data.value("description").toObject();
             const auto sdp = d.value("sdp").toString();
-            if (offered_ || d.value("type") != "offer" || sdp.isEmpty()) {
+            if (offered_ || d.value("type") != (role_ == Role::Host ? "answer" : "offer") || sdp.isEmpty()) {
                 finish(QStringLiteral("对方的媒体协商信息无效。"), true);
                 return;
             }
             offered_ = true;
-            rtc_->acceptOffer(sdp.toStdString());
+            if (host_)
+                host_->acceptAnswer(sdp.toStdString());
+            else {
+                withAudio_ = sdp.contains(QStringLiteral("\nm=audio "));
+                rtc_->acceptOffer(sdp.toStdString());
+            }
         } else if (data.contains("candidate")) {
             const auto c = data.value("candidate").toObject();
             const auto line = c.value("candidate").toString();
-            if (!line.isEmpty())
-                rtc_->addRemoteCandidate({line.toStdString(), c.value("sdpMid").toString().toStdString(),
-                                          c.value("sdpMLineIndex").toInt()});
+            if (!line.isEmpty()) {
+                IceCandidate candidate{line.toStdString(), c.value("sdpMid").toString().toStdString(),
+                                       c.value("sdpMLineIndex").toInt()};
+                if (host_)
+                    host_->addRemoteCandidate(std::move(candidate));
+                else
+                    rtc_->addRemoteCandidate(std::move(candidate));
+            }
         }
     }
 }
@@ -212,6 +252,10 @@ void DesktopController::ready(const QJsonObject& m) {
         server.credential = obj.value("credential").toString().toStdString();
         if (!server.urls.empty())
             servers.push_back(std::move(server));
+    }
+    if (role_ == Role::Host) {
+        hostReady(servers);
+        return;
     }
     surface_ = new VideoSurface;
     surface_->setObjectName("remoteSurface");
@@ -234,14 +278,7 @@ void DesktopController::ready(const QJsonObject& m) {
         });
     };
     cb.localCandidate = [gate](IceCandidate i) {
-        gate->post([i = std::move(i)](DesktopController& c) {
-            c.sendSignal(
-                {{"type", "signal"},
-                 {"data",
-                  QJsonObject{{"candidate", QJsonObject{{"candidate", QString::fromStdString(i.candidate)},
-                                                        {"sdpMid", QString::fromStdString(i.sdpMid)},
-                                                        {"sdpMLineIndex", i.sdpMLineIndex}}}}}});
-        });
+        gate->post([i = std::move(i)](DesktopController& c) mutable { c.forwardCandidate(std::move(i)); });
     };
     cb.connectionState = [gate](std::string s) {
         gate->post([s = std::move(s)](DesktopController& c) { c.stateChanged(s); });
@@ -328,6 +365,10 @@ void DesktopController::stateChanged(const std::string& state) {
     }
 }
 void DesktopController::updateStats() {
+    if (role_ == Role::Host) {
+        tickHost();
+        return;
+    }
     if (!rtc_ || !surface_)
         return;
     const auto stats = surface_->stats();
@@ -337,10 +378,11 @@ void DesktopController::updateStats() {
     if (presented_) {
         window_->setVideoFormat(surface_->sourceSize(), fps);
         if (connected_) {
-            window_->setStatus(playout_ ? QStringLiteral("远程会话进行中")
-                               : audio_ ? QStringLiteral("已收到音频，等待本机播放")
-                                        : QStringLiteral("已收到画面，等待系统声音…"));
-            if (audio_)
+            window_->setStatus(!withAudio_ ? QStringLiteral("远程会话进行中 · 对方未共享声音")
+                               : playout_  ? QStringLiteral("远程会话进行中")
+                               : audio_    ? QStringLiteral("已收到音频，等待本机播放")
+                                           : QStringLiteral("已收到画面，等待系统声音…"));
+            if (!withAudio_ || audio_)
                 deadline_.stop();
         }
     }
@@ -378,6 +420,12 @@ bool DesktopController::sendInput(QJsonObject e) {
 void DesktopController::endSession() {
     finish(QStringLiteral("会话已结束。"), false);
 }
+void DesktopController::forwardCandidate(IceCandidate i) {
+    const QJsonObject candidate{{"candidate", QString::fromStdString(i.candidate)},
+                                {"sdpMid", QString::fromStdString(i.sdpMid)},
+                                {"sdpMLineIndex", i.sdpMLineIndex}};
+    sendSignal({{"type", "signal"}, {"data", QJsonObject{{"candidate", candidate}}}});
+}
 void DesktopController::finish(const QString& message, bool failure, bool notify, QString reason) {
     if (phase_ == Phase::Idle)
         return;
@@ -389,6 +437,12 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
         input_->setAvailable(false);
     if (dispatch_)
         dispatch_->detach();
+    if (localInput_ && !revokeHostInput()) {
+        // A lock screen can temporarily reject key-up. This sink is permanently disarmed
+        // and can only retry the transitions that it previously sent successfully.
+        releasingInput_ = std::move(localInput_);
+        releaseRetry_.start();
+    }
     if (notify) {
         QJsonObject end{{"type", "end"}};
         if (failure)
@@ -405,6 +459,11 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
         rtc_->close();
         rtc_.reset();
     }
+    if (host_) {
+        host_->close();
+        host_.reset();
+    }
+    localInput_.reset();
     dispatch_.reset();
     delete input_;
     input_ = nullptr;
@@ -417,7 +476,14 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
     route_.clear();
     presented_ = epoch_ = 0;
     connected_ = channel_ = audio_ = offered_ = relayOnly_ = everOpened_ = playout_ = inputFault_ = false;
-    home_.setBusy(false);
+    if (role_ == Role::Host)
+        home_.setHostBusy(false);
+    else
+        home_.setBusy(false);
+    hostArmed_ = highRefresh_ = false;
+    withAudio_ = true;
+    encoder_.clear();
+    captureSize_ = {};
     if (failure)
         home_.showFailure(message);
     else

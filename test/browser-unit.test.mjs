@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bindViewerInput, displayPoint, parseInput, wheelDelta } from "../web/input.mjs";
-import { captureStatus, createPeer, displayCaptureOptions, preferCodecs, selectedRoute,
+import { captureStatus, createPeer, displayCaptureOptions, expectsIncomingAudio, preferCodecs, selectedRoute,
   watchConnection, watchTrackMute } from "../web/peer.mjs";
+
+test("a video-only host does not require an incoming audio track", () => {
+  const track = (kind, currentDirection) => ({ receiver: { track: { kind } }, currentDirection });
+  const connection = (...tracks) => ({ getTransceivers: () => tracks });
+  assert.equal(expectsIncomingAudio(connection(track("video", "recvonly"))), false);
+  assert.equal(expectsIncomingAudio(connection(track("audio", "inactive"))), false);
+  assert.equal(expectsIncomingAudio(connection(track("audio", "recvonly"))), true);
+});
 
 test("H.264 and Opus are preferred while the full browser codec list is retained", () => {
   const vp8 = { mimeType: "video/VP8" };
