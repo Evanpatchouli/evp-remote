@@ -16,7 +16,7 @@ The same server provides two distinct services. Both PCs use signaling to pair a
 
 The three containers use Linux host networking. The coordinator listens only on loopback port 8787. Caddy terminates TLS and forwards WebSockets. The TURN listener in this kit uses port 3478 over UDP or TCP. Networks allowing only TLS on port 443 need separate TURN/TLS service planning. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) · [coturn container reference](https://github.com/coturn/coturn/blob/master/docker/coturn/README.md)
 
-The [0.1.0 signaling package](https://github.com/users/Evanpatchouli/packages/container/package/evp-remote-signal) was published privately for Linux amd64 and arm64. On the VPS, run `docker login ghcr.io -u YOUR_GITHUB_LOGIN` using an account with package access. At the password prompt enter a classic GitHub personal access token with `read:packages`. The registry credential, deployment host access key, and TURN signing secret serve different purposes. [GitHub Container Registry authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+The [0.1.0 signaling image](https://github.com/users/Evanpatchouli/packages/container/package/evp-remote-signal) is public for Linux amd64 and arm64. Pull it anonymously on the VPS with the commands below.
 
 The image contains the matching Compose file and first-run configuration script. Choose the working directory once, according to your installation:
 
