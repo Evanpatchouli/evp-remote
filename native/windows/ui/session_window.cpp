@@ -6,6 +6,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QShortcut>
 #include <QSize>
 #include <QStringList>
 #include <QVBoxLayout>
@@ -54,6 +55,7 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     layout->setSpacing(0);
 
     auto* toolbar = new QWidget;
+    toolbar_ = toolbar;
     toolbar->setObjectName(QStringLiteral("sessionToolbar"));
     toolbar->setMinimumHeight(64);
     layout->addWidget(toolbar);
@@ -101,11 +103,26 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     videoMetric->setSpacing(3);
     videoMetric->addWidget(label(QStringLiteral("远程画面"), "sessionMetricName", 12));
     videoFormatLabel_ = label({}, "sessionVideoFormat", 13, QFont::DemiBold);
+    videoFormatLabel_->setToolTip(QStringLiteral("远端画面尺寸及每秒成功提交给显卡的不同帧数。屏幕实际出画需另行测量。"));
     videoMetric->addWidget(videoFormatLabel_);
     tools->addLayout(videoMetric);
 
     inputLabel_ = label({}, "sessionInput", 12, QFont::DemiBold);
     tools->addWidget(inputLabel_, 0, Qt::AlignVCenter);
+    auto* fullscreen = new QPushButton(QStringLiteral("全屏"));
+    fullscreen->setObjectName(QStringLiteral("fullscreen"));
+    fullscreen->setToolTip(QStringLiteral("全屏显示画面，按 Ctrl+Alt+F11 返回"));
+    fullscreen->setAccessibleDescription(fullscreen->toolTip());
+    fullscreen->setMinimumHeight(36);
+    fullscreen->setCursor(Qt::PointingHandCursor);
+    tools->addWidget(fullscreen);
+    const auto toggle = [this] {
+        if (isFullScreen()) showNormal();
+        else showFullScreen();
+    };
+    connect(fullscreen, &QPushButton::clicked, this, toggle);
+    auto* shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F11")), this);
+    connect(shortcut, &QShortcut::activated, this, toggle);
     auto* end = new QPushButton(QStringLiteral("结束控制"));
     end->setObjectName(QStringLiteral("endSession"));
     end->setFont(uiFont(13, QFont::DemiBold));
@@ -227,4 +244,11 @@ void SessionWindow::updateStatus()
         inputLabel_->setStyleSheet(QStringLiteral(
             "background: #eaf0fb; color: #435b81; border-radius: 11px; padding: 4px 9px;"));
     }
+}
+
+void SessionWindow::changeEvent(QEvent* event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::WindowStateChange && toolbar_)
+        toolbar_->setVisible(!isFullScreen());
 }

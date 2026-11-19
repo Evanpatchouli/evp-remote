@@ -3,6 +3,7 @@
 #include <QMainWindow>
 
 class QCloseEvent;
+class QEvent;
 class QLabel;
 class QSize;
 
@@ -26,11 +27,13 @@ signals:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     void updateStatus();
 
     QLabel* statusIndicator_;
+    QWidget* toolbar_ = nullptr;
     QLabel* statusLabel_;
     QLabel* routeLabel_;
     QLabel* videoFormatLabel_;
