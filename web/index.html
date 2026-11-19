@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EVP Remote</title>
+    <link rel="stylesheet" href="/style.css">
+    <script type="module" src="/app.mjs"></script>
+  </head>
+  <body>
+    <main class="workspace">
+      <header class="page-header">
+        <h1>EVP Remote</h1>
+        <p id="session-status" role="status" data-state="idle">Preparing the local session page…</p>
+      </header>
+
+      <div class="layout">
+        <aside class="controls" aria-label="Session setup">
+          <label for="signal-url">Signaling server</label>
+          <input id="signal-url" type="url" spellcheck="false" placeholder="Configured by the Windows launcher" readonly>
+
+          <form id="host-form">
+            <h2>Host a session</h2>
+            <label for="host-key">Deployment access key</label>
+            <input id="host-key" type="password" autocomplete="off" required>
+            <button id="create-invite" type="submit">Create invitation</button>
+            <p id="host-launch-message" class="hint" hidden>Open the browser from the Windows launcher to host.</p>
+          </form>
+
+          <section id="invitation" aria-label="Invitation" hidden>
+            <label for="invite-code">Single-use invitation</label>
+            <div class="input-row">
+              <input id="invite-code" type="text" readonly>
+              <button id="copy-invite" type="button" class="secondary">Copy</button>
+            </div>
+          </section>
+
+          <section id="request" aria-labelledby="request-heading" hidden>
+            <h2 id="request-heading">Viewer is requesting access</h2>
+            <p>Choose your primary screen and enable system audio in the browser picker. The viewer will be able to use your screen, keyboard and mouse.</p>
+            <label class="choice" for="relay-only">
+              <input id="relay-only" type="checkbox"> Use TURN relay only
+            </label>
+            <div class="button-row">
+              <button id="accept-request" type="button">Accept and share</button>
+              <button id="reject-request" type="button" class="secondary">Deny</button>
+            </div>
+          </section>
+
+          <form id="viewer-form">
+            <h2>Join a session</h2>
+            <label for="viewer-invite">Invitation</label>
+            <input id="viewer-invite" type="text" spellcheck="false" autocomplete="off" required>
+            <button id="join-session" type="submit">Ask to join</button>
+          </form>
+
+          <button id="stop-session" type="button" class="danger" hidden>End session</button>
+        </aside>
+
+        <section class="session" aria-label="Remote session">
+          <div class="stage">
+            <video id="remote-video" playsinline muted tabindex="-1" aria-label="Remote display. Click to focus keyboard and mouse."></video>
+            <p id="stage-message">The shared screen will appear here.</p>
+          </div>
+          <div class="session-panel">
+            <dl class="diagnostics">
+              <div><dt>ICE route</dt><dd id="route-status">Unknown</dd></div>
+              <div><dt>Screen</dt><dd id="video-status">Waiting</dd></div>
+              <div><dt>Sound</dt><dd id="audio-status">Waiting</dd></div>
+              <div><dt>Control</dt><dd id="input-status">Inactive</dd></div>
+            </dl>
+            <button id="playback-button" type="button" class="secondary" hidden>Enable sound</button>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>
