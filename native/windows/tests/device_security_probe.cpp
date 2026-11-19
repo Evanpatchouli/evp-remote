@@ -1,6 +1,7 @@
 #include "controller.h"
 #include "device_probe.h"
 #include "devices/device_identity.h"
+#include "ui/focus_style.h"
 #include "ui/select_field.h"
 #include <QAbstractItemView>
 #include <QApplication>
@@ -113,6 +114,8 @@ private slots:
     void readsLegacyConnectionSettings();
     void assistanceTabsAndScrollableDeviceList();
     void cleanTabFocus();
+    void cleanDeviceListFocus();
+    void cleanCheckBoxFocus();
     void themedLifetimeSelectors_data();
     void themedLifetimeSelectors();
     void floatingStopControl();
@@ -697,6 +700,78 @@ void DeviceSecurityProbe::cleanTabFocus() {
     QVERIFY(tabs->grab().toImage() == clicked);
 }
 
+void DeviceSecurityProbe::cleanDeviceListFocus() {
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.showDevicePage();
+    window.devices().setRegistration(true, QStringLiteral("本机在线"));
+    window.devices().setDevices({{"first", {{}, QStringLiteral("办公室电脑")}},
+                                 {"second", {{}, QStringLiteral("家用台式机")}}}, {"first", "second"});
+    window.show();
+    QApplication::setActiveWindow(&window);
+
+    auto* list = window.findChild<QListWidget*>("trustedDeviceList");
+    auto* connectButton = window.findChild<QPushButton*>("connectDevice");
+    QVERIFY(list && connectButton);
+    const auto first = list->visualItemRect(list->item(0));
+    QVERIFY(!first.isEmpty());
+    // Crop the row border so the customized selection and focus colors can differ.
+    const auto rowInterior = [&] { return list->viewport()->grab(first.adjusted(3, 3, -3, -3)).toImage(); };
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier, first.center());
+    QCOMPARE(list->currentRow(), 0);
+    QVERIFY(list->hasFocus());
+    QVERIFY(connectButton->isEnabled());
+    const auto clicked = rowInterior();
+    connectButton->setFocus(Qt::OtherFocusReason);
+    QVERIFY(!list->hasFocus());
+    QCOMPARE(list->selectedItems().size(), 1);
+    const auto unfocused = rowInterior();
+    QVERIFY2(clicked == unfocused, "Mouse focus added a dotted rectangle inside the selected device row.");
+
+    QTest::keyClick(connectButton, Qt::Key_Tab, Qt::ShiftModifier);
+    QVERIFY(list->hasFocus());
+    QCOMPARE(list->currentRow(), 0);
+    QVERIFY2(rowInterior() != unfocused, "Shift+Tab needs a visible focus cue in the selected device row.");
+    QTest::keyClick(list, Qt::Key_Down);
+    QCOMPARE(list->currentRow(), 1);
+
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier, first.center());
+    QCOMPARE(list->currentRow(), 0);
+    QVERIFY(list->hasFocus());
+    QVERIFY2(rowInterior() == clicked, "A click must clear the keyboard cue even while the list keeps focus.");
+    QTest::keyClick(list, Qt::Key_Tab);
+    QVERIFY(connectButton->hasFocus());
+}
+
+void DeviceSecurityProbe::cleanCheckBoxFocus() {
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.findChild<QTabBar*>("assistanceTabs")->setCurrentIndex(1);
+    window.show();
+    QApplication::setActiveWindow(&window);
+
+    auto* check = window.findChild<QCheckBox*>("autoAcceptInvitation");
+    auto* field = window.findChild<QComboBox*>("invitationLifetime");
+    QVERIFY(check && check->isVisible() && check->isEnabled());
+    QVERIFY(field);
+    check->setFocus(Qt::TabFocusReason);
+    QVERIFY(check->hasFocus());
+
+    QTest::mouseClick(check, Qt::LeftButton, Qt::NoModifier, QPoint(6, check->height() / 2));
+    QVERIFY(check->isChecked());
+    QVERIFY(check->hasFocus());
+    const auto clicked = check->grab().toImage();
+    field->setFocus(Qt::OtherFocusReason);
+    QVERIFY(!check->hasFocus());
+    QVERIFY2(check->grab().toImage() == clicked, "A checkbox click displayed its keyboard focus rectangle.");
+
+    check->setFocus(Qt::ShortcutFocusReason);
+    QVERIFY(check->hasFocus());
+    QVERIFY2(check->grab().toImage() != clicked, "Shortcut focus needs a visible cue on the checkbox.");
+    QTest::keyClick(check, Qt::Key_Space);
+    QVERIFY(!check->isChecked());
+}
+
 void DeviceSecurityProbe::themedLifetimeSelectors_data() {
     QTest::addColumn<bool>("pairing");
     QTest::newRow("invitation") << false;
@@ -925,6 +1000,7 @@ void DeviceSecurityProbe::onscreenPopupOpening() {
 
 int runDeviceSecurityProbe(int argc, char** argv) {
     QApplication app(argc, argv);
+    native_ui::installFocusStyle(app);
     QTemporaryDir preferences;
     if (!preferences.isValid())
         return 2;

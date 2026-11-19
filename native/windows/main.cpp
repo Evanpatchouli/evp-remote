@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "ui/focus_style.h"
 #include "ui/home_window.h"
 #include <QApplication>
 #include <QLibraryInfo>
@@ -22,6 +23,7 @@ int main(int argc, char** argv) {
     QTranslator translator;
     if (translator.load("qtbase_zh_CN", QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
         app.installTranslator(&translator);
+    native_ui::installFocusStyle(app);
     HomeWindow home;
     const QSettings defaults(QCoreApplication::applicationDirPath() + "/evp-remote.ini",
                              QSettings::IniFormat);

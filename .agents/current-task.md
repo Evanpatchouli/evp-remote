@@ -1,5 +1,22 @@
 # Current task
 
+## Windows client 0.1.1
+
+- **Investigate and execute / S2.** Remove native dotted outlines triggered by mouse interaction across the Qt UI. Preserve keyboard focus indicators and the trusted-device selection.
+- **Verify / S0 and independent review.** Exercise pointer and keyboard focus in the affected widgets and rerun the native connection probes.
+- **Execute and verify / S1.** Bump the client manifest and lockfile to 0.1.1, commit and push the verified changes, then build and smoke-test the versioned Windows ZIP and portable EXE.
+- **Execute and verify / S1.** Push the 0.1.1 tag at the built commit and publish the GitHub release with both verified client artifacts.
+
+The Qt probe reproduced the native dotted outline within the selected device row. The updated style passed pixel comparisons for pointer selection and keyboard focus, including Shift+Tab, arrow navigation, and clicking a row while it already has focus. A checkbox probe also checked focus appearance, pointer toggling, and Space activation.
+
+## Windows host without an audio output
+
+- **Investigate / S0.** Reproduce startup failure with system sound enabled and a missing WASAPI render endpoint.
+- **Decide and execute / S2.** Defer the first offer until loopback startup reports its result. When startup fails, share video and input without an audio track, keep the saved sound preference, and show why this session is silent.
+- **Verify / S0 and independent review.** Check trusted-device and attended connections with a missing endpoint, explicit video-only sessions, and successful audio capture. Verify that the viewer presents frames and the host receives input.
+
+The simulated WASAPI endpoint failure reproduced the reported abort on the previous code. The updated probes passed trusted-device and attended control with audio startup failure, explicit video-only assistance, and successful audio capture. The fallback checks the host and viewer messages, frame presentation, keyboard and mouse input, and retention of the host's sound setting. A new two-PC field run remains outstanding.
+
 ## Shared Windows connection settings
 
 - **Execute / S2.** Place the signaling address and deployment key in Settings at the bottom of the sidebar. Use the same committed, endpoint-scoped configuration for My Devices and both assistance roles. Preserve existing credentials, pairings, and invitation-only guest access.
