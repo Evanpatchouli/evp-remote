@@ -1,5 +1,14 @@
 # Current task
 
+## Assistance tabs and code settings
+
+| Unit | Mode / grade | Acceptance |
+| --- | --- | --- |
+| Code policy | Decide / S2 | Document seven lifetimes, default manual confirmation, single-use local preapproval, and compatibility before implementation |
+| Assistance and signaling | Execute / S2 | Two genuine tabs, wire-enforced invitation lifetime, verified one-time redemption and visible stop during preapproved sharing |
+| Trusted devices | Execute / S2 | Scrollable styled rows and locally enforced pairing policy with mutual authentication |
+| Integration | Verify / S0 and independent review | Verify defaults and opt-ins through the native forms, expiry, wrong or consumed codes, navigation, list scroll, and the packaged Windows build |
+
 ## My Devices
 
 The primary agent coordinates at S2, owns the trust boundary and integrates both endpoints. Keep the attended flow and its checks intact.
