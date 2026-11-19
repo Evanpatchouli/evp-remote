@@ -4,7 +4,7 @@ The device protocol extends the same root WebSocket endpoint. It uses a separate
 
 ## Encoding and proofs
 
-Binary wire values are canonical unpadded base64url. P-256 public keys are the 64 bytes `X || Y`; signatures are the 64 bytes `r || s` (IEEE P1363). Device IDs are 32-byte SHA-256 hashes of the public key bytes. Nonces, attempt IDs, and pairing secrets are independent 32-byte CSPRNG outputs. A proof signs SHA-256 of the bytes formed by joining the given fields with ASCII LF, starting with `evp-device-v1` as the first field, with no trailing separator. Numeric fields use canonical decimal. A `payload` is base64url of UTF-8 JSON object bytes; verify the transmitted bytes rather than reserializing the object.
+Binary wire values are canonical unpadded base64url. P-256 public keys are the 64 bytes `X || Y`; signatures are the 64 bytes `r || s` (IEEE P1363). Device IDs are 32-byte SHA-256 hashes of the public key bytes. Nonces, attempt IDs, and pairing secrets are independent 32-byte CSPRNG outputs. A proof signs SHA-256 of the bytes formed by joining the given fields with ASCII LF, starting with `evp-device-v1` as the first field, with no trailing separator. Numeric fields use canonical decimal. A `payload` is base64url of UTF-8 JSON object bytes, at most 56 KiB after encoding; verify the transmitted bytes rather than reserializing the object.
 
 | Proof | Fields after the protocol prefix |
 | --- | --- |

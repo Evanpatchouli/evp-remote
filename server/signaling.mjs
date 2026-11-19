@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { WebSocket, WebSocketServer } from 'ws';
+import { createDeviceBroker } from './device-signaling.mjs';
 
 const MAX_CONNECTIONS = 512;
 const MAX_PAYLOAD = 64 * 1024;
@@ -106,6 +107,7 @@ export function createSignalServer({
 
   function attach(room, peer) {
     clearTimeout(peer.idleTimer);
+    peer.attended = true;
     peer.room = room;
   }
 
@@ -146,12 +148,25 @@ export function createSignalServer({
     return iceServers;
   }
 
+  function isHostKey(key) {
+    return typeof key === 'string' && timingSafeEqual(digest(key), hostKeyDigest);
+  }
+
+  function hasRoomCapacity() {
+    return rooms.size + devices.attemptCount < maxRooms;
+  }
+
+  const devices = createDeviceBroker({
+    send, isHostKey, hasRoomCapacity, maxRegistrations: MAX_CONNECTIONS / 2,
+    consentTtlMs, sessionTtlMs, createIceServers, hasTurn: turn.length > 0,
+  });
+
   function startInvitation(peer, key) {
-    if (typeof key !== 'string' || !timingSafeEqual(digest(key), hostKeyDigest)) {
+    if (!isHostKey(key)) {
       return 'The host access key is invalid.';
     }
     if (peer.room) return 'This connection already belongs to a session.';
-    if (rooms.size >= maxRooms) return 'The signaling server is at capacity. Try again later.';
+    if (!hasRoomCapacity()) return 'The signaling server is at capacity. Try again later.';
     let invite;
     do {
       invite = randomBytes(16).toString('base64url');
@@ -258,12 +273,13 @@ export function createSignalServer({
 
   const live = new WeakSet();
   wss.on('connection', socket => {
-    const peer = { socket, room: null, tokens: MESSAGE_BURST, lastMessage: performance.now() };
+    const peer = { socket, room: null, attended: false, device: null, tokens: MESSAGE_BURST, lastMessage: performance.now() };
     armIdleTimeout(peer);
     live.add(socket);
     socket.on('pong', () => live.add(socket));
     function disconnect() {
       clearTimeout(peer.idleTimer);
+      devices.disconnect(peer);
       const room = peer.room;
       if (room) finishRoom(room, `The ${room.host === peer ? 'host' : 'viewer'} disconnected.`);
     }
@@ -273,6 +289,7 @@ export function createSignalServer({
       if (socket.readyState !== WebSocket.OPEN) return false;
       if (takeMessageToken(peer)) return true;
       socket.close(1008, 'Message rate exceeded');
+      devices.disconnect(peer);
       if (peer.room) finishRoom(peer.room, 'A peer exceeded the message rate limit.');
       return false;
     }
@@ -287,6 +304,7 @@ export function createSignalServer({
       } catch {
         // Report malformed text with the same error as an unsupported frame.
       }
+      if (devices.handleMessage(peer, message)) return;
       const error = handleMessage(peer, message);
       if (error) send(socket, { type: 'error', message: error });
     });
