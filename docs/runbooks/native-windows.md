@@ -26,32 +26,39 @@ If the app reports a local storage error, restore write access to the Windows us
 
 ## Build both roles
 
-Use Windows x64, Visual Studio 2022 with Desktop development with C++, a Windows SDK, CMake 3.24+, and PowerShell 7. Use a Release build, with the MSVC x64 Qt and FFmpeg import libraries. The native dependency build was validated with:
+Use Windows x64, Visual Studio 2022 with Desktop development with C++, a Windows SDK, CMake 3.24+, PowerShell 7 and Node.js with npm. The native dependency build was validated with:
 
 - Qt **6.8.3 msvc2022_64**, Qt Base, Widgets, Network, WebSockets, and translations. Qt Test is required for the interop probe. [Qt for Windows](https://doc.qt.io/qt-6/windows.html)
 - Shiguredo **webrtc-rs 0.157.0**, the native libwebrtc C ABI Windows x64 archive. Verify SHA-256 `efb4e3dbce5b759f7b4e8b74479098f5ace17521e6343211bf923616a3e5544c` before extracting. Its root contains `include/webrtc_c.h`, `lib/webrtc_c.lib`, and the notice files. This SDK lets the application plug in its own FFmpeg decoder factory. [Release archive](https://github.com/shiguredo/webrtc-rs/releases/download/0.157.0/libwebrtc_c-windows_x86_64.tar.gz)
 - Shared FFmpeg x64 development distribution with matching **avcodec 63, avutil 61, swscale** headers, MSVC import libraries and DLLs. The tested build is `N-125258-gdf94900c98-20260624` with D3D11VA enabled. The local preview includes the distribution's build configuration and notices. The acceptance workstation also needs the matching `ffprobe` CLI.
 
+From the repository root, set these three paths for the first build. Point them at the installed x64 SDKs.
+
 ```powershell
-$qt = 'C:\SDKs\Qt\6.8.3\msvc2022_64'
-$rtc = 'C:\SDKs\webrtc-c-0.157.0'
-$ff = 'C:\SDKs\ffmpeg'
-$build = Join-Path $env:LOCALAPPDATA 'evp-remote\native-build'
-cmake -S native/windows -B $build -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_PREFIX_PATH=$qt" "-DEVP_WEBRTC_ROOT=$rtc" "-DEVP_FFMPEG_ROOT=$ff" -DEVP_BUILD_PROBES=ON
-cmake --build $build --config Release --parallel
-pwsh -File tools/package-native-windows.ps1 -QtRoot $qt -WebRtcRoot $rtc -FfmpegRoot $ff -BuildDir $build
+$env:EVP_QT_ROOT = 'C:\SDKs\Qt\6.8.3\msvc2022_64'
+$env:EVP_WEBRTC_ROOT = 'C:\SDKs\webrtc-c-0.157.0'
+$env:EVP_FFMPEG_ROOT = 'C:\SDKs\ffmpeg'
+npm run build
 ```
 
-The output archive is `dist/evp-remote-windows-x64.zip`. Use `-OutputDir` to write the archive elsewhere. Supply `-DefaultSignalUrl wss://your-server.example/` to prefill the address. The package contains one application executable, Qt and FFmpeg runtime files, the app-local VC runtime, and dependency notices. The acceptance probes are separate build targets.
+`npm run build` invokes `build:client`, which runs `tools/build-client.ps1`. CMake caches the SDK locations in `.build/windows-x64` for subsequent runs. For a different build directory or a prefilled signaling address, pass options through npm, for example `npm run build -- -BuildDir "D:\EVP Build" -DefaultSignalUrl wss://remote.example.net/`.
+
+The output is `release/<version>/evp-remote-windows-x64.zip`. Set `version` in the root `package.json` before running the build. The executable's file and product version strings retain the full version, including prerelease and build labels. The numeric Windows version uses the three numeric components and a zero fourth field. Rebuilding the same version replaces its ZIP after packaging succeeds. Other versions keep their own directories.
+
+The ZIP contains one application executable, Qt and FFmpeg runtime files, the app-local VC runtime and dependency notices. The packager checks the executable's version and runtime dependencies before publishing the ZIP and prints its SHA-256 hash.
 
 ## Verify the two native roles
 
-From the repository root run `npm ci` and `npm test`. Extract the portable archive into a fresh test directory, then add the test driver and the matching Qt Test DLL:
+After a production build, run `npm ci` and `npm test` from the repository root. Enable the probes in that build directory, extract the versioned archive into a fresh test directory, and add the test drivers and the matching Qt Test DLL.
 
 ```powershell
-$testRuntime = Join-Path $build 'probe-runtime'
-Expand-Archive -LiteralPath dist/evp-remote-windows-x64.zip -DestinationPath $testRuntime
-Copy-Item "$build/Release/EvpUnifiedProbe.exe", "$build/Release/EvpSessionProbe.exe", "$qt/bin/Qt6Test.dll" -Destination $testRuntime
+$build = '.build/windows-x64'
+cmake -S native/windows -B $build -DEVP_BUILD_PROBES=ON
+cmake --build $build --config Release --target EvpUnifiedProbe EvpSessionProbe --parallel
+$version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+$testRuntime = Join-Path $build ('probe-' + [guid]::NewGuid())
+Expand-Archive -LiteralPath "release/$version/evp-remote-windows-x64.zip" -DestinationPath $testRuntime
+Copy-Item "$build/Release/EvpUnifiedProbe.exe", "$build/Release/EvpSessionProbe.exe", "$env:EVP_QT_ROOT/bin/Qt6Test.dll" -Destination $testRuntime
 node tools/unified-session-smoke.mjs $testRuntime deny
 node tools/unified-session-smoke.mjs $testRuntime direct
 node tools/unified-session-smoke.mjs $testRuntime auto-invite

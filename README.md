@@ -11,6 +11,10 @@ Extract **`evp-remote-windows-x64.zip` on both PCs** and open **EvpRemote.exe**.
 
 Both code selectors offer seven lifetimes from five minutes to twelve hours. The default is five minutes with local confirmation. [Windows setup and revocation](docs/runbooks/native-windows.md) · [Signaling upgrade](docs/runbooks/windows-session.md#enable-my-devices-on-the-same-server)
 
+## Production build
+
+Run `npm run build` from the repository root on Windows. It configures CMake, compiles the x64 Release client, and packages it at `release/<version>/evp-remote-windows-x64.zip`. The folder name and the executable's product version come from the root `package.json`. On a new build machine, set the paths to Qt, WebRTC and FFmpeg first. [Windows build prerequisites](docs/runbooks/native-windows.md#build-both-roles)
+
 ## Browser compatibility client for development
 
 **Portable endpoint.** Extract the Windows x64 ZIP on each PC, open `Start-EVP-Remote.cmd`, and enter the deployment's public `wss://` URL. Keep the launcher open during the session. The archive includes the Node runtime and dependencies. Build it from a Windows checkout with `npm ci` and `pwsh -File tools/package-windows.ps1`. Both the portable and source variants use the local browser and the built-in Windows .NET Framework x64 compiler.

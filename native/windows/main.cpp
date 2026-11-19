@@ -10,6 +10,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     app.setOrganizationName("EVP");
     app.setApplicationName("EVP Remote");
+    app.setApplicationVersion(QStringLiteral(EVP_PACKAGE_VERSION));
     app.setApplicationDisplayName(QStringLiteral("EVP 远程"));
     QLocale::setDefault(QLocale(QLocale::Chinese, QLocale::China));
     QTranslator translator;

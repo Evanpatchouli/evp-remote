@@ -7,3 +7,5 @@ desktop/bin/
 desktop/build/
 test-results/
 dist/
+/.build/
+/release/

@@ -1,16 +1,25 @@
 #Requires -Version 7
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string] $QtRoot,
-    [Parameter(Mandatory)] [string] $WebRtcRoot,
-    [Parameter(Mandatory)] [string] $FfmpegRoot,
+    [string] $QtRoot,
+    [string] $WebRtcRoot,
+    [string] $FfmpegRoot,
     [Parameter(Mandatory)] [string] $BuildDir,
     [string] $DefaultSignalUrl = '',
     [string] $OutputDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
-if (!$IsWindows) { throw 'Build the portable preview with the Windows x64 CMake toolchain.' }
+if (!$IsWindows) { throw 'Package the Windows client on Windows x64.' }
+
+$repo = Split-Path $PSScriptRoot -Parent
+$manifest = Get-Content -LiteralPath (Join-Path $repo 'package.json') -Raw -Encoding utf8 | ConvertFrom-Json
+$version = $manifest.version
+$parsedVersion = $null
+if ($version -isnot [string] -or ![semver]::TryParse($version, [ref]$parsedVersion) -or
+    $parsedVersion.ToString() -cne $version) {
+    throw 'package.json must contain a valid, canonical semantic version.'
+}
 
 function Get-RequiredFile([string] $Path) {
     $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
@@ -48,21 +57,34 @@ function Assert-BuildInput([string] $Name, [string] $Expected) {
     }
 }
 
-$QtRoot = (Resolve-Path -LiteralPath $QtRoot).Path
-$WebRtcRoot = (Resolve-Path -LiteralPath $WebRtcRoot).Path
-$FfmpegRoot = (Resolve-Path -LiteralPath $FfmpegRoot).Path
 $BuildDir = (Resolve-Path -LiteralPath $BuildDir).Path
 $buildSettings = @{}
 $cache = Get-RequiredFile (Join-Path $BuildDir 'CMakeCache.txt')
 foreach ($line in [IO.File]::ReadLines($cache)) {
     if ($line -match '^([A-Za-z0-9_]+):[A-Z]+=(.*)$') { $buildSettings[$Matches[1]] = $Matches[2] }
 }
+Assert-BuildInput 'CMAKE_HOME_DIRECTORY' (Join-Path $repo 'native/windows')
+if (!$QtRoot) { $QtRoot = Join-Path $buildSettings['Qt6_DIR'] '../../..' }
+if (!$WebRtcRoot) { $WebRtcRoot = $buildSettings['EVP_WEBRTC_ROOT'] }
+if (!$FfmpegRoot) { $FfmpegRoot = $buildSettings['EVP_FFMPEG_ROOT'] }
+$QtRoot = (Resolve-Path -LiteralPath $QtRoot).Path
+$WebRtcRoot = (Resolve-Path -LiteralPath $WebRtcRoot).Path
+$FfmpegRoot = (Resolve-Path -LiteralPath $FfmpegRoot).Path
 Assert-BuildInput 'Qt6_DIR' (Join-Path $QtRoot 'lib/cmake/Qt6')
 Assert-BuildInput 'EVP_WEBRTC_ROOT' $WebRtcRoot
 Assert-BuildInput 'EVP_FFMPEG_ROOT' $FfmpegRoot
+Assert-BuildInput 'WEBRTC_INCLUDE' (Join-Path $WebRtcRoot 'include')
+Assert-BuildInput 'WEBRTC_LIBRARY' (Join-Path $WebRtcRoot 'lib/webrtc_c.lib')
+Assert-BuildInput 'FFMPEG_INCLUDE' (Join-Path $FfmpegRoot 'include')
+foreach ($component in 'avcodec', 'avutil', 'swscale', 'swresample') {
+    Assert-BuildInput "FFMPEG_$component" (Join-Path $FfmpegRoot "lib/$component.lib")
+}
 
 $exe = Get-RequiredFile (Join-Path $BuildDir 'Release/EvpRemote.exe')
 Assert-X64Image $exe
+if ([Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion -cne $version) {
+    throw "The executable does not match package.json version $version. Rebuild EvpRemote before packaging."
+}
 $deployQt = Get-RequiredFile (Join-Path $QtRoot 'bin/windeployqt.exe')
 $qtCore = Get-RequiredFile (Join-Path $QtRoot 'bin/Qt6Core.dll')
 $qtVersion = (Get-Item -LiteralPath $qtCore).VersionInfo.ProductVersion
@@ -98,7 +120,16 @@ if ($DefaultSignalUrl) {
     $iniValue = '"' + $uri.AbsoluteUri + '"'
 }
 
-if (!$OutputDir) { $OutputDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist' }
+if (!$OutputDir) {
+    $releaseRoot = [IO.Directory]::CreateDirectory((Join-Path $repo 'release'))
+    $OutputDir = Join-Path $releaseRoot.FullName $version
+    [void][IO.Directory]::CreateDirectory($OutputDir)
+    foreach ($existing in $releaseRoot.EnumerateDirectories($version)) {
+        if ($existing.Name -cne $version) {
+            throw "Release folder '$($existing.Name)' already exists with different casing from '$version'."
+        }
+    }
+}
 $dist = [IO.Directory]::CreateDirectory($OutputDir).FullName
 $destination = Join-Path $dist 'evp-remote-windows-x64.zip'
 $temporaryZip = Join-Path $dist ('native-preview-' + [guid]::NewGuid().ToString('N') + '.zip')
@@ -139,7 +170,7 @@ try {
     }
     [IO.File]::WriteAllLines((Join-Path $staging 'evp-remote.ini'), @('[General]', "signalingUrl=$iniValue"))
     [IO.File]::WriteAllLines((Join-Path $staging '使用说明.txt'), @(
-        'EVP 远程 · Windows x64'
+        "EVP 远程 $version · Windows x64"
         '两台电脑都完整解压同一个压缩包，双击 EvpRemote.exe。'
         ''
         '打开「远程协助」。被控端在「共享本机」标签中输入部署密钥并创建邀请码，控制端在「连接远程设备」标签中填写相同的信令地址及邀请码。'
@@ -277,4 +308,5 @@ finally {
         Remove-Item -LiteralPath $staging -Recurse -Force
     }
 }
+Write-Host "Packaged EVP Remote $version at $destination"
 Get-FileHash -LiteralPath $destination -Algorithm SHA256

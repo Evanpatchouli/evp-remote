@@ -1,5 +1,12 @@
 # Current task
 
+## Windows production build
+
+- **Execute / S1.** Route the npm build through the native Release compiler and packager. Use the root package version for the executable and versioned output directory.
+- **Verify / S0.** Build from a fresh cache, rebuild from the saved configuration, and check the version and runtime inside the ignored release archive. [Build instructions](../docs/runbooks/native-windows.md#build-both-roles)
+
+Verified the production ZIP and executable at version `0.1.0`. A separate checkout exercised a prerelease-to-stable version change, preserved the earlier ZIP, and rejected a stale executable and a case-only directory collision.
+
 ## Assistance tabs and code settings
 
 | Unit | Mode / grade | Acceptance |
