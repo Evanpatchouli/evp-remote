@@ -8,6 +8,6 @@
 | What remains to be measured? | [Reconstruction plan](../exec-plans/gameviewer-reconstruction.md), [roadmap](../roadmap/roadmap.md) | input-to-display, first frame, independent networks |
 | How do I verify an artifact? | [Evidence runbook](../runbooks/evidence.md) | SHA-256, file offset, RVA, evidence ID |
 | Where does the first version run? | [Windows session runbook](../runbooks/windows-session.md), [project quick start](../../README.md) | `server/signaling.mjs`, `desktop/main.mjs`, `web/peer.mjs`, `tools/session-smoke.mjs` |
-| Where is the native viewer? | [Native runbook](../runbooks/native-windows.md), [stack decision](../decisions/0002-native-windows-client.md) | `native/windows/ui`, `rtc`, `media`, `tools/probe-native-media.mjs` |
+| Where are the native host and viewer? | [Native runbook](../runbooks/native-windows.md), [stack decision](../decisions/0002-native-windows-client.md) | `native/windows/ui`, `rtc`, `capture`, `media`, `host_input.cpp`, `tools/unified-session-smoke.mjs` |
 
 Build a Context Pack with the objective, relevant paths and versions, confirmed observations, uncertainties, and required checks. Reuse an existing pack when its sample and version still match.

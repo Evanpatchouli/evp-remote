@@ -1,16 +1,17 @@
-# Native Windows preview
+# Unified Windows client
 
 ## Run a session
 
-Extract the entire `evp-remote-native-windows-x64-preview.zip` on the Windows viewer PC and open **EvpRemote.exe**. The native home and control windows use Simplified Chinese. The viewer can join an existing attended session on the deployed signaling service. Use the browser-based host on the controlled PC for this milestone.
+Extract the same **`evp-remote-windows-x64.zip`** on each Windows PC and open **EvpRemote.exe**. The home window contains both roles, and the active viewer gets its own control window. A machine can switch roles after ending its current invitation or session. The endpoint includes the runtime for both roles.
 
-1. The host operator creates an invitation. On the native viewer, paste it into **邀请码**, verify **信令服务器**, and choose **请求连接**. Only the accepted session can enable remote input. The viewer uses the last server address, or the packaged default on first launch. `EVP_SIGNAL_URL` takes priority.
-2. The host approves and chooses its entire single display with system audio. The separate **远程控制** window shows the selected ICE route, source resolution, successful presentation submissions per second, and input permission. Click the picture to direct keyboard and mouse input to the remote PC.
-3. Choose **全屏** for an unobstructed image. **Ctrl+Alt+F11** returns to the window. **结束控制**, closing the control window, or host revocation ends the session. A new attempt needs a fresh invitation.
+1. On the PC to share, choose **共享本机**, verify **信令服务器**, enter the deployment's **部署密钥** and select **创建邀请码**. Share the one-time invitation with the intended viewer. Creating the invitation does not start capture. The deployment key is cleared from its password field and is not saved in preferences.
+2. On the controlling PC, choose the remote connection page, paste **邀请码**, and select **请求连接**. Both PCs use the same signaling URL. The app remembers the server address; `EVP_SIGNAL_URL` overrides it.
+3. The host reviews the request and selects **同意并开始共享** or **拒绝**. **共享系统声音** uses the default Windows render endpoint (WASAPI loopback); uncheck it for a video-only session. **原生分辨率，目标 144 帧/秒** requests high refresh. **仅使用 TURN 中继** is optional. The first implementation shares the entire primary SDR display and accepts input on the interactive, unlocked single-monitor desktop.
+4. The viewer opens **远程控制**. The toolbar shows the selected ICE route, source resolution, successful presentation submissions per second, and input permission. Click the picture to send keyboard/mouse input. Choose **全屏** to hide the toolbar; **Ctrl+Alt+F11** restores it. The host's **结束共享** or the viewer's **结束控制** ends the session. Use a fresh invitation to reconnect.
 
-The compatible host defaults to its established 1080p60 request. In the updated Chinese browser host, select **原生分辨率，目标 144 帧/秒** in the approval dialog to request the native size and high cadence. The host reports actual browser capture settings and signals an unconfirmed or downgraded result. Source generation, browser capture, both GPUs, transport and the physical display can each constrain delivery. Build this companion ZIP with `pwsh -File tools/package-windows.ps1 -ArchiveName evp-remote-browser-host-windows-x64-preview.zip`.
+The native sender captures desktop updates with DXGI Desktop Duplication, includes the pointer, and encodes H.264 using FFmpeg. It currently reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
 
-## Build the C++20 viewer
+## Build both roles
 
 Use Windows x64, Visual Studio 2022 with Desktop development with C++, a Windows SDK, CMake 3.24+, and PowerShell 7. Use a Release build, with the MSVC x64 Qt and FFmpeg import libraries. The native dependency build was validated with:
 
@@ -28,20 +29,24 @@ cmake --build $build --config Release --parallel
 pwsh -File tools/package-native-windows.ps1 -QtRoot $qt -WebRtcRoot $rtc -FfmpegRoot $ff -BuildDir $build
 ```
 
-The output archive is `dist/evp-remote-native-windows-x64-preview.zip`. Supply `-DefaultSignalUrl wss://your-server.example/` to prefill the address for a deployment. Package creation uses the Qt SDK and its SBOM files, Visual Studio app-local runtime, FFmpeg distribution notices, and the WebRTC SDK notices. When the Qt license files are absent from the installation, the packager retrieves the corresponding upstream files. The acceptance tools run separately from the distributed viewer.
+The output archive is `dist/evp-remote-windows-x64.zip`. Supply `-DefaultSignalUrl wss://your-server.example/` to prefill the address. The package contains one application executable, Qt and FFmpeg runtime files, the app-local VC runtime, and dependency notices. The acceptance probes are separate build targets.
 
-## Verify browser-to-native interoperability
+## Verify the two native roles
 
 From the repository root run `npm ci` and `npm test`. Extract the portable archive into a fresh test directory, then add the test driver and the matching Qt Test DLL:
 
 ```powershell
 $testRuntime = Join-Path $build 'probe-runtime'
-Expand-Archive -LiteralPath dist/evp-remote-native-windows-x64-preview.zip -DestinationPath $testRuntime
-Copy-Item "$build/Release/EvpSessionProbe.exe", "$qt/bin/Qt6Test.dll" -Destination $testRuntime
+Expand-Archive -LiteralPath dist/evp-remote-windows-x64.zip -DestinationPath $testRuntime
+Copy-Item "$build/Release/EvpUnifiedProbe.exe", "$build/Release/EvpSessionProbe.exe", "$qt/bin/Qt6Test.dll" -Destination $testRuntime
+node tools/unified-session-smoke.mjs $testRuntime deny
+node tools/unified-session-smoke.mjs $testRuntime direct
+node tools/unified-session-smoke.mjs $testRuntime video-only
+node tools/unified-session-smoke.mjs $testRuntime release-retry
 node tools/native-session-smoke.mjs "$testRuntime/EvpSessionProbe.exe" direct
 ```
 
-For a forced relay run use `relay` as the last argument and provide a reachable test coturn service via `EVP_TURN_URLS` and `EVP_TURN_SECRET` in the test operator's environment. The harness runs the normal browser host approval and signaling paths, substitutes a moving image, tone and recording input adapter, and drives the native Qt windows using synthetic input. No physical desktop input is sent. The supported browser host creates an ordered, reliable data channel. The pinned receiver ABI exposes the channel label and state; interoperability with other channel configurations is outside this test.
+For a forced relay run use `relay` as the last argument and provide a reachable test coturn service via `EVP_TURN_URLS` and `EVP_TURN_SECRET` in the test environment. The unified harness launches two copies of the same test executable with the production Qt windows, controllers, codecs and WebRTC transport. It supplies moving frames and PCM and records Windows input events in memory. It checks that a denied request starts no media and that a failed key release can be retried after revocation. The final command separately checks interoperability with the original browser host.
 
 ## Qualify 144 FPS and input latency
 

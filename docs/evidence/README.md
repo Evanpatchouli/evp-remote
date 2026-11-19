@@ -1,6 +1,6 @@
 # Evidence inventory
 
-- [Native Windows preview](native-windows-preview.md) records the Qt/D3D11 viewer interop tests, FFmpeg path, and limits of the WinUI comparison.
+- [Native Windows validation](native-windows-preview.md) records the unified two-instance tests, viewer interop, FFmpeg paths, and limits of the WinUI comparison.
 
 [GameViewer evidence archive](gameviewer-evidence.zip) contains the Windows 4.48.0.5446 reference snapshot. Its manifest, `index.json`, lists 20 sample identities and five REA records. The original archive is preserved byte for byte.
 

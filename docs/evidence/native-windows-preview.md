@@ -1,4 +1,20 @@
-# Native Windows viewer validation
+# Native Windows client validation
+
+## Unified native host and viewer
+
+Both roles run in the same application and use the same signaling service. Two instances of one Qt test-driver binary exercised the shipping windows, controllers, native PeerConnections, FFmpeg H.264 codecs, D3D11 presentation and reliable input channel. Only the capture data (640×360 moving frames and 48 kHz stereo PCM), local clicks, and final Windows input sink were substituted.
+
+| Run | Observation |
+| --- | --- |
+| Direct | 15 GPU-decoded frames, 14 successful unique Present submissions, zero presentation failures, received audio RTP, and mouse/keyboard events at the host |
+| Forced relay | A real coturn service was selected, with 16 GPU-decoded frames, 14 Present submissions, zero presentation failures, audio RTP and input delivery |
+| Denied | The host never opened video, audio, or input |
+| Video only | The host opened no audio capture, and the viewer displayed video and delivered input |
+| Revocation with blocked key-up | Delaying a simulated Windows key release until after the session had ended produced one successful release on retry |
+
+The encoder was also exercised on AMD AMF and software x264 with synthetic frames. Separate fixtures exercised WASAPI mix-format conversion, silence, rotation and cursor composition. A real screen, audible playback and physical Windows input on two separate machines still require operator qualification. Successful presentation submissions and a requested 144 FPS are not measurements of physical 144 Hz performance.
+
+## Initial viewer milestone
 
 The first native milestone contains a Chinese Qt home and a separate control window. It interoperates with the existing browser host and signaling protocol. The capture/encoding host in this milestone uses the browser. The Windows executable is a C++20 viewer with native libwebrtc, a custom FFmpeg H.264 decoder, and a D3D11 swap chain.
 

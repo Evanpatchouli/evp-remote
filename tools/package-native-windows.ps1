@@ -99,7 +99,7 @@ if ($DefaultSignalUrl) {
 
 $repo = Split-Path $PSScriptRoot -Parent
 $dist = [IO.Directory]::CreateDirectory((Join-Path $repo 'dist')).FullName
-$destination = Join-Path $dist 'evp-remote-native-windows-x64-preview.zip'
+$destination = Join-Path $dist 'evp-remote-windows-x64.zip'
 $temporaryZip = Join-Path $dist ('native-preview-' + [guid]::NewGuid().ToString('N') + '.zip')
 $tempDirectory = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $stagingName = 'evp-remote-native-' + [guid]::NewGuid().ToString('N')
@@ -137,6 +137,15 @@ try {
         Copy-Item -LiteralPath $runtime.FullName -Destination $staging
     }
     [IO.File]::WriteAllLines((Join-Path $staging 'evp-remote.ini'), @('[General]', "signalingUrl=$iniValue"))
+    [IO.File]::WriteAllLines((Join-Path $staging '使用说明.txt'), @(
+        'EVP 远程 · Windows x64'
+        '两台电脑都完整解压同一个压缩包，双击 EvpRemote.exe。'
+        '被控电脑：选「共享本机」，输入部署密钥，创建并复制一次性邀请码。'
+        '控制电脑：选「远程连接」，填写相同的信令服务器地址和邀请码，点击「请求连接」。'
+        '被控电脑：核对请求后点击「同意并开始共享」。可以选择共享系统声音及目标 144 帧/秒。'
+        '控制电脑：点击远程画面后即可使用键鼠。全屏时按 Ctrl+Alt+F11 返回窗口。'
+        '被控电脑可随时点「结束共享」。请仅将邀请码交给你信任的人。'
+    ))
     # Pin Qt's runtime lookup to the deployed plugin and translation directories.
     [IO.File]::WriteAllLines((Join-Path $staging 'qt.conf'), @('[Paths]', 'Prefix=.', 'Plugins=.', 'Translations=translations'))
 
@@ -146,7 +155,7 @@ try {
     foreach ($import in Get-Imports $app) {
         if ($import -match $ffmpegDll) { $pending.Enqueue($import) }
     }
-    foreach ($component in 'avcodec', 'avutil', 'swscale') {
+    foreach ($component in 'avcodec', 'avutil', 'swscale', 'swresample') {
         if (!($pending | Where-Object { $_ -like "$component-*.dll" })) {
             throw "The Release executable doesn't import $component."
         }
@@ -216,7 +225,7 @@ try {
     }
     [IO.File]::WriteAllLines((Join-Path $ffmpegNotices 'build-and-license.txt'), @($ffmpegBuild))
     $notices = @(
-        'EVP Remote native Windows preview'
+        'EVP Remote for Windows'
         ''
         "Qt $qtVersion supplies the application framework. Module SBOMs are in qt/sbom."
         "Qt source releases: https://download.qt.io/archive/qt/$qtReleaseSeries/$qtVersion/submodules/"

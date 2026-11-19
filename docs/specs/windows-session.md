@@ -1,5 +1,7 @@
 # Attended Windows session
 
+The Windows product has a single installer or portable archive and one executable for both roles. An idle user chooses remote connection or local sharing from the same home window. A viewing session opens a second window inside the same app. Closing or rejecting a host request revokes that invitation; desktop capture and remote input require explicit local approval.
+
 The host and viewer use separate Internet connections. The host creates a short-lived invitation and explicitly accepts one viewer. Before streaming, the host chooses the supported display and shares its system sound. Both peers must receive actionable feedback if permission, audio, or transport is unavailable.
 
 The viewer receives video and audio and can send keyboard and mouse events only during the accepted session. Input coordinates follow the captured display, including letterboxing. On blur, disconnect, capture end, or revocation, release held input. The host can stop sharing locally. Old invites and stale peers must not regain control after teardown.

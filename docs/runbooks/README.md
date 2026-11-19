@@ -1,6 +1,6 @@
 # Runbooks
 
-- [Native Windows preview](native-windows.md) covers the two Chinese windows, build, packaging, interop and high-refresh acceptance.
+- [Unified Windows client](native-windows.md) covers both roles, the single package, interop and high-refresh acceptance.
 
 - [Agent workflow](agent-workflow.md) covers delegation, escalation, validation, and staged commits.
 - [Evidence verification](evidence.md) reproduces the reference archive checks.

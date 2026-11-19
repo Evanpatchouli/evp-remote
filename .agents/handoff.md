@@ -1,5 +1,7 @@
 # Handoff
 
+The deployable native Windows endpoint is now one `EvpRemote.exe` in `evp-remote-windows-x64.zip`. Use the same archive on both PCs. Host capture, encoding, consent, input and viewer playback are integrated into the native app. The original browser pairing is retained as a compatibility fixture. See the [unified validation](../docs/evidence/native-windows-preview.md#unified-native-host-and-viewer) for completed checks and physical field tests still pending.
+
 The first Windows endpoint, signaling service, regression suite, and portable build are committed. Preparation landed in `90b385f`. See the [validation record](../docs/evidence/windows-v1-validation.md) and [deployment runbook](../docs/runbooks/windows-session.md).
 
 The operator reports that the production Nginx terminates WSS, with signal sharing its network namespace on loopback port 8788. The operator verified two signaling clients exchanging messages for 65 seconds, and an independent client verified the public TLS handshake, HTTP 101 and WebSocket pong. The bundled Caddy is disabled.

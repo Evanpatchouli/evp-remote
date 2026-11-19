@@ -1,12 +1,12 @@
 # evp-remote
 
-An attended remote desktop for two Windows computers on different Internet connections. The host shares its screen and system sound and authorizes one viewer to use the mouse and keyboard. The browser negotiates direct WebRTC connectivity and can select a TURN relay when a direct route is unavailable.
+An attended remote desktop for two Windows computers on different Internet connections. Both run the same Chinese Windows application. A user can share the local screen and system sound or control another computer over a direct WebRTC connection with TURN fallback.
 
-## Native Windows viewer
+## Windows app
 
-Extract `evp-remote-native-windows-x64-preview.zip` and open **EvpRemote.exe**. The Chinese home window accepts a signaling URL and invitation; after host approval, a separate native window displays H.264 video and forwards authorized input. Use the browser host below on the controlled machine. See the [native build and runbook](docs/runbooks/native-windows.md) and [validation results](docs/evidence/native-windows-preview.md).
+Extract **`evp-remote-windows-x64.zip` on both PCs** and open **EvpRemote.exe**. On the controlled PC select **共享本机**, enter the deployment key and create a one-time invitation. On the other PC select **远程连接**, enter the invite and request a connection. The host approves the pending request and can end sharing locally at any time. The viewer uses an independent control window. Both roles use native WebRTC and the same deployed signaling service. See the [native runbook](docs/runbooks/native-windows.md) and [validation record](docs/evidence/native-windows-preview.md).
 
-## Run the Windows endpoints
+## Browser compatibility client for development
 
 **Portable endpoint.** Extract the Windows x64 ZIP on each PC, open `Start-EVP-Remote.cmd`, and enter the deployment's public `wss://` URL. Keep the launcher open during the session. The archive includes the Node runtime and dependencies. Build it from a Windows checkout with `npm ci` and `pwsh -File tools/package-windows.ps1`. Both the portable and source variants use the local browser and the built-in Windows .NET Framework x64 compiler.
 

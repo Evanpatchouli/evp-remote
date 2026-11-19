@@ -1,5 +1,11 @@
 # Current task
 
+## Unified Windows endpoint
+
+Deliver one Chinese Windows executable and one archive for either side of an attended session. Implement the native sender and capture (S2), wire invitation/approval, local input, and the existing viewer into the same home (S2), then verify two instances, denial/revocation, and standalone packaging (S0 and independent review). Preserve the deployed signaling server protocol and the high-refresh field acceptance boundary.
+
+Both roles are implemented. Native-to-native direct and forced relay, denial, optional sound, and held-input release retry passed in the local fixture. See the [unified runbook](../docs/runbooks/native-windows.md) for the single package and physical acceptance steps.
+
 ## Native Windows viewer
 
 The stack, two-window Chinese UX and acceptance boundary are recorded in [ADR 0002](../docs/decisions/0002-native-windows-client.md). Independently verify the native SDK/toolchain, implement the Qt shell and video presentation, integrate the existing WebRTC invitation and input protocol, then build and test a real executable. Preserve the browser endpoint for interoperability and field comparison.
