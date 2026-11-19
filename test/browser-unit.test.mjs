@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bindViewerInput, displayPoint, parseInput, wheelDelta } from "../web/input.mjs";
-import { createPeer, preferCodecs, selectedRoute, watchConnection, watchTrackMute } from "../web/peer.mjs";
+import { captureStatus, createPeer, displayCaptureOptions, preferCodecs, selectedRoute,
+  watchConnection, watchTrackMute } from "../web/peer.mjs";
 
 test("H.264 and Opus are preferred while the full browser codec list is retained", () => {
   const vp8 = { mimeType: "video/VP8" };
@@ -16,6 +17,91 @@ test("H.264 and Opus are preferred while the full browser codec list is retained
   const opus = { mimeType: "audio/opus" };
   const red = { mimeType: "audio/red" };
   assert.deepEqual(preferCodecs([pcm, opus, red]), [opus, pcm, red]);
+});
+
+test("screen sharing defaults to 1080p60 and high refresh targets native size without hard requirements", () => {
+  const display = { width: 2560, height: 1440 };
+  const baseline = displayCaptureOptions(false, display, 1.5);
+  assert.deepEqual(baseline, {
+    video: { displaySurface: "monitor", width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } },
+    audio: true, systemAudio: "include", monitorTypeSurfaces: "include", surfaceSwitching: "exclude",
+  });
+  const highRefresh = displayCaptureOptions(true, display, 1.5);
+  assert.deepEqual(highRefresh, {
+    ...baseline,
+    video: {
+      displaySurface: "monitor", width: { ideal: 3840 }, height: { ideal: 2160 },
+      resizeMode: { ideal: "none" }, frameRate: { ideal: 144 },
+    },
+  });
+  assert.deepEqual(displayCaptureOptions(true).video, {
+    displaySurface: "monitor", resizeMode: { ideal: "none" }, frameRate: { ideal: 144 },
+  });
+});
+
+test("host diagnostics show track settings and qualified downgrade reasons", () => {
+  const display = { width: 2560, height: 1440 };
+  const fullSize = { width: 3840, height: 2160, frameRate: 144, resizeMode: "none" };
+  assert.equal(captureStatus(fullSize, true, display, 1.5), "采集画面 3840 × 2160，帧率设置为 144 帧/秒。");
+  const reduced = { width: 1920, height: 1080, frameRate: 120, screenPixelRatio: 1.5 };
+  assert.match(captureStatus(reduced, true, display, 1, true),
+    /1920 × 1080，帧率设置为 120 帧\/秒.*低于 144 帧\/秒.*低于估算的屏幕分辨率.*无法确认浏览器是否应用了请求的编码设置/);
+  assert.match(captureStatus({}, true, display, 1), /无法确认是否达到 144 帧\/秒.*无法确认是否按屏幕原生分辨率采集/);
+  assert.equal(captureStatus(reduced, false, display, 1), "采集画面 1920 × 1080，帧率设置为 120 帧/秒。");
+});
+
+test("the host requests full-size high-refresh encoding only for the opted-in video sender", async t => {
+  const requested = [];
+  let rejectEncoderSettings = false;
+  class MockPeer extends EventTarget {
+    addTransceiver(track) {
+      let parameters = { transactionId: "current", encodings: [{ active: true }] };
+      return { sender: {
+        getParameters() { return structuredClone(parameters); },
+        async setParameters(value) {
+          requested.push([track.kind, value]);
+          if (rejectEncoderSettings) throw new DOMException("Unavailable", "NotSupportedError");
+          parameters = value;
+        },
+      } };
+    }
+    createDataChannel(label, options) {
+      assert.equal(label, "input");
+      assert.deepEqual(options, { ordered: true });
+      return {};
+    }
+    async createOffer() { return { type: "offer" }; }
+    async setLocalDescription(description) { this.localDescription = { toJSON: () => description }; }
+    close() {}
+  }
+  globalThis.RTCPeerConnection = MockPeer;
+  t.after(() => { delete globalThis.RTCPeerConnection; });
+  let fallbacks = 0;
+  async function makeOffer(highRefresh) {
+    let peer;
+    const offer = await new Promise((resolve, reject) => {
+      peer = createPeer({
+        role: "host", highRefresh, iceServers: [],
+        stream: { getTracks: () => [{ kind: "video" }, { kind: "audio" }] },
+        sendSignal: resolve, onError: reject,
+        onChannel() {}, onTrack() {}, onConnectionState() {}, onConnectionLost() {},
+        onEncoderFallback() { fallbacks++; },
+      });
+    });
+    peer.close();
+    assert.deepEqual(offer, { description: { type: "offer" } });
+  }
+  await makeOffer(false);
+  assert.deepEqual(requested, []);
+  await makeOffer(true);
+  assert.deepEqual(requested, [["video", {
+    transactionId: "current", encodings: [{ active: true, scaleResolutionDownBy: 1, maxFramerate: 144 }],
+    degradationPreference: "maintain-resolution",
+  }]]);
+  assert.equal(fallbacks, 0);
+  rejectEncoderSettings = true;
+  await makeOffer(true);
+  assert.equal(fallbacks, 1);
 });
 
 test("display coordinates account for horizontal and vertical letterboxing", () => {

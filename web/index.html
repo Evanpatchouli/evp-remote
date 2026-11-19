@@ -1,75 +1,78 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>EVP Remote</title>
+    <title>EVP 远程</title>
     <link rel="stylesheet" href="/style.css">
     <script type="module" src="/app.mjs"></script>
   </head>
   <body>
     <main class="workspace">
       <header class="page-header">
-        <h1>EVP Remote</h1>
-        <p id="session-status" role="status" data-state="idle">Preparing the local session page…</p>
+        <h1>EVP 远程</h1>
+        <p id="session-status" role="status" data-state="idle">正在加载会话设置…</p>
       </header>
 
       <div class="layout">
-        <aside class="controls" aria-label="Session setup">
-          <label for="signal-url">Signaling server</label>
-          <input id="signal-url" type="url" spellcheck="false" placeholder="Configured by the Windows launcher" readonly>
+        <aside class="controls" aria-label="会话设置">
+          <label for="signal-url">信令服务器</label>
+          <input id="signal-url" type="url" spellcheck="false" placeholder="由 Windows 启动器配置" readonly>
 
           <form id="host-form">
-            <h2>Host a session</h2>
-            <label for="host-key">Deployment access key</label>
+            <h2>发起远程协助</h2>
+            <label for="host-key">部署访问密钥</label>
             <input id="host-key" type="password" autocomplete="off" required>
-            <button id="create-invite" type="submit">Create invitation</button>
-            <p id="host-launch-message" class="hint" hidden>Open the browser from the Windows launcher to host.</p>
+            <button id="create-invite" type="submit">创建邀请码</button>
+            <p id="host-launch-message" class="hint" hidden>请从 Windows 启动器打开本页面，再发起远程协助。</p>
           </form>
 
-          <section id="invitation" aria-label="Invitation" hidden>
-            <label for="invite-code">Single-use invitation</label>
+          <section id="invitation" aria-label="邀请码" hidden>
+            <label for="invite-code">一次性邀请码</label>
             <div class="input-row">
               <input id="invite-code" type="text" readonly>
-              <button id="copy-invite" type="button" class="secondary">Copy</button>
+              <button id="copy-invite" type="button" class="secondary">复制</button>
             </div>
           </section>
 
           <section id="request" aria-labelledby="request-heading" hidden>
-            <h2 id="request-heading">Viewer is requesting access</h2>
-            <p>Choose your primary screen and enable system audio in the browser picker. The viewer will be able to use your screen, keyboard and mouse.</p>
+            <h2 id="request-heading">有控制端请求连接</h2>
+            <p>请在浏览器的共享窗口中选择主屏幕的整个画面，并开启系统音频共享。对方将能查看屏幕并操作此电脑的键盘和鼠标。</p>
+            <label class="choice" for="high-refresh">
+              <input id="high-refresh" type="checkbox"> 原生分辨率，目标 144 帧/秒
+            </label>
             <label class="choice" for="relay-only">
-              <input id="relay-only" type="checkbox"> Use TURN relay only
+              <input id="relay-only" type="checkbox"> 仅使用 TURN 中继
             </label>
             <div class="button-row">
-              <button id="accept-request" type="button">Accept and share</button>
-              <button id="reject-request" type="button" class="secondary">Deny</button>
+              <button id="accept-request" type="button">接受并共享</button>
+              <button id="reject-request" type="button" class="secondary">拒绝</button>
             </div>
           </section>
 
           <form id="viewer-form">
-            <h2>Join a session</h2>
-            <label for="viewer-invite">Invitation</label>
+            <h2>加入远程会话</h2>
+            <label for="viewer-invite">邀请码</label>
             <input id="viewer-invite" type="text" spellcheck="false" autocomplete="off" required>
-            <button id="join-session" type="submit">Ask to join</button>
+            <button id="join-session" type="submit">请求连接</button>
           </form>
 
-          <button id="stop-session" type="button" class="danger" hidden>End session</button>
+          <button id="stop-session" type="button" class="danger" hidden>结束会话</button>
         </aside>
 
-        <section class="session" aria-label="Remote session">
+        <section class="session" aria-label="远程会话">
           <div class="stage">
-            <video id="remote-video" playsinline muted tabindex="-1" aria-label="Remote display. Click to focus keyboard and mouse."></video>
-            <p id="stage-message">The shared screen will appear here.</p>
+            <video id="remote-video" playsinline muted tabindex="-1" aria-label="远程画面。点击画面后可使用键盘和鼠标进行操作。"></video>
+            <p id="stage-message">共享画面将在这里显示。</p>
           </div>
           <div class="session-panel">
             <dl class="diagnostics">
-              <div><dt>ICE route</dt><dd id="route-status">Unknown</dd></div>
-              <div><dt>Screen</dt><dd id="video-status">Waiting</dd></div>
-              <div><dt>Sound</dt><dd id="audio-status">Waiting</dd></div>
-              <div><dt>Control</dt><dd id="input-status">Inactive</dd></div>
+              <div><dt>ICE 路径</dt><dd id="route-status">未知</dd></div>
+              <div><dt>画面</dt><dd id="video-status">等待中</dd></div>
+              <div><dt>声音</dt><dd id="audio-status">等待中</dd></div>
+              <div><dt>控制</dt><dd id="input-status">未启用</dd></div>
             </dl>
-            <button id="playback-button" type="button" class="secondary" hidden>Enable sound</button>
+            <button id="playback-button" type="button" class="secondary" hidden>开启声音</button>
           </div>
         </section>
       </div>

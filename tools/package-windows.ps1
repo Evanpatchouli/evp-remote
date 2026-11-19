@@ -1,4 +1,5 @@
 #Requires -Version 7
+param([string] $ArchiveName)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $runtime = node -p "JSON.stringify({path:process.execPath, platform:process.platform, arch:process.arch})" | ConvertFrom-Json
@@ -11,7 +12,9 @@ if (!(Test-Path -LiteralPath $runtimeLicense)) {
 }
 $version = ([IO.File]::ReadAllText((Join-Path $root 'package.json')) | ConvertFrom-Json).version
 $dist = [IO.Directory]::CreateDirectory((Join-Path $root 'dist')).FullName
-$destination = Join-Path $dist "evp-remote-windows-x64-$version.zip"
+if (!$ArchiveName) { $ArchiveName = "evp-remote-windows-x64-$version.zip" }
+if ($ArchiveName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*\.zip$') { throw 'Use a ZIP filename without directory components.' }
+$destination = Join-Path $dist $ArchiveName
 $temporary = Join-Path $dist ("build-" + [guid]::NewGuid().ToString() + '.zip')
 $archive = [IO.Compression.ZipFile]::Open($temporary, 'Create')
 function Add-Entry([string]$Source, [string]$Name) {

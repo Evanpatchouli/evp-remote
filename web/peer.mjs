@@ -1,4 +1,72 @@
 export const inputChannelLabel = "input";
+export class PeerNegotiationError extends Error {}
+const highRefreshTargetFps = 144;
+
+function estimateDisplaySize(display, pixelRatio) {
+  const width = Math.round(display?.width * pixelRatio);
+  const height = Math.round(display?.height * pixelRatio);
+  return Number.isSafeInteger(width) && Number.isSafeInteger(height) && width > 0 && height > 0
+    ? { width, height }
+    : null;
+}
+
+export function displayCaptureOptions(highRefresh, display, pixelRatio) {
+  const video = highRefresh
+    ? { displaySurface: "monitor", resizeMode: { ideal: "none" }, frameRate: { ideal: highRefreshTargetFps } }
+    : { displaySurface: "monitor", width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } };
+  if (highRefresh) {
+    const displaySize = estimateDisplaySize(display, pixelRatio);
+    if (displaySize) {
+      video.width = { ideal: displaySize.width };
+      video.height = { ideal: displaySize.height };
+    }
+  }
+  return {
+    video,
+    audio: true, systemAudio: "include", monitorTypeSurfaces: "include", surfaceSwitching: "exclude",
+  };
+}
+
+export function captureStatus(settings, highRefresh, display, pixelRatio, encoderFallback) {
+  const { width, height, frameRate, resizeMode, screenPixelRatio } = settings;
+  const hasDimensions = width > 0 && height > 0;
+  const hasFrameRate = Number.isFinite(frameRate) && frameRate > 0;
+  const dimensions = hasDimensions ? `采集画面 ${width} × ${height}` : "采集分辨率未知";
+  const frames = hasFrameRate ? `帧率设置为 ${frameRate} 帧/秒` : "采集帧率设置未知";
+  const parts = [`${dimensions}，${frames}。`];
+  if (highRefresh) {
+    const displaySize = estimateDisplaySize(display, screenPixelRatio ?? pixelRatio);
+    if (!hasFrameRate) parts.push("无法确认是否达到 144 帧/秒的采集目标。");
+    else if (frameRate < highRefreshTargetFps) parts.push("当前采集设置低于 144 帧/秒。");
+    const matchesDisplay = width === displaySize?.width && height === displaySize?.height;
+    if (!hasDimensions || (resizeMode !== "none" && !matchesDisplay)) {
+      const smaller = hasDimensions && displaySize && width <= displaySize.width && height <= displaySize.height;
+      parts.push(smaller ? "采集分辨率低于估算的屏幕分辨率。" : "无法确认是否按屏幕原生分辨率采集。");
+    }
+    if (encoderFallback) parts.push("无法确认浏览器是否应用了请求的编码设置。");
+  }
+  return parts.join("");
+}
+
+async function configureHighRefreshSender(sender) {
+  try {
+    const parameters = sender.getParameters();
+    if (!parameters.encodings?.length) return false;
+    parameters.degradationPreference = "maintain-resolution";
+    for (const encoding of parameters.encodings) {
+      encoding.scaleResolutionDownBy = 1;
+      encoding.maxFramerate = highRefreshTargetFps;
+    }
+    await sender.setParameters(parameters);
+    const actual = sender.getParameters();
+    return actual.degradationPreference === "maintain-resolution" && Boolean(actual.encodings?.length) &&
+      actual.encodings.every(encoding => encoding.scaleResolutionDownBy === 1 &&
+        encoding.maxFramerate === highRefreshTargetFps);
+  } catch {
+    // Continue sharing with the encoder settings the browser supports.
+    return false;
+  }
+}
 
 function codecPreference(codec) {
   const mimeType = codec.mimeType.toLowerCase();
@@ -74,11 +142,12 @@ export function watchTrackMute(track, onState, onUnavailable, recoveryMs = 8_000
   };
 }
 
-export function createPeer({ role, iceServers, relayOnly, stream, sendSignal,
-  onChannel, onTrack, onConnectionState, onConnectionLost, onError }) {
+export function createPeer({ role, iceServers, relayOnly, stream, highRefresh, sendSignal,
+  onChannel, onTrack, onConnectionState, onConnectionLost, onError, onEncoderFallback }) {
   const connection = new RTCPeerConnection({ iceServers,
     iceTransportPolicy: relayOnly ? "relay" : "all", bundlePolicy: "max-bundle" });
   const pendingCandidates = [];
+  let highRefreshSender;
 
   connection.addEventListener("icecandidate", event => {
     if (event.candidate) sendSignal({ candidate: event.candidate.toJSON() });
@@ -87,6 +156,7 @@ export function createPeer({ role, iceServers, relayOnly, stream, sendSignal,
 
   async function setLocalDescription(description) {
     await connection.setLocalDescription(description);
+    if (highRefreshSender && !await configureHighRefreshSender(highRefreshSender)) onEncoderFallback?.();
     sendSignal({ description: connection.localDescription.toJSON() });
   }
 
@@ -94,6 +164,7 @@ export function createPeer({ role, iceServers, relayOnly, stream, sendSignal,
     try {
       for (const track of stream.getTracks()) {
         const transceiver = connection.addTransceiver(track, { direction: "sendonly", streams: [stream] });
+        if (highRefresh && track.kind === "video") highRefreshSender = transceiver.sender;
         const codecs = globalThis.RTCRtpReceiver?.getCapabilities?.(track.kind)?.codecs;
         if (codecs?.length && transceiver.setCodecPreferences) {
           try {
@@ -118,7 +189,7 @@ export function createPeer({ role, iceServers, relayOnly, stream, sendSignal,
     if (description) {
       const expected = role === "host" ? "answer" : "offer";
       if (description.type !== expected || connection.remoteDescription) {
-        throw new Error("The peer sent an unexpected session description.");
+        throw new PeerNegotiationError("对端发来了意外的会话描述。");
       }
       await connection.setRemoteDescription(description);
       for (const queued of pendingCandidates) await connection.addIceCandidate(queued);
@@ -127,7 +198,7 @@ export function createPeer({ role, iceServers, relayOnly, stream, sendSignal,
     } else if (candidate) {
       if (connection.remoteDescription) await connection.addIceCandidate(candidate);
       else if (pendingCandidates.length < 256) pendingCandidates.push(candidate);
-      else throw new Error("The peer sent too many ICE candidates before its session description.");
+      else throw new PeerNegotiationError("对端在发送会话描述前发来了过多的 ICE 候选地址。");
     }
   }
 
