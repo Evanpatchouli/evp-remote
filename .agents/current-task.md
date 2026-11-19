@@ -1,5 +1,9 @@
 # Current task
 
+## Native Windows viewer
+
+The stack, two-window Chinese UX and acceptance boundary are recorded in [ADR 0002](../docs/decisions/0002-native-windows-client.md). Independently verify the native SDK/toolchain, implement the Qt shell and video presentation, integrate the existing WebRTC invitation and input protocol, then build and test a real executable. Preserve the browser endpoint for interoperability and field comparison.
+
 Deliver the first attended Windows session on independently connected peers.
 
 | Unit | Mode / grade | Ownership and acceptance |
