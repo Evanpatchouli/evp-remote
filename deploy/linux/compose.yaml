@@ -1,12 +1,12 @@
 name: evp-remote
 services:
   signal:
-    image: ghcr.io/evanpatchouli/evp-remote-signal:0.1.0
+    image: ghcr.io/evanpatchouli/evp-remote-signal:0.1.1
     env_file: ./settings/signal.env
     network_mode: host
     restart: unless-stopped
   proxy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine
     network_mode: host
     volumes:
       - ./settings/Caddyfile:/etc/caddy/Caddyfile:ro

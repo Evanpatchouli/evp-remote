@@ -14,7 +14,7 @@ $env:EVP_SIGNAL_URL = 'wss://signal.example.net:8787/'
 npm run desktop
 ```
 
-Replace the example URL with your own reachable signaling server. If necessary, configure Edge or Chrome as the default browser or open the private launch URL in one of them. The launcher serves the UI on its own loopback address on each computer.
+Replace the example URL with your own reachable signaling server. With the 0.1.1 deployment kit, `sh configure.sh PUBLIC_IPV4` sets up a domain-free server. Enter `wss://PUBLIC_IPV4/` in both launchers, using the actual address. If necessary, configure Edge or Chrome as the default browser or open the private launch URL in one of them. The launcher serves the UI on its own loopback address on each computer.
 
 1. On the host, enter your deployment's host access key and select **Create invitation**. Send the single-use invitation to the intended viewer.
 2. On the viewer, enter it and choose **Ask to join**. On the host, select **Accept and share**, choose the entire primary display, and enable **Share system audio** in the browser picker.

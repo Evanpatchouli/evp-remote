@@ -2,7 +2,7 @@
 
 ## Quick start on one public Linux server
 
-This recipe uses one dedicated Linux server with a public IPv4 address, Docker Engine with the Compose plugin, `ip`, and `openssl`. The host and viewer PCs need outbound Internet access. They can use different networks without router port forwarding. Use a standard DNS **A** record for a hostname you control, for example `remote.example.net`, pointing directly at the server's public IPv4. Select DNS-only mode if your DNS provider also offers HTTP proxying. This kit uses IPv4. Only publish an AAAA record if you have separately verified IPv6 reachability and configuration. [Docker Engine installation](https://docs.docker.com/engine/install/ubuntu/)
+This recipe uses one dedicated Linux server with a reachable public IPv4 address, Docker Engine with the Compose plugin, `ip`, and `openssl`. A domain is optional. The host and viewer PCs need outbound Internet access and can use different networks. If you use a hostname, point its DNS **A** record directly at the server's public IPv4. Select DNS-only mode if your DNS provider also offers HTTP proxying. Only publish an AAAA record if you have separately verified IPv6 reachability. [Docker Engine installation](https://docs.docker.com/engine/install/ubuntu/)
 
 Allow the following inbound traffic in **both** the cloud security group and the Linux firewall. Preserve your usual SSH access. Use a host where TCP 80 and 443 are available to Caddy.
 
@@ -16,7 +16,7 @@ The same server provides two distinct services. Both PCs use signaling to pair a
 
 The three containers use Linux host networking. The coordinator listens only on loopback port 8787. Caddy terminates TLS and forwards WebSockets. The TURN listener in this kit uses port 3478 over UDP or TCP. Networks allowing only TLS on port 443 need separate TURN/TLS service planning. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) · [coturn container reference](https://github.com/coturn/coturn/blob/master/docker/coturn/README.md)
 
-The [0.1.0 signaling image](https://github.com/users/Evanpatchouli/packages/container/package/evp-remote-signal) is public for Linux amd64 and arm64. Pull it anonymously on the VPS with the commands below.
+The [0.1.1 signaling image](https://github.com/users/Evanpatchouli/packages/container/package/evp-remote-signal) includes IP-only setup for Linux amd64 and arm64. Pull it anonymously on the VPS with the commands below. The Windows 0.1.0 endpoint supports both address forms.
 
 The image contains the matching Compose file and first-run configuration script. Choose the working directory once, according to your installation:
 
@@ -26,14 +26,23 @@ The image contains the matching Compose file and first-run configuration script.
 In the selected directory, pull the image and extract its two deployment files:
 
 ```sh
-image=ghcr.io/evanpatchouli/evp-remote-signal:0.1.0
+image=ghcr.io/evanpatchouli/evp-remote-signal:0.1.1
 docker pull "$image"
 kit=$(docker create "$image")
 docker cp "$kit:/usr/share/evp-remote/deploy/." .
 docker rm "$kit" >/dev/null
 ```
 
-**New installs only:** run `sh configure.sh remote.example.net 203.0.113.20` with your actual DNS name and public IP. The script detects the bound IPv4, or accepts it as a third argument. With provider 1:1 NAT, relay ports must preserve their numbers. Existing deployments keep their current `settings/`.
+**New installs only:** choose one setup command. Replace the documentation address with your server's actual public IPv4.
+
+| Address used by the Windows PCs | Setup on the VPS | Launcher URL |
+| --- | --- | --- |
+| Public IPv4, no DNS | `sh configure.sh 203.0.113.20` | `wss://203.0.113.20/` |
+| Your DNS name | `sh configure.sh remote.example.net 203.0.113.20` | `wss://remote.example.net/` |
+
+In IP-only mode Caddy requests a publicly trusted IP certificate using Let's Encrypt's `shortlived` profile and HTTP-01. Inbound TCP 80 must reach Caddy for issuance **and renewal**. TCP 443 carries WSS. These certificates last approximately six days. Keep Caddy running and preserve its data volume so it can renew automatically. [Let's Encrypt IP certificates](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability/)
+
+The script detects the bound interface address. For a multi-interface server, the hostname form accepts a third argument with the bound IPv4. With provider 1:1 NAT, the provider must preserve relay port numbers. Existing deployments retain their current `settings/`; extracting a new kit alone does not change their endpoint or rotate keys.
 
 Start the services from the same directory:
 
@@ -47,13 +56,13 @@ Look for three running services and a trusted certificate for the configured hos
 
 To upgrade, use the new release tag in `image`, run the pull and kit extraction again in the existing deployment directory, and apply the updated Compose file with `docker compose pull && docker compose up -d`. The kit contains only `compose.yaml` and `configure.sh`. If you customized either file, compare your copy before replacing it.
 
-On both Windows PCs, extract the Windows ZIP, open `Start-EVP-Remote.cmd` and enter the same URL, for example `wss://remote.example.net/`. Keep both launcher windows open. Use the host key on the controlled PC to create an invitation. Give the invitation to the viewer, then accept locally and select the entire display **with system audio**. The host needs one active display. Turn on viewer playback and click inside its video before testing keyboard and mouse.
+On both Windows PCs, extract the Windows ZIP, open `Start-EVP-Remote.cmd` and enter the same launcher URL from the table. Keep both launcher windows open. Use the host key on the controlled PC to create an invitation. Give the invitation to the viewer, then accept locally and select the entire display **with system audio**. The host needs one active display. Turn on viewer playback and click inside its video before testing keyboard and mouse.
 
 **Check the path.** A trusted HTTPS response of 404 at the root is expected from the signaling service for an ordinary HTTP request. Confirm a WebSocket connection by creating an invitation. Confirm TURN with a fresh session and the host's **Use TURN relay only** checkbox. To check automatic fallback, keep that box clear and use a network that blocks direct endpoint traffic while allowing the relay. Verify the selected route and actual media and input using the table below.
 
 ## Public test node
 
-Use a reachable host and DNS name you control. A deployment needs one WSS endpoint and a TURN service with public relay addresses. Signaling carries pairing and WebRTC negotiation. Audio, video, and input use the selected ICE path. The two Windows endpoints may be behind different NATs.
+Use a publicly reachable address you control. A deployment needs one trusted WSS endpoint and a TURN service with public relay addresses. Signaling carries pairing and WebRTC negotiation. Audio, video, and input use the selected ICE path. The two Windows endpoints may be behind different NATs.
 
 1. Install Node.js 22.13 or newer, run `npm ci --omit=dev` at the repository root, and provision a trusted TLS certificate for the WSS hostname. Run the coordinator as an unprivileged service account.
 2. Install coturn on the public node. Generate two independent high-entropy secrets. Keep the TURN signing secret exclusively on coturn and the coordinator. Give the host access key only to operators who may create invitations. Store them in your service manager's protected configuration.
@@ -91,6 +100,8 @@ Also exercise deny, stop during capture selection, stop while a key is held, and
 Run `npm ci` and `npm test`. With Edge installed, run `npm run test:session -- direct`. Set `EVP_BROWSER_CHANNEL=chrome` for Chrome. With a reachable test coturn instance, set `EVP_TURN_URLS` and `EVP_TURN_SECRET` in the test environment and run `npm run test:session -- all`. The fallback fixture leaves ICE policy at `all`, redirects direct UDP candidates to its own silent socket, omits direct TCP candidates, and checks that real connectivity probes reached the socket without a reply. Relay candidates are delivered as gathered. Forced-relay uses policy `relay`. The test opens no real screen capture and sends no physical input.
 
 ## Troubleshooting
+
+**Caddy keeps restarting with `bind: address already in use`.** Run `docker ps --format '{{.Names}}  {{.Image}}  {{.Ports}}'` and identify the existing HTTPS frontend that publishes 80/443. To keep an existing Nginx container as the TLS frontend, stop only the EVP `proxy` service and disable it in the effective Compose configuration (for example with an opt-in profile). One supported layout sets the signal service's `network_mode` to `container:YOUR_NGINX_CONTAINER` and retains the loopback signaling bind. Nginx can then proxy the site's root WebSocket upgrade to `http://127.0.0.1:8787` in its own network namespace. Keep TURN on its original host network. If the Nginx container is replaced, recreate the signal container after it to attach to the new namespace. Validate and gracefully reload the existing frontend; use its certificate and renewal workflow.
 
 - **No invitation** — verify the public WSS hostname, certificate chain, deployment host key, and reverse proxy upgrade support.
 - **No relay route** — verify matching signing secrets, clocks, TURN transport reachability, relay port forwarding, and the address advertised by coturn.
