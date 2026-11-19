@@ -1,12 +1,12 @@
 #include "home_window.h"
 
 #include "device_page.h"
+#include "select_field.h"
 #include "visual_style.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
-#include <QComboBox>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -205,7 +205,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     assistanceTabs_->setFocusPolicy(Qt::StrongFocus);
     assistanceTabs_->setExpanding(false);
     assistanceTabs_->setDrawBase(false);
-    assistanceTabs_->addTab(QStringLiteral("连接远程设备"));
+    assistanceTabs_->addTab(QStringLiteral("远程协助"));
     assistanceTabs_->addTab(QStringLiteral("共享本机"));
     headerLayout->addWidget(assistanceTabs_);
     mainLayout->addWidget(assistanceHeader_);
@@ -450,14 +450,8 @@ QWidget* HomeWindow::createHostPage()
     keyLabel->setBuddy(hostKey_);
     fields->addRow(keyLabel, hostKey_);
     auto* lifetimeLabel = label(QStringLiteral("邀请码有效期"), "fieldLabel", 13, QFont::DemiBold);
-    invitationLifetime_ = new QComboBox;
-    invitationLifetime_->setObjectName(QStringLiteral("invitationLifetime"));
-    invitationLifetime_->setAccessibleName(lifetimeLabel->text());
-    invitationLifetime_->setMinimumHeight(32);
-    for (int minutes : evp::codeLifetimeMinutes)
-        invitationLifetime_->addItem(evp::codeLifetimeLabel(minutes), minutes);
-    invitationLifetime_->setCurrentIndex(invitationLifetime_->findData(evp::CodeOptions{}.minutes));
-    lifetimeLabel->setBuddy(invitationLifetime_);
+    invitationLifetime_ = native_ui::codeLifetimeSelector(lifetimeLabel, "invitationLifetime");
+    invitationLifetime_->setMaximumWidth(200);
     fields->addRow(lifetimeLabel, invitationLifetime_);
 
     autoAcceptInvitation_ = new QCheckBox(QStringLiteral("持码免本机确认"));

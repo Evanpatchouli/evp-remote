@@ -1,6 +1,6 @@
 # Attended Windows session
 
-The Windows app has two sidebar destinations, My Devices and Remote Assistance. Remote Assistance contains tabs for connecting to another PC and sharing this PC. The active role stays selected while its request or session is in progress. A viewing session opens a second window inside the same app.
+The Windows app has two sidebar destinations, My Devices and Remote Assistance. Under Remote Assistance, **远程协助** accepts a peer's invitation and **共享本机** creates an invitation to share the local PC. The active role stays selected while its request or session is in progress. A viewing session opens a second window inside the same app.
 
 The host selects an invitation lifetime of 5, 15, or 30 minutes or 1, 2, 5, or 12 hours. The default is five minutes. A locally generated invitation can authorize one viewer. By default the host approves the request when it arrives. For a particular invitation the host may explicitly select **持码免本机确认** and set sound, refresh, and relay preferences before creating the code. The first valid redemption then starts that session. Expiry, cancellation, disconnect, and redemption invalidate the code. New invitations start with manual approval.
 

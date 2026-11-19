@@ -1,11 +1,15 @@
 #include "controller.h"
 #include "device_probe.h"
 #include "devices/device_identity.h"
+#include "ui/select_field.h"
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFile>
 #include <QJsonDocument>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QScrollArea>
@@ -24,6 +28,8 @@ private slots:
     void bindsProofToPeerAttemptNonceAndPayload();
     void pausesOnUnwritableSettingsAcrossRestarts();
     void assistanceTabsAndScrollableDeviceList();
+    void themedLifetimeSelectors_data();
+    void themedLifetimeSelectors();
 };
 
 void DeviceSecurityProbe::bindsProofToPeerAttemptNonceAndPayload() {
@@ -117,6 +123,8 @@ void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     QVERIFY(!window.findChild<QPushButton*>("hostNavigation"));
     navigation->click();
     QCOMPARE(tabs->count(), 2);
+    QCOMPARE(tabs->tabText(0), QStringLiteral("远程协助"));
+    QCOMPARE(tabs->tabText(1), QStringLiteral("共享本机"));
     QCOMPARE(tabs->currentIndex(), 0);
     window.setSignalingUrl(QUrl("wss://first.example.invalid/"));
     QSignalSpy joinRequest(&window, &HomeWindow::joinRequested);
@@ -199,6 +207,95 @@ void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     QVERIFY(!connectButton->isEnabled());
     navigation->click();
     QCOMPARE(tabs->currentIndex(), 1);
+}
+
+void DeviceSecurityProbe::themedLifetimeSelectors_data() {
+    QTest::addColumn<bool>("pairing");
+    QTest::newRow("invitation") << false;
+    QTest::newRow("pairing") << true;
+}
+
+void DeviceSecurityProbe::themedLifetimeSelectors() {
+    QFETCH(bool, pairing);
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    auto& devices = window.devices();
+    if (pairing)
+        window.showDevicePage();
+    else
+        window.findChild<QTabBar*>("assistanceTabs")->setCurrentIndex(1);
+    auto* field = window.findChild<native_ui::SelectField*>(pairing ? "pairingLifetime" : "invitationLifetime");
+    QVERIFY(field);
+    QCOMPARE(field->accessibleName(), pairing ? QStringLiteral("配对码有效期") : QStringLiteral("邀请码有效期"));
+    if (pairing) {
+        QVERIFY(!field->isEnabled());
+        QVERIFY(!window.findChild<QPushButton*>("generatePairingCode")->isEnabled());
+        QVERIFY(window.findChild<QLineEdit*>("localPairingCode")->isReadOnly());
+        devices.setIdentity("UI-PREVIEW");
+        devices.setPreferences({}, true);
+        devices.setRegistration(true, QStringLiteral("本机在线"));
+        auto* scroll = window.findChild<QScrollArea*>("homeScroll");
+        QTRY_VERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+    }
+    QTest::qWait(100);
+    QVERIFY(field->isEnabled());
+    auto* view = field->view();
+    auto* popup = view->window();
+    QVERIFY(popup != &window);
+    popup->setAttribute(Qt::WA_DontShowOnScreen);
+    QSignalSpy changed(field, &QComboBox::currentIndexChanged);
+    field->setFocus();
+    QTest::keyClick(field, Qt::Key_Down, Qt::AltModifier);
+    QTRY_VERIFY(popup->isVisible());
+    QTRY_VERIFY(view->visualRect(field->model()->index(0, 0)).height() >= 32);
+    QTest::keyClick(view, Qt::Key_Down);
+    QTest::keyClick(view, Qt::Key_Escape);
+    QTRY_VERIFY(!popup->isVisible());
+    QCOMPARE(field->currentData().toInt(), 5);
+    QCOMPARE(changed.count(), 0);
+
+    field->showPopup();
+    QTRY_VERIFY(popup->isVisible());
+    QTest::keyClick(view, Qt::Key_Down);
+    QTest::keyClick(view, Qt::Key_Return);
+    QTRY_VERIFY(!popup->isVisible());
+    QCOMPARE(field->currentData().toInt(), 15);
+    QCOMPARE(changed.count(), 1);
+    QTest::mouseClick(field, Qt::LeftButton);
+    QTRY_VERIFY(popup->isVisible());
+    const auto last = field->model()->index(field->count() - 1, 0);
+    view->scrollTo(last);
+    const auto lastRow = view->visualRect(last);
+    QVERIFY(view->viewport()->rect().contains(lastRow.center()));
+    QMouseEvent hover(QEvent::MouseMove, lastRow.center(), view->viewport()->mapToGlobal(lastRow.center()),
+                      Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(view->viewport(), &hover);
+    QCOMPARE(view->currentIndex(), last);
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty()) {
+        auto image = window.grab();
+        QPainter painter(&image);
+        painter.drawPixmap(window.mapFromGlobal(popup->mapToGlobal(QPoint{})), popup->grab());
+        painter.end();
+        const auto filename = pairing ? "pairing-selector.png" : "invitation-selector.png";
+        QVERIFY(image.save(QDir(preview).filePath(filename)));
+    }
+    QTest::qWait(QApplication::doubleClickInterval() + 20);
+    QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, lastRow.center());
+    QTRY_VERIFY(!popup->isVisible());
+    QCOMPARE(field->currentData().toInt(), 720);
+    QCOMPARE(changed.count(), 2);
+    if (pairing) {
+        devices.setActivity(true, false);
+        QVERIFY(!field->isEnabled());
+        devices.setActivity(false, false);
+        QVERIFY(field->isEnabled());
+        devices.setRegistration(false, QStringLiteral("离线"));
+        QVERIFY(!field->isEnabled());
+        QCOMPARE(field->currentData().toInt(), 720);
+    }
 }
 
 }

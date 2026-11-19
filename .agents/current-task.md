@@ -1,5 +1,12 @@
 # Current task
 
+## Windows selectors
+
+- **Execute / S1.** Use a shared themed control and popup for both code lifetimes and label the viewer tab **远程协助**.
+- **Verify / S0.** Check mouse and keyboard selection, cancellation, offline pairing behavior and the rebuilt Windows archive.
+
+Both native selector probes passed on Windows with Qt 6.8.3. The versioned archive contains the updated viewer tab and operator instructions.
+
 ## Windows production build
 
 - **Execute / S1.** Route the npm build through the native Release compiler and packager. Use the root package version for the executable and versioned output directory.

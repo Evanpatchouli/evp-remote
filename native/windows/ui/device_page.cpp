@@ -1,10 +1,10 @@
 #include "device_page.h"
+#include "select_field.h"
 #include "visual_style.h"
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
-#include <QComboBox>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLineEdit>
@@ -145,13 +145,7 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     hint->setWordWrap(true);
     pairing->addWidget(hint);
     auto* lifetimeLabel = label(QStringLiteral("配对码有效期"), "fieldLabel", 13);
-    pairingLifetime_ = new QComboBox;
-    pairingLifetime_->setObjectName("pairingLifetime");
-    pairingLifetime_->setAccessibleName(lifetimeLabel->text());
-    lifetimeLabel->setBuddy(pairingLifetime_);
-    for (int minutes : evp::codeLifetimeMinutes)
-        pairingLifetime_->addItem(evp::codeLifetimeLabel(minutes), minutes);
-    pairingLifetime_->setCurrentIndex(pairingLifetime_->findData(evp::CodeOptions{}.minutes));
+    pairingLifetime_ = native_ui::codeLifetimeSelector(lifetimeLabel, "pairingLifetime");
     autoAcceptPairing_ = new QCheckBox(QStringLiteral("持码免本机确认"));
     autoAcceptPairing_->setObjectName("autoAcceptPairing");
     auto* issuance = row(pairing, lifetimeLabel, pairingLifetime_, false);

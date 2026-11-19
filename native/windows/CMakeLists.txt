@@ -31,7 +31,7 @@ add_library(evp_client STATIC
     controller_dispatch.h controller_host.cpp host_input.cpp host_input.h
     devices/device_connection.cpp devices/device_connection.h devices/device_identity.cpp devices/device_identity.h
     ui/home_window.cpp ui/home_window.h ui/session_window.cpp ui/session_window.h
-    ui/device_page.cpp ui/device_page.h
+    ui/device_page.cpp ui/device_page.h ui/select_field.cpp ui/select_field.h
     media/video_surface.cpp media/video_surface.h media/ffmpeg_decoder.cpp media/ffmpeg_decoder.h
     media/webrtc_ffmpeg_decoder.cpp media/webrtc_ffmpeg_decoder.h
     rtc/rtc_viewer.cpp rtc/rtc_viewer.h rtc/rtc_host.cpp rtc/rtc_host.h
