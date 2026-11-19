@@ -74,6 +74,12 @@ Use Node.js, npm and Docker with a Linux Buildx builder. Run `npm run build:serv
 
 To publish, set the intended release version in the root `package.json`, sign in with `docker login ghcr.io` using a credential with write access to the package, and select a builder that supports multi-platform output. Run `npm run build:server:push`. It passes `--push` to the same script and publishes a single Linux amd64/arm64 tag at `ghcr.io/evanpatchouli/evp-remote-signal:<version>`. Reusing a tag updates its contents. The deployment kit in the image references that exact tag. For versions with build metadata, the tag uses an underscore for the plus sign and the OCI version label retains the full package version. [Docker Buildx build reference](https://docs.docker.com/reference/cli/docker/buildx/build/)
 
+On a workstation already signed in to GitHub CLI, check the account and scopes with `gh auth status --hostname github.com`. For the package owner's CLI login, the following command sends the credential directly to Docker. If the scope list lacks `write:packages`, run `gh auth refresh --hostname github.com --scopes write:packages` and complete the browser authorization first. [GitHub CLI authentication](https://cli.github.com/manual/gh_auth_refresh)
+
+```cmd
+gh auth token --hostname github.com --user Evanpatchouli | docker login ghcr.io -u Evanpatchouli --password-stdin
+```
+
 ## Public test node
 
 Use a publicly reachable address you control. A deployment needs one trusted WSS endpoint and a TURN service with public relay addresses. Signaling carries pairing and WebRTC negotiation. Audio, video, and input use the selected ICE path. The two Windows endpoints may be behind different NATs.
