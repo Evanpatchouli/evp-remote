@@ -4,3 +4,4 @@ Record the context, choice, alternatives, tradeoffs, and evidence needed to revi
 
 - [0001 · Attended WebRTC for the Windows milestone](0001-attended-webrtc.md)
 - [0002 · Native Windows client and high-refresh acceptance](0002-native-windows-client.md)
+- [0003 · Local trust for My Devices](0003-local-device-trust.md)
