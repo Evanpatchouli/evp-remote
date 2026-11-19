@@ -1,5 +1,46 @@
 # Deploy signaling and qualify a Windows session
 
+## Quick start on one public Linux server
+
+This recipe uses one dedicated Linux server with a public IPv4 address, Docker Engine with the Compose plugin, `ip`, and `openssl`. The host and viewer PCs need outbound Internet access. They can use different networks without router port forwarding. Use a standard DNS **A** record for a hostname you control, for example `remote.example.net`, pointing directly at the server's public IPv4. Select DNS-only mode if your DNS provider also offers HTTP proxying. This kit uses IPv4. Only publish an AAAA record if you have separately verified IPv6 reachability and configuration. [Docker Engine installation](https://docs.docker.com/engine/install/ubuntu/)
+
+Allow the following inbound traffic in **both** the cloud security group and the Linux firewall. Preserve your usual SSH access. Use a host where TCP 80 and 443 are available to Caddy.
+
+| Ports | Destination on the server |
+| --- | --- |
+| TCP 80 and 443 | Caddy certificate issuance/renewal and public WSS on 443 |
+| UDP and TCP 3478 | STUN and authenticated TURN listener |
+| UDP 52000–52100 inclusive | TURN relay allocations |
+
+The same server provides two distinct services. Both PCs use signaling to pair and exchange connection information. When the selected route is **Direct**, screen, audio, and input travel between the PCs. When it is **Relay**, coturn forwards those packets. Production startup requires TURN configuration so the fallback is available.
+
+The three containers use Linux host networking. The coordinator listens only on loopback port 8787. Caddy terminates TLS and forwards WebSockets. The TURN listener in this kit uses port 3478 over UDP or TCP. Networks allowing only TLS on port 443 need separate TURN/TLS service planning. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) · [coturn container reference](https://github.com/coturn/coturn/blob/master/docker/coturn/README.md)
+
+From the Windows repository root, create the server archive below if using a source checkout. A prepared `evp-remote-server.tar.gz` can be uploaded directly. Replace the SSH user and hostname with yours.
+
+```powershell
+git archive --format=tar.gz --prefix=evp-remote-server/ --output=evp-remote-server.tar.gz HEAD -- deploy/linux server package.json package-lock.json
+scp ./evp-remote-server.tar.gz ubuntu@remote.example.net:~/
+```
+
+On the server, extract it into a fresh directory. Replace the example domain and public IP with your own values. The script detects the local interface IPv4. If needed, pass the IPv4 assigned to the server's network interface as the third argument. For a provider's 1:1 NAT, the script writes the public/private mapping and the provider must preserve relay port numbers.
+
+```sh
+mkdir -p ~/evp-deploy && cd ~/evp-deploy
+tar -xzf ~/evp-remote-server.tar.gz
+cd evp-remote-server/deploy/linux
+sh configure.sh remote.example.net 203.0.113.20
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=30 proxy signal turn
+```
+
+Look for three running services and a trusted certificate for the configured hostname. On the server, run `sed -n 's/^EVP_HOST_KEY=//p' settings/signal.env` in a private terminal to retrieve the host access key. Supply it only to the Windows host operator. Keep the TURN signing secret on the server. The setup script preserves existing keys on rerun. To restart, use `docker compose up -d` in the same directory. To stop, run `docker compose down`. Keep the `settings/` directory and the Caddy data volume for the next start.
+
+On both Windows PCs, extract the Windows ZIP, open `Start-EVP-Remote.cmd` and enter the same URL, for example `wss://remote.example.net/`. Keep both launcher windows open. Use the host key on the controlled PC to create an invitation. Give the invitation to the viewer, then accept locally and select the entire display **with system audio**. The host needs one active display. Turn on viewer playback and click inside its video before testing keyboard and mouse.
+
+**Check the path.** A trusted HTTPS response of 404 at the root is expected from the signaling service for an ordinary HTTP request. Confirm a WebSocket connection by creating an invitation. Confirm TURN with a fresh session and the host's **Use TURN relay only** checkbox. To check automatic fallback, keep that box clear and use a network that blocks direct endpoint traffic while allowing the relay. Verify the selected route and actual media and input using the table below.
+
 ## Public test node
 
 Use a reachable host and DNS name you control. A deployment needs one WSS endpoint and a TURN service with public relay addresses. Signaling carries pairing and WebRTC negotiation. Audio, video, and input use the selected ICE path. The two Windows endpoints may be behind different NATs.

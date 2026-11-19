@@ -1,0 +1,29 @@
+name: evp-remote
+services:
+  signal:
+    build:
+      context: ../..
+      dockerfile: deploy/linux/Dockerfile
+    env_file: ./settings/signal.env
+    network_mode: host
+    restart: unless-stopped
+  proxy:
+    image: caddy:2-alpine
+    network_mode: host
+    volumes:
+      - ./settings/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - signal
+    restart: unless-stopped
+  turn:
+    image: coturn/coturn:4-alpine
+    network_mode: host
+    volumes:
+      - ./settings/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf", "--log-file=stdout", "--pidfile=/tmp/turnserver.pid"]
+    restart: unless-stopped
+volumes:
+  caddy-data:
+  caddy-config:

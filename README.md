@@ -20,7 +20,7 @@ Replace the example URL with your own reachable signaling server. If necessary, 
 2. On the viewer, enter it and choose **Ask to join**. On the host, select **Accept and share**, choose the entire primary display, and enable **Share system audio** in the browser picker.
 3. On the viewer, enable sound if prompted and click inside the video to send input. Check **ICE route** for the selected candidate types. End the session from either endpoint or stop capture from the host browser.
 
-See the [deployment and Windows field test](docs/runbooks/windows-session.md) for signaling, coturn, network ports, and the three route scenarios. Use the [documentation map](docs/README.md) to find the reference analysis and longer-term reconstruction plan.
+The [single-server deployment recipe](docs/runbooks/windows-session.md#quick-start-on-one-public-linux-server) includes a Compose setup for signaling, coturn and automatic WSS certificates. The same runbook covers the [two-PC field test](docs/runbooks/windows-session.md#two-pc-field-test). Use the [documentation map](docs/README.md) to find the reference analysis and longer-term reconstruction plan.
 
 ## Verify a checkout
 
