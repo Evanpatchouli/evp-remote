@@ -16,26 +16,36 @@ The same server provides two distinct services. Both PCs use signaling to pair a
 
 The three containers use Linux host networking. The coordinator listens only on loopback port 8787. Caddy terminates TLS and forwards WebSockets. The TURN listener in this kit uses port 3478 over UDP or TCP. Networks allowing only TLS on port 443 need separate TURN/TLS service planning. [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https) · [coturn container reference](https://github.com/coturn/coturn/blob/master/docker/coturn/README.md)
 
-From the Windows repository root, create the server archive below if using a source checkout. A prepared `evp-remote-server.tar.gz` can be uploaded directly. Replace the SSH user and hostname with yours.
+The [0.1.0 signaling package](https://github.com/users/Evanpatchouli/packages/container/package/evp-remote-signal) was published privately for Linux amd64 and arm64. On the VPS, run `docker login ghcr.io -u YOUR_GITHUB_LOGIN` using an account with package access. At the password prompt enter a classic GitHub personal access token with `read:packages`. The registry credential, deployment host access key, and TURN signing secret serve different purposes. [GitHub Container Registry authentication](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
-```powershell
-git archive --format=tar.gz --prefix=evp-remote-server/ --output=evp-remote-server.tar.gz HEAD -- deploy/linux server package.json package-lock.json
-scp ./evp-remote-server.tar.gz ubuntu@remote.example.net:~/
-```
+The image contains the matching Compose file and first-run configuration script. Choose the working directory once, according to your installation:
 
-On the server, extract it into a fresh directory. Replace the example domain and public IP with your own values. The script detects the local interface IPv4. If needed, pass the IPv4 assigned to the server's network interface as the third argument. For a provider's 1:1 NAT, the script writes the public/private mapping and the provider must preserve relay port numbers.
+- **New install:** `mkdir -p ~/evp-remote && cd ~/evp-remote`. Start in an empty directory.
+- **Migration or upgrade:** `cd ~/evp-deploy/evp-remote-server/deploy/linux` for the previous source-based kit, or use your actual existing Compose directory. Verify `test -s settings/signal.env && test -s settings/turnserver.conf && test -s settings/Caddyfile` succeeds **before proceeding**. Leave that directory selected. Retain any custom Compose changes when extracting the kit.
+
+In the selected directory, pull the image and extract its two deployment files:
 
 ```sh
-mkdir -p ~/evp-deploy && cd ~/evp-deploy
-tar -xzf ~/evp-remote-server.tar.gz
-cd evp-remote-server/deploy/linux
-sh configure.sh remote.example.net 203.0.113.20
-docker compose up -d --build
+image=ghcr.io/evanpatchouli/evp-remote-signal:0.1.0
+docker pull "$image"
+kit=$(docker create "$image")
+docker cp "$kit:/usr/share/evp-remote/deploy/." .
+docker rm "$kit" >/dev/null
+```
+
+**New installs only:** run `sh configure.sh remote.example.net 203.0.113.20` with your actual DNS name and public IP. The script detects the bound IPv4, or accepts it as a third argument. With provider 1:1 NAT, relay ports must preserve their numbers. Existing deployments keep their current `settings/`.
+
+Start the services from the same directory:
+
+```sh
+docker compose pull && docker compose up -d
 docker compose ps
 docker compose logs --tail=30 proxy signal turn
 ```
 
 Look for three running services and a trusted certificate for the configured hostname. On the server, run `sed -n 's/^EVP_HOST_KEY=//p' settings/signal.env` in a private terminal to retrieve the host access key. Supply it only to the Windows host operator. Keep the TURN signing secret on the server. The setup script preserves existing keys on rerun. To restart, use `docker compose up -d` in the same directory. To stop, run `docker compose down`. Keep the `settings/` directory and the Caddy data volume for the next start.
+
+To upgrade, use the new release tag in `image`, run the pull and kit extraction again in the existing deployment directory, and apply the updated Compose file with `docker compose pull && docker compose up -d`. The kit contains only `compose.yaml` and `configure.sh`. If you customized either file, compare your copy before replacing it.
 
 On both Windows PCs, extract the Windows ZIP, open `Start-EVP-Remote.cmd` and enter the same URL, for example `wss://remote.example.net/`. Keep both launcher windows open. Use the host key on the controlled PC to create an invitation. Give the invitation to the viewer, then accept locally and select the entire display **with system audio**. The host needs one active display. Turn on viewer playback and click inside its video before testing keyboard and mouse.
 

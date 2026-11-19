@@ -74,4 +74,4 @@ EOF
 # The parent directory is owner-only. The containers bind-mount these individual files.
 chmod 644 settings/Caddyfile settings/turnserver.conf
 printf 'Configured wss://%s/ (TURN %s on %s).\n' "$domain" "$public" "$bound"
-echo 'Start with: docker compose up -d --build'
+echo 'Start with: docker compose pull && docker compose up -d'

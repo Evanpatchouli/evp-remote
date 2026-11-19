@@ -1,9 +1,7 @@
 name: evp-remote
 services:
   signal:
-    build:
-      context: ../..
-      dockerfile: deploy/linux/Dockerfile
+    image: ghcr.io/evanpatchouli/evp-remote-signal:0.1.0
     env_file: ./settings/signal.env
     network_mode: host
     restart: unless-stopped
