@@ -379,6 +379,9 @@ try {
         }
     }
     $webrtcNotices = [IO.Directory]::CreateDirectory((Join-Path $licences 'webrtc')).FullName
+    foreach ($document in 'WEBRTC-BUILD-DEPS.txt', 'WEBRTC-NOTICE.txt', 'WEBRTC-VERSIONS.txt') {
+        Copy-Item -LiteralPath (Get-RequiredFile (Join-Path $repo "native/windows/third-party/webrtc/$document")) -Destination $webrtcNotices
+    }
     foreach ($license in 'LICENSE', 'THIRD_PARTY_LICENSES.md') {
         Copy-Item -LiteralPath (Get-RequiredFile (Join-Path $WebRtcRoot $license)) -Destination $webrtcNotices
     }
