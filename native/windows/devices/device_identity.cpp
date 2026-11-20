@@ -283,7 +283,7 @@ bool DeviceStore::open() {
         deploymentKey.toUtf8().size() > 4096 || (url.isEmpty() && !deploymentKey.isEmpty()))
         return false;
     preferences = {state.value("allowIncoming").toBool(), state.value("audio").toBool(true),
-                   state.value("highRefresh").toBool(), state.value("relayOnly").toBool()};
+                   state.value("relayOnly").toBool()};
     return true;
 }
 
@@ -298,8 +298,7 @@ DeviceStore::WriteResult DeviceStore::write() const {
         entries.append(QJsonObject{{"publicKey", encodeDeviceBytes(peer.publicKey)}, {"name", peer.name}});
     const QJsonObject state{{"version", 1}, {"peers", entries}, {"url", url.toString(QUrl::FullyEncoded)},
                             {"key", deploymentKey}, {"allowIncoming", preferences.allowIncoming},
-                            {"audio", preferences.audio}, {"highRefresh", preferences.highRefresh},
-                            {"relayOnly", preferences.relayOnly}};
+                            {"audio", preferences.audio}, {"relayOnly", preferences.relayOnly}};
     plain.append(QJsonDocument(state).toJson(QJsonDocument::Compact));
     const auto encrypted = dpapi(plain, true);
     erase(plain);

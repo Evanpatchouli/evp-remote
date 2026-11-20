@@ -1,13 +1,18 @@
 #include "session_window.h"
 
+#include "floating_surface.h"
 #include "visual_style.h"
 
+#include <QButtonGroup>
 #include <QCloseEvent>
+#include <QDialog>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QPushButton>
+#include <QScreen>
 #include <QShortcut>
 #include <QSize>
+#include <QSpinBox>
 #include <QStringList>
 #include <QVBoxLayout>
 
@@ -28,6 +33,13 @@ constexpr auto sessionStyle = R"(
     QLabel#sessionStatus, QLabel#sessionMetricName { color: #526684; }
     QFrame#toolbarDivider { background-color: #dce5f1; border: none; }
     QWidget#sessionViewport { background: #101824; }
+    QPushButton#sessionVideoSettings {
+        background: #f4f8ff; border: 1px solid #dbe5f5; border-radius: 8px;
+    }
+    QPushButton#sessionVideoSettings:hover { background: #e5eeff; border-color: #b2c8eb; }
+    QPushButton#sessionVideoSettings:pressed { background: #d9e7ff; }
+    QPushButton#sessionVideoSettings:focus { border-color: #3475e4; }
+    QLabel#sessionVideoChevron { color: #456594; }
     QPushButton#endSession {
         background: #fdf0ed; color: #963b2f; border: 1px solid #efd8d2;
         border-radius: 8px; padding: 0 12px;
@@ -36,6 +48,87 @@ constexpr auto sessionStyle = R"(
     QPushButton#endSession:pressed { background: #f7d7d0; }
     QPushButton#endSession:focus { border-color: #c66658; }
 )";
+
+constexpr auto videoSettingsStyle = R"(
+    QFrame#videoSettingsSurface {
+        background: #ffffff; border: 1px solid #bdcde4; border-radius: 10px;
+    }
+    QFrame#videoSettingsDivider { background: #e0e8f3; border: none; }
+    QLabel { color: #182844; background: transparent; }
+    QLabel#videoBitrateRange, QLabel#videoColorNote { color: #526684; }
+    QLabel#videoSettingsMessage {
+        background: #f1f5fd; color: #435b81; border-radius: 6px; padding: 6px 8px;
+    }
+    QPushButton[videoChoice="true"], QPushButton#videoCustomApply {
+        background: #f8faff; color: #263955; border: 1px solid #d9e3f1;
+        border-radius: 7px; padding: 0 8px;
+    }
+    QPushButton[videoChoice="true"]:hover, QPushButton#videoCustomApply:hover {
+        background: #edf4ff; border-color: #b2c8eb;
+    }
+    QPushButton[videoChoice="true"]:checked, QPushButton#videoCustomApply {
+        background: #e8f1ff; color: #214c98; border-color: #9ebbee;
+    }
+    QPushButton[videoChoice="true"]:focus, QPushButton#videoCustomApply:focus {
+        border-color: #3475e4;
+    }
+    QPushButton[videoChoice="true"]:pressed, QPushButton#videoCustomApply:pressed {
+        background: #d9e7ff;
+    }
+    QPushButton[videoChoice="true"]:disabled, QPushButton#videoCustomApply:disabled {
+        background: #f4f7fc; color: #667893; border-color: #e0e8f3;
+    }
+    QPushButton[videoChoice="true"]:checked:disabled {
+        background: #edf3fd; color: #435b81; border-color: #abbedb;
+    }
+    QSpinBox#videoCustomBitrate {
+        background: #ffffff; color: #182844; border: 1px solid #cbd7e8;
+        border-radius: 7px; padding: 0 8px;
+    }
+    QSpinBox#videoCustomBitrate:focus { border-color: #3475e4; }
+    QSpinBox#videoCustomBitrate:disabled { background: #f4f7fc; color: #667893; }
+)";
+
+struct VideoOption {
+    int limit;
+    const char* name;
+    QString text;
+};
+
+class VideoSettingsTrigger final : public QPushButton {
+public:
+    QSize sizeHint() const override { return layout() ? layout()->sizeHint() : QPushButton::sizeHint(); }
+    QSize minimumSizeHint() const override { return sizeHint(); }
+};
+
+class VideoChoice final : public QPushButton {
+public:
+    explicit VideoChoice(const VideoOption& option) : QPushButton(option.text) {
+        setObjectName(QString::fromLatin1(option.name));
+        setProperty("videoChoice", true);
+        setFont(uiFont(13, QFont::DemiBold));
+        setMinimumHeight(32);
+        setCheckable(true);
+        setCursor(Qt::PointingHandCursor);
+    }
+
+protected:
+    // The peer confirms settings before any option becomes selected.
+    void nextCheckState() override {}
+};
+
+QPushButton* addVideoChoice(QHBoxLayout* row, const VideoOption& option) {
+    auto* button = new VideoChoice(option);
+    row->addWidget(button, 1);
+    return button;
+}
+
+void addSettingsDivider(QVBoxLayout* layout) {
+    auto* divider = new QFrame;
+    divider->setObjectName(QStringLiteral("videoSettingsDivider"));
+    divider->setFixedHeight(1);
+    layout->addWidget(divider);
+}
 
 } // namespace
 
@@ -99,13 +192,40 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     routeMetric->addWidget(routeLabel_);
     tools->addLayout(routeMetric);
 
-    auto* videoMetric = new QVBoxLayout;
-    videoMetric->setSpacing(3);
-    videoMetric->addWidget(label(QStringLiteral("远程画面"), "sessionMetricName", 12));
+    videoSettingsButton_ = new VideoSettingsTrigger;
+    videoSettingsButton_->setObjectName(QStringLiteral("sessionVideoSettings"));
+    videoSettingsButton_->setAccessibleName(QStringLiteral("远程画面设置"));
+    videoSettingsButton_->setToolTip(QStringLiteral("点击调整画面设置。下方为远端画面尺寸和每秒提交给显卡的不同帧数。"));
+    videoSettingsButton_->setCursor(Qt::PointingHandCursor);
+    auto* videoMetric = new QHBoxLayout(videoSettingsButton_);
+    videoMetric->setSizeConstraint(QLayout::SetNoConstraint);
+    videoMetric->setContentsMargins(10, 4, 9, 4);
+    videoMetric->setSpacing(8);
+    auto* videoMetricText = new QVBoxLayout;
+    videoMetricText->setSpacing(2);
+    auto* videoMetricName = label(QStringLiteral("远程画面"), "sessionMetricName", 12);
     videoFormatLabel_ = label({}, "sessionVideoFormat", 13, QFont::DemiBold);
-    videoFormatLabel_->setToolTip(QStringLiteral("远端画面尺寸及每秒成功提交给显卡的不同帧数。屏幕实际出画需另行测量。"));
-    videoMetric->addWidget(videoFormatLabel_);
-    tools->addLayout(videoMetric);
+    auto* videoChevron = label(QStringLiteral("⌄"), "sessionVideoChevron", 17, QFont::DemiBold);
+    for (auto* child : {videoMetricName, videoFormatLabel_, videoChevron})
+        child->setAttribute(Qt::WA_TransparentForMouseEvents);
+    videoMetricText->addWidget(videoMetricName);
+    videoMetricText->addWidget(videoFormatLabel_);
+    videoMetric->addLayout(videoMetricText);
+    videoMetric->addWidget(videoChevron, 0, Qt::AlignVCenter);
+    tools->addWidget(videoSettingsButton_, 0, Qt::AlignVCenter);
+    createVideoSettingsPanel();
+    connect(videoSettingsButton_, &QPushButton::clicked, this, [this] {
+        videoSettingsFocus_ = nullptr;
+        positionVideoSettingsPanel();
+        videoSettingsPanel_->show();
+        if (videoSettingsAvailable_) {
+            auto* selected = bitrateOptions_->button(maxVideoBitrateMbps_);
+            QWidget* focus = selected ? static_cast<QWidget*>(selected) : customBitrate_;
+            focus->setFocus(Qt::PopupFocusReason);
+        } else {
+            videoSettingsPanel_->setFocus(Qt::PopupFocusReason);
+        }
+    });
 
     inputLabel_ = label({}, "sessionInput", 12, QFont::DemiBold);
     tools->addWidget(inputLabel_, 0, Qt::AlignVCenter);
@@ -117,12 +237,15 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     fullscreen->setCursor(Qt::PointingHandCursor);
     tools->addWidget(fullscreen);
     const auto toggle = [this] {
+        videoSettingsPanel_->hide();
         if (isFullScreen()) showNormal();
         else showFullScreen();
     };
     connect(fullscreen, &QPushButton::clicked, this, toggle);
     auto* shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F11")), this);
     connect(shortcut, &QShortcut::activated, this, toggle);
+    auto* popupShortcut = new QShortcut(shortcut->key(), videoSettingsPanel_);
+    connect(popupShortcut, &QShortcut::activated, this, toggle);
     auto* end = new QPushButton(QStringLiteral("结束控制"));
     end->setObjectName(QStringLiteral("endSession"));
     end->setFont(uiFont(13, QFont::DemiBold));
@@ -144,7 +267,150 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
 
     setRoute({});
     setVideoFormat({}, 0);
+    setVideoSettings(0, 0, false, QStringLiteral("等待远端画面设置可用"));
     updateStatus();
+}
+
+void SessionWindow::createVideoSettingsPanel()
+{
+    videoSettingsPanel_ = new QDialog(this, Qt::Popup);
+    videoSettingsPanel_->setObjectName(QStringLiteral("videoSettingsPanel"));
+    videoSettingsPanel_->setAccessibleName(QStringLiteral("画面设置"));
+    videoSettingsPanel_->setFocusPolicy(Qt::StrongFocus);
+    videoSettingsPanel_->setStyleSheet(QString::fromLatin1(videoSettingsStyle));
+
+    auto* surface = new QFrame(videoSettingsPanel_);
+    surface->setObjectName(QStringLiteral("videoSettingsSurface"));
+    surface->setFixedWidth(408);
+    native_ui::styleFloatingSurface(*videoSettingsPanel_, *surface);
+    auto* popupLayout = new QVBoxLayout(videoSettingsPanel_);
+    popupLayout->setContentsMargins(0, 0, 0, 0);
+    popupLayout->addWidget(surface);
+
+    auto* layout = new QVBoxLayout(surface);
+    layout->setContentsMargins(14, 12, 14, 12);
+    layout->setSpacing(8);
+    layout->addWidget(label(QStringLiteral("画面设置"), "videoSettingsTitle", 17, QFont::DemiBold));
+
+    layout->addWidget(label(QStringLiteral("画质"), "videoQualityHeading", 13, QFont::DemiBold));
+
+    auto* quality = new QHBoxLayout;
+    quality->setSpacing(6);
+    bitrateOptions_ = new QButtonGroup(this);
+    bitrateOptions_->setExclusive(false);
+    const VideoOption qualityOptions[] = {
+        {0, "videoBitrateAuto", QStringLiteral("自动（原画）")},
+        {30, "videoBitrate30", QStringLiteral("原画 30M")},
+        {14, "videoBitrate14", QStringLiteral("超清 14M")},
+        {8, "videoBitrate8", QStringLiteral("高清 8M")},
+    };
+    for (const auto& option : qualityOptions)
+        bitrateOptions_->addButton(addVideoChoice(quality, option), option.limit);
+    layout->addLayout(quality);
+    connect(bitrateOptions_, &QButtonGroup::idClicked, this, [this](int limit) {
+        requestVideoSettings(limit, maxVideoFps_);
+    });
+
+    auto* custom = new QHBoxLayout;
+    custom->setSpacing(8);
+    auto* customLabel = label(QStringLiteral("自定义"), "videoCustomLabel", 13);
+    custom->addWidget(customLabel);
+    customBitrateInfo_ = label({}, "videoBitrateRange", 12);
+    custom->addWidget(customBitrateInfo_);
+    custom->addStretch();
+    customBitrate_ = new QSpinBox;
+    customBitrate_->setObjectName(QStringLiteral("videoCustomBitrate"));
+    customBitrate_->setAccessibleName(QStringLiteral("自定义码率上限"));
+    customBitrate_->setFont(uiFont(13));
+    customBitrate_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    customBitrate_->setRange(1, 50);
+    customBitrate_->setValue(20);
+    customBitrate_->setSuffix(QStringLiteral(" Mbps"));
+    customBitrate_->setFixedWidth(106);
+    customBitrate_->setMinimumHeight(32);
+    customLabel->setBuddy(customBitrate_);
+    custom->addWidget(customBitrate_);
+    applyBitrate_ = new QPushButton(QStringLiteral("应用"));
+    applyBitrate_->setObjectName(QStringLiteral("videoCustomApply"));
+    applyBitrate_->setAccessibleName(QStringLiteral("应用自定义码率"));
+    applyBitrate_->setFont(uiFont(13, QFont::DemiBold));
+    applyBitrate_->setMinimumSize(54, 32);
+    applyBitrate_->setCursor(Qt::PointingHandCursor);
+    custom->addWidget(applyBitrate_);
+    connect(applyBitrate_, &QPushButton::clicked, this, [this] {
+        customBitrate_->interpretText();
+        requestVideoSettings(customBitrate_->value(), maxVideoFps_);
+    });
+    layout->addLayout(custom);
+
+    addSettingsDivider(layout);
+    layout->addWidget(label(QStringLiteral("帧率上限"), "videoFpsHeading", 13, QFont::DemiBold));
+    auto* frameRate = new QHBoxLayout;
+    frameRate->setSpacing(6);
+    frameRateOptions_ = new QButtonGroup(this);
+    frameRateOptions_->setExclusive(false);
+    const VideoOption frameRateOptions[] = {
+        {144, "videoFps144", QStringLiteral("144 帧")},
+        {90, "videoFps90", QStringLiteral("90 帧")},
+        {60, "videoFps60", QStringLiteral("60 帧")},
+        {30, "videoFps30", QStringLiteral("30 帧")},
+    };
+    for (const auto& option : frameRateOptions)
+        frameRateOptions_->addButton(addVideoChoice(frameRate, option), option.limit);
+    layout->addLayout(frameRate);
+    connect(frameRateOptions_, &QButtonGroup::idClicked, this, [this](int limit) {
+        requestVideoSettings(maxVideoBitrateMbps_, limit);
+    });
+
+    addSettingsDivider(layout);
+    layout->addWidget(label(QStringLiteral("色彩"), "videoColorHeading", 13, QFont::DemiBold));
+    auto* color = new QHBoxLayout;
+    color->setSpacing(6);
+    const auto colorNote = QStringLiteral("当前会话使用 8 位 4:2:0 SDR，暂不支持真彩或 HDR。");
+    auto* trueColor = addVideoChoice(color, {0, "videoColorTrue", QStringLiteral("真彩")});
+    trueColor->setEnabled(false);
+    trueColor->setAccessibleDescription(colorNote);
+    auto* sdr = addVideoChoice(color, {0, "videoColorSdr", QStringLiteral("常规色彩")});
+    sdr->setChecked(true);
+    sdr->setFocusPolicy(Qt::NoFocus);
+    sdr->unsetCursor();
+    auto* hdr = addVideoChoice(color, {0, "videoColorHdr", QStringLiteral("HDR")});
+    hdr->setEnabled(false);
+    hdr->setAccessibleDescription(colorNote);
+    layout->addLayout(color);
+    layout->addWidget(label(colorNote, "videoColorNote", 12));
+
+    videoSettingsMessage_ = label({}, "videoSettingsMessage", 12);
+    videoSettingsMessage_->setWordWrap(true);
+    layout->addWidget(videoSettingsMessage_);
+
+    auto* applyShortcut = new QShortcut(customBitrate_);
+    applyShortcut->setKeys({QKeySequence(Qt::Key_Return), QKeySequence(Qt::Key_Enter)});
+    applyShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(applyShortcut, &QShortcut::activated, applyBitrate_, &QPushButton::click);
+}
+
+void SessionWindow::positionVideoSettingsPanel()
+{
+    videoSettingsPanel_->layout()->activate();
+    videoSettingsPanel_->resize(videoSettingsPanel_->sizeHint());
+    const QRect available = videoSettingsButton_->screen()->availableGeometry();
+    const auto margins = videoSettingsPanel_->contentsMargins();
+    const auto anchor = videoSettingsButton_->mapToGlobal(QPoint(videoSettingsButton_->width(), 0));
+    const int width = videoSettingsPanel_->width();
+    const int height = videoSettingsPanel_->height();
+    const int left = anchor.x() + margins.right() - width;
+    const int below = anchor.y() + videoSettingsButton_->height() + 6 - margins.top();
+    const int above = anchor.y() - 6 - height + margins.bottom();
+    const int top = below + height <= available.bottom() + 1 ? below : above;
+    videoSettingsPanel_->move(qBound(available.left(), left, qMax(available.left(), available.right() + 1 - width)),
+                              qBound(available.top(), top, qMax(available.top(), available.bottom() + 1 - height)));
+}
+
+void SessionWindow::requestVideoSettings(int maxBitrateMbps, int maxFps)
+{
+    if (videoSettingsAvailable_ && (maxBitrateMbps != maxVideoBitrateMbps_ || maxFps != maxVideoFps_))
+        emit videoSettingsRequested(maxBitrateMbps, maxFps);
 }
 
 void SessionWindow::setStatus(const QString& message)
@@ -193,8 +459,47 @@ void SessionWindow::setVideoFormat(const QSize& resolution, double fps)
         const auto fractionDigits = std::floor(fps) == fps ? 0 : 1;
         metrics.append(QStringLiteral("%1 帧/秒").arg(QString::number(fps, 'f', fractionDigits)));
     }
-    videoFormatLabel_->setText(metrics.isEmpty() ? QStringLiteral("等待画面")
-                                                : metrics.join(QStringLiteral(" · ")));
+    const auto format = metrics.isEmpty() ? QStringLiteral("等待画面") : metrics.join(QStringLiteral(" · "));
+    videoFormatLabel_->setText(format);
+    videoSettingsButton_->layout()->invalidate();
+    videoSettingsButton_->updateGeometry();
+    videoSettingsButton_->setAccessibleDescription(format + QStringLiteral("。打开画面设置"));
+}
+
+void SessionWindow::setVideoSettings(int maxBitrateMbps, int maxFps, bool available, const QString& message)
+{
+    if (videoSettingsAvailable_ && !available && videoSettingsPanel_->isVisible())
+        videoSettingsFocus_ = videoSettingsPanel_->focusWidget();
+    const bool custom = maxBitrateMbps > 0 && !bitrateOptions_->button(maxBitrateMbps);
+    if (custom && maxVideoBitrateMbps_ != maxBitrateMbps)
+        customBitrate_->setValue(maxBitrateMbps);
+
+    maxVideoBitrateMbps_ = maxBitrateMbps;
+    maxVideoFps_ = maxFps;
+    videoSettingsAvailable_ = available;
+
+    const auto updateOptions = [available](const QButtonGroup& group, int limit) {
+        for (auto* button : group.buttons()) {
+            button->setChecked(group.id(button) == limit);
+            button->setEnabled(available);
+        }
+    };
+    updateOptions(*bitrateOptions_, maxBitrateMbps);
+    updateOptions(*frameRateOptions_, maxFps);
+    customBitrate_->setEnabled(available);
+    applyBitrate_->setEnabled(available);
+    customBitrateInfo_->setText(custom ? QStringLiteral("当前 %1 Mbps").arg(maxBitrateMbps)
+                                     : QStringLiteral("1–50 Mbps"));
+
+    videoSettingsMessage_->setText(message);
+    videoSettingsMessage_->setVisible(!message.isEmpty());
+    if (videoSettingsPanel_->isVisible())
+        positionVideoSettingsPanel();
+    if (available && videoSettingsFocus_) {
+        if (videoSettingsPanel_->isActiveWindow())
+            videoSettingsFocus_->setFocus(Qt::PopupFocusReason);
+        videoSettingsFocus_ = nullptr;
+    }
 }
 
 void SessionWindow::showFailure(const QString& message)
@@ -214,6 +519,7 @@ void SessionWindow::finish()
 
 void SessionWindow::closeEvent(QCloseEvent* event)
 {
+    videoSettingsPanel_->hide();
     QMainWindow::closeEvent(event);
     if (!closeHandled_ && event->isAccepted()) {
         closeHandled_ = true;
@@ -249,6 +555,9 @@ void SessionWindow::updateStatus()
 void SessionWindow::changeEvent(QEvent* event)
 {
     QMainWindow::changeEvent(event);
-    if (event->type() == QEvent::WindowStateChange && toolbar_)
+    if (event->type() == QEvent::WindowStateChange && toolbar_) {
+        if (isFullScreen() || isMinimized())
+            videoSettingsPanel_->hide();
         toolbar_->setVisible(!isFullScreen());
+    }
 }

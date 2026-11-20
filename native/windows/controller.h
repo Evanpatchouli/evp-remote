@@ -1,6 +1,7 @@
 #pragma once
 
 #include "code_options.h"
+#include "video_settings.h"
 #include <QElapsedTimer>
 #include <QJsonObject>
 #include <QSize>
@@ -79,6 +80,9 @@ class DesktopController final : public QObject {
     void stateChanged(const std::string& state);
     void updateStats();
     void updatePermit();
+    void requestVideoSettings(int maxBitrateMbps, int maxFps);
+    void receiveVideoSettings(const QJsonObject& message);
+    void sendVideoSettings(int serial, bool applied);
     bool sendSignal(QJsonObject message);
     bool sendInput(QJsonObject event);
     void finish(const QString& message, bool failure, bool notify = true, QString reason = {});
@@ -108,6 +112,10 @@ class DesktopController final : public QObject {
     bool trustedSession_ = false;
     QString route_, encoder_;
     QSize captureSize_;
+    VideoSettings videoSettings_;
+    QTimer videoSettingsReply_;
+    int videoSettingsSerial_ = 0;
+    bool remoteVideoSettings_ = false;
     std::unique_ptr<DeviceConnection> devices_;
 };
 } // namespace evp

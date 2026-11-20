@@ -176,11 +176,9 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     auto* options = new QHBoxLayout;
     audio_ = new QCheckBox(QStringLiteral("共享系统声音"));
     audio_->setObjectName("deviceShareAudio");
-    highRefresh_ = new QCheckBox(QStringLiteral("目标 144 帧/秒"));
-    highRefresh_->setObjectName("deviceHighRefresh");
     relayOnly_ = new QCheckBox(QStringLiteral("仅使用 TURN 中继"));
     relayOnly_->setObjectName("deviceRelayOnly");
-    for (auto* option : {audio_, highRefresh_, relayOnly_})
+    for (auto* option : {audio_, relayOnly_})
         options->addWidget(option);
     options->addStretch();
     settings->addLayout(options);
@@ -211,10 +209,9 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     connect(remove_, &QPushButton::clicked, this, [this] { emit removeRequested(selectedId()); });
     connect(cancel_, &QPushButton::clicked, this, &DevicePage::cancelRequested);
     connect(return_, &QPushButton::clicked, this, &DevicePage::returnRequested);
-    for (auto* option : {incoming_, audio_, highRefresh_, relayOnly_}) {
+    for (auto* option : {incoming_, audio_, relayOnly_}) {
         connect(option, &QCheckBox::toggled, this, [this] {
-            emit preferencesChanged(incoming_->isChecked(), audio_->isChecked(), highRefresh_->isChecked(),
-                                    relayOnly_->isChecked());
+            emit preferencesChanged(incoming_->isChecked(), audio_->isChecked(), relayOnly_->isChecked());
         });
     }
     setDevices({}, {});
@@ -245,11 +242,10 @@ void DevicePage::setActivity(bool sessionBusy, bool pending) {
 }
 
 void DevicePage::setPreferences(const evp::DevicePreferences& options, bool editable) {
-    const QSignalBlocker incomingBlock(incoming_), audioBlock(audio_), refreshBlock(highRefresh_), relayBlock(relayOnly_);
+    const QSignalBlocker incomingBlock(incoming_), audioBlock(audio_), relayBlock(relayOnly_);
     preferencesEditable_ = editable;
     incoming_->setChecked(options.allowIncoming);
     audio_->setChecked(options.audio);
-    highRefresh_->setChecked(options.highRefresh);
     relayOnly_->setChecked(options.relayOnly);
     updateActions();
 }
@@ -334,6 +330,6 @@ void DevicePage::updateActions() {
     pair_->setEnabled(peerCode_->isEnabled() && !peerCode_->text().trimmed().isEmpty());
     cancel_->setVisible(pending_ && !sessionBusy_);
     incoming_->setEnabled(preferencesEditable_ && (idle || incoming_->isChecked()));
-    for (auto* option : {audio_, highRefresh_, relayOnly_})
+    for (auto* option : {audio_, relayOnly_})
         option->setEnabled(preferencesEditable_ && idle);
 }

@@ -30,7 +30,8 @@ using namespace std::chrono_literals;
 struct Observations {
     int starts = 0, audioStarts = 0, stops = 0, armingChecks = 0;
     int down = 0, up = 0, move = 0, wheel = 0, leftDown = 0, leftUp = 0, heldDown = 0, heldUp = 0;
-    bool requested144 = false;
+    int startingFps = 0;
+    std::vector<int> liveFrameRates;
     bool receivedInput() const {
         return down && up && move && wheel && leftDown && leftUp;
     }
@@ -63,7 +64,8 @@ class SyntheticSource final : public evp::HostMediaSource {
     }
     bool startVideo(webrtc_AdaptedVideoTrackSource* source, int fps, Error, VideoSize size) override {
         ++seen.starts;
-        seen.requested144 = fps == 144;
+        seen.startingFps = fps;
+        currentFps = fps;
         size(640, 360);
         video = std::jthread([source](std::stop_token stopped) {
             for (unsigned frame = 0; !stopped.stop_requested(); ++frame) {
@@ -72,6 +74,12 @@ class SyntheticSource final : public evp::HostMediaSource {
             }
         });
         return true;
+    }
+    void setVideoMaxFps(int fps) override {
+        if (currentFps != fps) {
+            currentFps = fps;
+            seen.liveFrameRates.push_back(fps);
+        }
     }
     bool startAudio(Pcm pcm, Error startupResult, Error) override {
         ++seen.audioStarts;
@@ -108,6 +116,7 @@ class SyntheticSource final : public evp::HostMediaSource {
     }
     Observations& seen;
     const bool audioUnavailable;
+    int currentFps = 0;
     std::jthread video, audio;
 };
 void print(const QJsonObject& obj) {
@@ -147,6 +156,7 @@ int runHostProbe(int argc, char** argv) {
     if (url.host() != "127.0.0.1" || ((pairing || device.isEmpty()) && key.isEmpty()))
         return 2;
     const auto invitationCase = qEnvironmentVariable("EVP_PROBE_CASE");
+    const bool pictureSettings = invitationCase == "picture-settings";
     const bool deny = invitationCase == "deny";
     const bool legacyBroker = invitationCase == "auto-invite-legacy";
     const bool invalidProof = invitationCase == "auto-invite-invalid-proof";
@@ -210,7 +220,6 @@ int runHostProbe(int argc, char** argv) {
     if (!device.isEmpty()) {
         auto* inbound = home.findChild<QCheckBox*>("allowTrustedControl");
         auto* audio = home.findChild<QCheckBox*>("deviceShareAudio");
-        auto* refresh = home.findChild<QCheckBox*>("deviceHighRefresh");
         auto* relayOnly = home.findChild<QCheckBox*>("deviceRelayOnly");
         auto* lifetime = home.findChild<QComboBox*>("pairingLifetime");
         auto* preapproved = home.findChild<QCheckBox*>("autoAcceptPairing");
@@ -234,7 +243,6 @@ int runHostProbe(int argc, char** argv) {
         if (!pairing && !disabled) {
             inbound->setChecked(true);
             audio->setChecked(withAudio);
-            refresh->setChecked(true);
             relayOnly->setChecked(relay);
         }
 
@@ -329,7 +337,7 @@ int runHostProbe(int argc, char** argv) {
                 }
                 if (!shareStop || !shareStop->isVisible() || !shareStop->isEnabled() ||
                     !shareStop->window()->testAttribute(Qt::WA_DontShowOnScreen) || audio->isEnabled() ||
-                    refresh->isEnabled() || relayOnly->isEnabled() || !inbound->isEnabled() ||
+                    relayOnly->isEnabled() || !inbound->isEnabled() ||
                     button("saveSettings")->isEnabled() ||
                     (audioUnavailable && (!audio->isChecked() ||
                      !status->text().contains(QStringLiteral("系统声音不可用"))))) {
@@ -356,7 +364,8 @@ int runHostProbe(int argc, char** argv) {
         });
         QObject::connect(&controller, &evp::DesktopController::sessionFinished, &app, [&](const QString& message) {
             const bool clean = stopping && !expectBlocked && !pairing && seen.starts == 1 && seen.stops == 1 &&
-                               seen.audioStarts == int(withAudio) && seen.receivedInput() && seen.requested144;
+                               seen.audioStarts == int(withAudio) && seen.receivedInput() && seen.startingFps == 60 &&
+                               (!pictureSettings || seen.liveFrameRates == std::vector{144});
             if (!clean)
                 std::fprintf(stderr, "%s\n", message.toUtf8().constData());
             if (disconnect && clean) {
@@ -469,9 +478,10 @@ int runHostProbe(int argc, char** argv) {
             app.exit(passed ? 0 : 1);
             return;
         }
-        const bool passed = quietAtIssue && (deny ? (granted && !seen.starts && !seen.audioStarts && !seen.armingChecks)
+        const bool passed = quietAtIssue && (!pictureSettings || seen.liveFrameRates == std::vector{90}) &&
+                            (deny ? (granted && !seen.starts && !seen.audioStarts && !seen.armingChecks)
                                 : ((autoInvite ? !granted : granted) && seen.starts == 1 && seen.audioStarts == int(withAudio) &&
-                                   seen.stops == 1 && seen.receivedInput() && seen.requested144));
+                                   seen.stops == 1 && seen.receivedInput() && seen.startingFps == 144));
         if (!passed)
             std::fprintf(stderr, "%s\n", state.toUtf8().constData());
         QTimer::singleShot(delayedRelease ? 1200 : 0, &app, [&, passed] {
@@ -494,7 +504,7 @@ int runHostProbe(int argc, char** argv) {
                    {"mediaStops", seen.stops},
                    {"releasedAfterRevocation", seen.heldUp},
                    {"inputDelivered", seen.receivedInput()},
-                   {"highRefreshRequested", seen.requested144}});
+                   {"highRefreshRequested", seen.startingFps == 144}});
             app.exit(passed && cleanupOk && canSwitch && keyCleared ? 0 : 1);
         });
     });

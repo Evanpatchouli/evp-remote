@@ -14,10 +14,8 @@ extern "C" {
 
 #include <algorithm>
 #include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <vector>
 
@@ -269,8 +267,10 @@ void submit(webrtc_AdaptedVideoTrackSource* source, webrtc_VideoFrameBuffer_refc
     webrtc_AdaptedVideoTrackSource_OnFrame(source, webrtc_VideoFrame_unique_get(frame.get()));
 }
 
-void run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* source, int fps,
-         const std::function<void(int, int)>& onSize) {
+}  // namespace
+
+void DesktopCapture::run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* source,
+                         const std::function<void(int, int)>& onSize) {
     Duplication duplication;
     FrameBuffer last;
     using Clock = std::chrono::steady_clock;
@@ -279,16 +279,23 @@ void run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* source, int fps,
     const auto nowMicros = [&] {
         return startMicros + std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - start).count();
     };
-    const auto interval = 1'000'000 / fps;
+    int fps = 0;
+    int interval = 0;
     std::int64_t nextCapture = 0;
     std::int64_t lastSubmit = 0;
-    std::mutex waitMutex;
-    std::condition_variable_any wait;
     while (!stop.stop_requested()) {
-        const auto untilDue = nextCapture - nowMicros() - 750;
-        if (untilDue > 0) {
-            std::unique_lock lock(waitMutex);
-            wait.wait_for(lock, stop, std::chrono::microseconds(untilDue), [] { return false; });
+        {
+            std::unique_lock lock(cadenceMutex_);
+            if (fps != maxFps_) {
+                fps = maxFps_;
+                interval = 1'000'000 / fps;
+                if (lastSubmit) nextCapture = lastSubmit + interval;
+            }
+            const auto untilDue = nextCapture - nowMicros() - 750;
+            if (untilDue > 0 && cadenceChanged_.wait_for(lock, stop, std::chrono::microseconds(untilDue),
+                                                       [this, fps] { return maxFps_ != fps; })) {
+                continue;
+            }
         }
         if (stop.stop_requested()) break;
         DXGI_OUTDUPL_FRAME_INFO info{};
@@ -318,17 +325,16 @@ void run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* source, int fps,
     }
 }
 
-}  // namespace
-
 DesktopCapture::~DesktopCapture() { stop(); }
 
 bool DesktopCapture::start(webrtc_AdaptedVideoTrackSource* source, int maxFps,
                            std::function<void(QString)> onError, std::function<void(int, int)> onSize) {
     if (worker_.joinable() || !source || maxFps < 1 || maxFps > 240) return false;
+    setMaxFps(maxFps);
     try {
-        worker_ = std::jthread([=, onError = std::move(onError), onSize = std::move(onSize)](std::stop_token stop) {
+        worker_ = std::jthread([this, source, onError = std::move(onError), onSize = std::move(onSize)](std::stop_token stop) {
             try {
-                run(stop, source, maxFps, onSize);
+                run(stop, source, onSize);
             } catch (const std::exception& error) {
                 if (!stop.stop_requested() && onError) onError(QString::fromUtf8(error.what()));
             }
@@ -337,6 +343,15 @@ bool DesktopCapture::start(webrtc_AdaptedVideoTrackSource* source, int maxFps,
         return false;
     }
     return true;
+}
+
+void DesktopCapture::setMaxFps(int maxFps) {
+    if (maxFps < 1 || maxFps > 240) return;
+    {
+        const std::scoped_lock lock(cadenceMutex_);
+        maxFps_ = maxFps;
+    }
+    cadenceChanged_.notify_one();
 }
 
 void DesktopCapture::stop() {

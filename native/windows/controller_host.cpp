@@ -116,10 +116,11 @@ void DesktopController::hostReady(const std::vector<IceServer>& servers) {
         });
     };
     host_ = std::make_unique<RtcHost>(std::move(cb), hostAdapters_.media ? hostAdapters_.media() : nullptr);
+    videoSettings_ = {0, highRefresh_ ? 144 : 60};
     home_.setHostActive(true);
     home_.setStatus(withAudio_ ? QStringLiteral("正在准备共享本机屏幕和系统声音…")
                                : QStringLiteral("正在共享本机屏幕，等待对方连接…"));
-    if (!host_->start(servers, relayOnly_, withAudio_, highRefresh_ ? 144 : 60)) {
+    if (!host_->start(servers, relayOnly_, withAudio_, videoSettings_.maxFps)) {
         finish(QStringLiteral("无法启动共享。请检查主显示器和编码设备后重试。"), true);
         return;
     }
@@ -168,6 +169,7 @@ void DesktopController::grantHostInput() {
         finish(QStringLiteral("无法授予本次键鼠权限。"), true, true, "input-unavailable");
         return;
     }
+    sendVideoSettings(0, true);
     deadline_.stop();
     updateHostStatus();
 }
@@ -190,9 +192,26 @@ void DesktopController::applyHostInput(quint64 grant, const QByteArray& json) {
     const auto obj = QJsonDocument::fromJson(json).object();
     if (!obj.value("epoch").isDouble() || obj.value("epoch").toDouble() != static_cast<double>(grant))
         return;
+    if (obj.value("type") == "video-settings") {
+        const auto serial = obj.value("serial").toInt();
+        const VideoSettings choice{obj.value("mbps").toInt(-1), obj.value("fps").toInt(-1)};
+        if (serial > 0 && choice.valid()) {
+            const bool applied = choice == videoSettings_ || host_->setVideoLimits(choice.maxBitrateMbps, choice.maxFps);
+            if (applied)
+                videoSettings_ = choice;
+            sendVideoSettings(serial, applied);
+        }
+        return;
+    }
     if (localInput_->apply(obj) == HostInput::Result::Failed)
         finish(QStringLiteral("本机无法执行键鼠输入，已停止共享并释放按键。"), true, true,
                "input-unavailable");
+}
+void DesktopController::sendVideoSettings(int serial, bool applied) {
+    const auto state = QJsonDocument(QJsonObject{{"type", "video-settings"},
+        {"epoch", static_cast<qint64>(epoch_)}, {"serial", serial}, {"applied", applied},
+        {"mbps", videoSettings_.maxBitrateMbps}, {"fps", videoSettings_.maxFps}});
+    host_->sendInput(state.toJson(QJsonDocument::Compact).toStdString());
 }
 void DesktopController::tickHost() {
     if (!host_)

@@ -1,5 +1,18 @@
 # Current task
 
+## Controller-side picture settings
+
+- **Decide / S2.** Use the authorized native data channel for session-local bitrate and frame-rate limits. Keep congestion control active and report the host's confirmed limits. Expose the current SDR output and show which color modes require a different media format.
+- **Execute / S2.** Add the control to the existing viewer toolbar and apply supported limits on the host without starting another session.
+- **Execute / S2.** Prefer native desktop resolution when WebRTC adapts. Retain congestion control and qualify the time to a sharp picture separately from the first frame.
+- **Verify / S0 and independent review.** Exercise the settings UI and live changes through two local native peers, verify existing media and input, and capture the open panel from the running viewer for acceptance.
+- **Execute and verify / S1.** Start My Devices sessions at 60 FPS and remove the old host preference. Check legacy device profiles and verify the viewer can raise the limit to 144 FPS during a session.
+- **Execute and verify / S1.** Bump the patch version, push the verified changes, and publish the Git tag and GitHub release with both smoke-tested Windows artifacts.
+
+Both native control paths passed the local 8 Mbps, 90 FPS, custom 22 Mbps and return-to-auto sequence, with video, audio and input still working afterward. The physical two-PC time to a stable, sharp image remains to be measured.
+
+For 0.1.2, the trusted-device probe verified the 60 FPS starting ceiling and a live change to 144 FPS from the viewer. The legacy profile fixture verified that the old preference can be present on disk while the rest of the profile still loads.
+
 ## Windows client 0.1.1
 
 - **Investigate and execute / S2.** Remove native dotted outlines triggered by mouse interaction across the Qt UI. Preserve keyboard focus indicators and the trusted-device selection.

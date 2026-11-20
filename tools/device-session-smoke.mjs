@@ -156,6 +156,7 @@ async function control(stage, hostProfile, hostId, viewerProfile, viewerId, prob
   if (stage === 'revoke') assert.equal(hostReport.releasedKeys, 1);
   assert.equal(viewerReport.route, route);
   assert.equal(viewerReport.receivedAudio, probeCase !== 'audio-unavailable');
+  if (probeCase === 'picture-settings') assert.equal(viewerReport.pictureSettingsApplied, true);
   assert.ok(viewerReport.presents >= 4);
   assert.ok(viewerReport.gpuDecoded + viewerReport.cpuDecoded >= 4);
   assert.equal(viewerReport.presentationFailures, 0);
@@ -181,6 +182,7 @@ async function verifyDevices() {
   await control(route === 'direct' ? 'revoke' : 'control', 'second', secondId, 'first', firstId);
   if (route === 'direct') {
     await control('control', 'first', firstId, 'second', secondId, 'audio-unavailable');
+    await control('control', 'first', firstId, 'second', secondId, 'picture-settings');
     await control('disabled', 'second', secondId, 'first', firstId);
     await control('locked', 'first', firstId, 'second', secondId);
     await control('lock-active', 'first', firstId, 'second', secondId);
@@ -197,7 +199,8 @@ async function verifyDevices() {
     inputDelivered: true, ...(route === 'direct' ? { wrongCodeRejected: true, pairingDeclined: true,
       codeReplacedOnEdit: true, preapprovedPairingWithoutMedia: true,
       consumedCodeRefused: true, lockedRefused: true, activeDesktopLossStopped: true, sessionDisconnectStopped: true,
-      disabledRefused: true, audioUnavailablePreservedControl: true, releasedKeysOnRevoke: true, reregisteredWithoutResuming: true,
+      disabledRefused: true, audioUnavailablePreservedControl: true, pictureSettingsApplied: true,
+      releasedKeysOnRevoke: true, reregisteredWithoutResuming: true,
       removedWhileOffline: true, rejectedAfterUnpair: true } : {}) }));
 }
 

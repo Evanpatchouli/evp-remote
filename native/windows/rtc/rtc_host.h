@@ -16,6 +16,7 @@ public:
 
     virtual ~HostMediaSource() = default;
     virtual bool startVideo(webrtc_AdaptedVideoTrackSource* source, int maxFps, Error error, VideoSize size) = 0;
+    virtual void setVideoMaxFps(int) {}
     // Submit 10 ms of 48 kHz interleaved signed 16-bit stereo at a time.
     // The second argument of Pcm counts frames per channel.
     // After returning true, report startup once with an empty message on success, unless stopped.
@@ -53,6 +54,7 @@ public:
     void acceptAnswer(std::string sdp);
     void addRemoteCandidate(IceCandidate candidate);
     bool sendInput(std::string_view message);
+    bool setVideoLimits(int maxBitrateMbps, int maxFps);
     void pollStats();
     void close();
 

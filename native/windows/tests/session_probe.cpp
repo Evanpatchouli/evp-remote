@@ -5,16 +5,20 @@
 #include "ui/session_window.h"
 #include <QApplication>
 #include <QCheckBox>
+#include <QAbstractButton>
 #include <QLabel>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScreen>
+#include <QSpinBox>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QWheelEvent>
 #include <cstdio>
+#include <windows.h>
 
 namespace {
 class InvisibleTestWindows final : public QObject {
@@ -39,7 +43,9 @@ int runViewerProbe(int argc, char** argv) {
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, preferences.path());
     QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, preferences.filePath("system"));
     InvisibleTestWindows hidden;
-    app.installEventFilter(&hidden);
+    const auto screenshot = qEnvironmentVariable("EVP_PROBE_SCREENSHOT");
+    if (screenshot.isEmpty())
+        app.installEventFilter(&hidden);
     HomeWindow home;
     home.setAttribute(Qt::WA_DontShowOnScreen);
     const auto url = QUrl(qEnvironmentVariable("EVP_PROBE_URL"));
@@ -52,6 +58,7 @@ int runViewerProbe(int argc, char** argv) {
     const bool expectBlocked = device == "disabled" || device == "locked" || device == "forgotten";
     const auto expectedRoute = qEnvironmentVariable("EVP_PROBE_ROUTE", "direct");
     const auto scenario = qEnvironmentVariable("EVP_PROBE_CASE");
+    const bool pictureSettings = scenario == "picture-settings";
     const bool expectDenial = scenario == "deny";
     const bool expectAudio = scenario != "video-only" && scenario != "audio-unavailable";
     if (url.host() != "127.0.0.1" || (device.isEmpty() && invite.isEmpty()) || (pairing && pairingCode.isEmpty()))
@@ -121,6 +128,7 @@ int runViewerProbe(int argc, char** argv) {
     }
     bool exercised = false;
     bool ended = false;
+    int pictureStep = 0;
     QObject::connect(
         &client, &evp::DesktopController::sample, &app,
         [&](quint64 presents, QSize size, QString route, bool audio, bool ready, quint64 gpu, quint64 cpu) {
@@ -145,6 +153,67 @@ int runViewerProbe(int argc, char** argv) {
             auto* surface = window->findChild<QWidget*>("remoteSurface");
             if (!surface)
                 return;
+            if (pictureSettings) {
+                auto* trigger = window->findChild<QAbstractButton*>("sessionVideoSettings");
+                auto* panel = window->findChild<QWidget*>("videoSettingsPanel");
+                auto* hd = window->findChild<QAbstractButton*>("videoBitrate8");
+                auto* initialFps = window->findChild<QAbstractButton*>(device.isEmpty() ? "videoFps144" : "videoFps60");
+                auto* targetFps = window->findChild<QAbstractButton*>(device.isEmpty() ? "videoFps90" : "videoFps144");
+                auto* automatic = window->findChild<QAbstractButton*>("videoBitrateAuto");
+                auto* custom = window->findChild<QSpinBox*>("videoCustomBitrate");
+                auto* apply = window->findChild<QAbstractButton*>("videoCustomApply");
+                if (!trigger || !panel || !hd || !initialFps || !targetFps || !automatic || !custom || !apply) {
+                    app.exit(5);
+                    return;
+                }
+                if (pictureStep == 0) {
+                    if (screenshot.isEmpty())
+                        panel->setAttribute(Qt::WA_DontShowOnScreen);
+                    else if (!SetWindowPos(reinterpret_cast<HWND>(window->winId()), HWND_TOPMOST, 0, 0, 0, 0,
+                                           SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)) {
+                        app.exit(5);
+                        return;
+                    }
+                    trigger->click();
+                    if (!panel->isVisible()) {
+                        app.exit(5);
+                        return;
+                    }
+                    ++pictureStep;
+                } else if (pictureStep == 1 && hd->isEnabled() && automatic->isChecked()) {
+                    if (!initialFps->isChecked()) {
+                        app.exit(5);
+                        return;
+                    }
+                    hd->click();
+                    ++pictureStep;
+                } else if (pictureStep == 2 && hd->isEnabled() && hd->isChecked()) {
+                    targetFps->click();
+                    ++pictureStep;
+                } else if (pictureStep == 3 && targetFps->isEnabled() && targetFps->isChecked()) {
+                    if (!screenshot.isEmpty()) {
+                        const auto bounds = window->frameGeometry().united(panel->frameGeometry());
+                        const auto offset = bounds.topLeft() - window->screen()->geometry().topLeft();
+                        if (!window->screen()->grabWindow(0, offset.x(), offset.y(), bounds.width(), bounds.height())
+                                 .save(screenshot)) {
+                            app.exit(5);
+                            return;
+                        }
+                    }
+                    custom->setValue(22);
+                    apply->click();
+                    ++pictureStep;
+                } else if (pictureStep == 4 && automatic->isEnabled() && !hd->isChecked() &&
+                           !automatic->isChecked() && custom->value() == 22) {
+                    automatic->click();
+                    ++pictureStep;
+                } else if (pictureStep == 5 && automatic->isEnabled() && automatic->isChecked() && targetFps->isChecked()) {
+                    panel->hide();
+                    ++pictureStep;
+                }
+                if (pictureStep != 6)
+                    return;
+            }
             exercised = true;
             QTest::mouseClick(surface, Qt::LeftButton, Qt::NoModifier, surface->rect().center());
             QTest::keyClick(surface, Qt::Key_A);
@@ -165,6 +234,8 @@ int runViewerProbe(int argc, char** argv) {
                             {"cpuDecoded", static_cast<qint64>(cpu)},
                             {"presentationFailures", static_cast<qint64>(renderer->stats().failures)}};
             auto report = data;
+            if (pictureSettings)
+                report.insert("pictureSettingsApplied", pictureStep == 6);
             if (!device.isEmpty()) {
                 report.insert("id", deviceUi.id());
                 report.insert("peer", deviceUi.peer());

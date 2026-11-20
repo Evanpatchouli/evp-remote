@@ -19,6 +19,8 @@ Both invitation and pairing codes offer 5, 15 or 30 minutes and 1, 2, 5 or 12 ho
 
 The native sender captures desktop updates with DXGI Desktop Duplication, includes the pointer, and encodes H.264 using FFmpeg. It currently reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
 
+In a native-to-native session, click **远程画面** in the viewer toolbar to change the bitrate limit or target frame rate. The host applies changes automatically within the current session. The toolbar continues to show actual received dimensions and successful presentations. No changes are saved to the host's preferences.
+
 In both connection modes, a host with no default audio output can still share its screen and accept keyboard and mouse input. If enabled system audio cannot start, the host reports **系统声音不可用** and the viewer reports **对方未共享声音**. The saved preference applies again at the next connection.
 
 ## My Devices
@@ -30,7 +32,7 @@ In both connection modes, a host with no default audio output can still share it
 3. Enable **允许可信设备远控本机（无需逐次确认）** only on each PC you want to control. Keep the target client running on a signed-in, unlocked desktop. On the controlling PC select the online device and click **连接选中设备**, or double-click its row. No invitation, password, or approval prompt is needed for this session.
 4. To stop the current session, click **结束共享** on the target or **结束控制** on the controlling PC. Turn off inbound control to stop an incoming session and block future incoming connections without losing pairings. Select a peer and click **移除配对** to revoke it locally even while offline; the other PC may still show its old entry but cannot authenticate. If a pairing completed on only one PC or a device loses its installation key, pair again, and remove any obsolete entry.
 
-The online indicator tracks the target's signaling connection. The target also needs one active display and an unlocked Windows session. Locking the desktop or losing signaling ends the session. After re-registration, select the device again to reconnect. Choose system sound, high refresh, and TURN-only before starting a session. A floating **正在共享本机 · 停止共享** button stays available on the host while sharing, including when its main window is minimized. The local session limit is one hour.
+The online indicator tracks the target's signaling connection. The target also needs one active display and an unlocked Windows session. Locking the desktop or losing signaling ends the session. After re-registration, select the device again to reconnect. Choose system sound and TURN-only before starting a session. New sessions start with a 60 FPS ceiling. Change it from **远程画面** on the controlling PC. A floating **正在共享本机 · 停止共享** button stays available on the host while sharing, including when its main window is minimized. The local session limit is one hour.
 
 If the app reports a local storage error, restore write access to the Windows user's application data directory. Review the trusted list and inbound switch, then save the connection settings again in **设置**. Repeat any revocation that was reported as unsaved.
 
@@ -78,6 +80,7 @@ node tools/unified-session-smoke.mjs $testRuntime auto-invite
 node tools/invite-options-smoke.mjs $testRuntime
 node tools/unified-session-smoke.mjs $testRuntime video-only
 node tools/unified-session-smoke.mjs $testRuntime audio-unavailable
+node tools/unified-session-smoke.mjs $testRuntime picture-settings
 node tools/unified-session-smoke.mjs $testRuntime release-retry
 node tools/native-session-smoke.mjs "$testRuntime/EvpSessionProbe.exe" direct
 node tools/device-session-smoke.mjs $testRuntime direct

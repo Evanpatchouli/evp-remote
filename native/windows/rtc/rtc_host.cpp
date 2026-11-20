@@ -4,6 +4,7 @@
 #include "../capture/desktop_capture.h"
 #include "../capture/loopback_audio.h"
 #include "../capture/webrtc_ffmpeg_encoder.h"
+#include "../video_settings.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -88,6 +89,8 @@ public:
     bool startVideo(webrtc_AdaptedVideoTrackSource* source, int maxFps, Error error, VideoSize size) override {
         return desktop_.start(source, maxFps, asQtCallback(std::move(error)), std::move(size));
     }
+
+    void setVideoMaxFps(int maxFps) override { desktop_.setMaxFps(maxFps); }
 
     bool startAudio(Pcm pcm, Error startupResult, Error runtimeError) override {
         return audio_.start(std::move(pcm), asQtCallback(std::move(startupResult)), asQtCallback(std::move(runtimeError)));
@@ -330,6 +333,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
     Owned<webrtc_PeerConnectionInterface, webrtc_PeerConnectionInterface_Release> peer;
     Owned<webrtc_PeerConnectionObserver, webrtc_PeerConnectionObserver_delete> observer;
     Owned<webrtc_AdaptedVideoTrackSource, webrtc_AdaptedVideoTrackSource_Release> videoSource;
+    Owned<webrtc_RtpSenderInterface, webrtc_RtpSenderInterface_Release> videoSender;
     Owned<webrtc_DataChannelInterface, webrtc_DataChannelInterface_Release> input;
     Owned<webrtc_DataChannelObserver, webrtc_DataChannelObserver_delete> inputObserver;
 
@@ -519,20 +523,38 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         const auto track = own<webrtc_VideoTrackInterface_Release>(webrtc_VideoTrackInterface_refcounted_get(trackRef));
         if (!track) return "Could not create the desktop video track.";
 
-        const auto init = own<webrtc_RtpTransceiverInit_delete>(webrtc_RtpTransceiverInit_new());
-        webrtc_RtpTransceiverInit_set_direction(init.get(), webrtc_RtpTransceiverDirection_kSendOnly);
-        std_string_vector_push_back(webrtc_RtpTransceiverInit_get_stream_ids(init.get()), sharedStream);
-        const auto encodings = own<webrtc_RtpEncodingParameters_vector_delete>(webrtc_RtpEncodingParameters_vector_new(1));
-        const double maxFramerate = maxFps;
-        webrtc_RtpEncodingParameters_set_max_framerate(
-            webrtc_RtpEncodingParameters_vector_get(encodings.get(), 0), true, &maxFramerate);
-        webrtc_RtpTransceiverInit_set_send_encodings(init.get(), encodings.get());
-        webrtc_RtpTransceiverInterface_refcounted* result = nullptr;
+        auto* mediaTrackRef = webrtc_VideoTrackInterface_refcounted_cast_to_webrtc_MediaStreamTrackInterface(trackRef);
+        const auto mediaTrack = own<webrtc_MediaStreamTrackInterface_Release>(webrtc_MediaStreamTrackInterface_refcounted_get(mediaTrackRef));
+        const auto streams = own<std_string_vector_delete>(std_string_vector_new(0));
+        std_string_vector_push_back(streams.get(), sharedStream);
+        // AddTrack exposes the sender needed to update encoding parameters during the session.
+        webrtc_RtpSenderInterface_refcounted* result = nullptr;
         webrtc_RTCError_unique* error = nullptr;
-        webrtc_PeerConnectionInterface_AddTransceiverWithTrack(peer.get(), trackRef, init.get(), &result, &error);
+        webrtc_PeerConnectionInterface_AddTrack(peer.get(), mediaTrackRef, streams.get(), &result, &error);
         const auto detail = errorDetail(error);
-        const auto transceiver = own<webrtc_RtpTransceiverInterface_Release>(webrtc_RtpTransceiverInterface_refcounted_get(result));
-        return transceiver ? std::string{} : "Could not publish the desktop video track." + detail;
+        videoSender.reset(webrtc_RtpSenderInterface_refcounted_get(result));
+        if (!videoSender) return "Could not publish the desktop video track." + detail;
+        return setVideoParameters(0, maxFps);
+    }
+
+    std::string setVideoParameters(int maxBitrateMbps, int maxFps) {
+        const auto parameters = own<webrtc_RtpParameters_delete>(webrtc_RtpSenderInterface_GetParameters(videoSender.get()));
+        auto* encodings = webrtc_RtpParameters_get_encodings(parameters.get());
+        if (webrtc_RtpEncodingParameters_vector_size(encodings) != 1) {
+            return "The desktop video sender did not expose its single encoding.";
+        }
+        auto* encoding = webrtc_RtpEncodingParameters_vector_get(encodings, 0);
+        const int bitrateBps = maxBitrateMbps * 1'000'000;
+        const double framerate = maxFps;
+        webrtc_RtpEncodingParameters_set_max_bitrate_bps(encoding, bitrateBps != 0, &bitrateBps);
+        webrtc_RtpEncodingParameters_set_max_framerate(encoding, true, &framerate);
+        // Keep desktop text readable when WebRTC needs to reduce the encoding load.
+        const int preference = webrtc_DegradationPreference_MAINTAIN_RESOLUTION;
+        webrtc_RtpParameters_set_degradation_preference(parameters.get(), true, &preference);
+        webrtc_RTCError_unique* error = nullptr;
+        webrtc_RtpSenderInterface_SetParameters(videoSender.get(), parameters.get(), &error);
+        const auto detail = errorDetail(error);
+        return detail.empty() ? std::string{} : "Could not set the desktop video limits." + detail;
     }
 
     std::string addAudioTrack(const std_string* sharedStream) {
@@ -625,6 +647,10 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
                                              message.size(), false);
     }
 
+    bool setVideoLimits(int maxBitrateMbps, int maxFps) {
+        return !failed && connected && setVideoParameters(maxBitrateMbps, maxFps).empty();
+    }
+
     void createOffer() {
         if (failed) return;
         static const webrtc_CreateSessionDescriptionObserver_cbs handlers{
@@ -644,8 +670,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         };
         const auto options = own<webrtc_PeerConnectionInterface_RTCOfferAnswerOptions_delete>(
             webrtc_PeerConnectionInterface_RTCOfferAnswerOptions_new());
-        // The C API only accepts video tracks in AddTransceiverWithTrack.
-        // Applying this offer option sets the audio track added via AddTrack to send-only.
+        // Offer the local audio and video tracks as send-only.
         webrtc_PeerConnectionInterface_RTCOfferAnswerOptions_set_offer_to_receive_audio(options.get(), 0);
         webrtc_PeerConnectionInterface_RTCOfferAnswerOptions_set_offer_to_receive_video(options.get(), 0);
         const auto result = own<webrtc_CreateSessionDescriptionObserver_Release>(
@@ -774,6 +799,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
                 }
                 if (peer) {
                     webrtc_PeerConnectionInterface_Close(peer.get());
+                    videoSender.reset();
                     peer.reset();
                 }
                 observer.reset();
@@ -827,6 +853,14 @@ bool RtcHost::sendInput(std::string_view message) {
     bool sent = false;
     if (session_) session_->onSignalingThread([&] { sent = session_->sendInput(message); });
     return sent;
+}
+
+bool RtcHost::setVideoLimits(int maxBitrateMbps, int maxFps) {
+    if (!session_ || !VideoSettings{maxBitrateMbps, maxFps}.valid()) return false;
+    bool applied = false;
+    session_->onSignalingThread([&] { applied = session_->setVideoLimits(maxBitrateMbps, maxFps); });
+    if (applied) media_->setVideoMaxFps(maxFps);
+    return applied;
 }
 
 void RtcHost::pollStats() {

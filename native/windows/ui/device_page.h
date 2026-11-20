@@ -35,7 +35,7 @@ signals:
     void pairingDecided(const QString& attempt, bool confirmed);
     void connectRequested(const QString& id);
     void removeRequested(const QString& id);
-    void preferencesChanged(bool allowIncoming, bool audio, bool highRefresh, bool relayOnly);
+    void preferencesChanged(bool allowIncoming, bool audio, bool relayOnly);
     void cancelRequested();
     void returnRequested();
 
@@ -66,7 +66,6 @@ private:
     QPushButton* return_;
     QCheckBox* incoming_;
     QCheckBox* audio_;
-    QCheckBox* highRefresh_;
     QCheckBox* relayOnly_;
     QSet<QString> online_;
     QString pendingApproval_;

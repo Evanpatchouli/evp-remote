@@ -46,7 +46,6 @@ struct DevicePeer {
 struct DevicePreferences {
     bool allowIncoming = false;
     bool audio = true;
-    bool highRefresh = false;
     bool relayOnly = false;
 };
 

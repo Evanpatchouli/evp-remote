@@ -2,7 +2,9 @@
 
 #include <QString>
 
+#include <condition_variable>
 #include <functional>
+#include <mutex>
 #include <thread>
 
 struct webrtc_AdaptedVideoTrackSource;
@@ -18,9 +20,16 @@ public:
     bool start(webrtc_AdaptedVideoTrackSource* source, int maxFps,
                std::function<void(QString)> onError,
                std::function<void(int, int)> onSize = {});
+    void setMaxFps(int maxFps);
     void stop();
 
 private:
+    void run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* source,
+             const std::function<void(int, int)>& onSize);
+
+    std::mutex cadenceMutex_;
+    std::condition_variable_any cadenceChanged_;
+    int maxFps_ = 60;
     std::jthread worker_;
 };
 

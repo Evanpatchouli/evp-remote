@@ -553,7 +553,7 @@ void DeviceSecurityProbe::readsLegacyConnectionSettings() {
     QCOMPARE(ui.id(), evp::deviceId(owner.publicKey()));
     QCOMPARE(ui.peer(), evp::deviceId(peer.publicKey()));
     QVERIFY(!window.findChild<QCheckBox*>("deviceShareAudio")->isChecked());
-    QVERIFY(window.findChild<QCheckBox*>("deviceHighRefresh")->isChecked());
+    QVERIFY(!window.findChild<QCheckBox*>("deviceHighRefresh"));
     QVERIFY(window.findChild<QCheckBox*>("deviceRelayOnly")->isChecked());
     if (savedEndpoint) {
         QTRY_COMPARE(owned.frames.size(), 1);

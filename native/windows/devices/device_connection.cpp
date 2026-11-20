@@ -117,8 +117,8 @@ DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& ho
     connect(&page_, &DevicePage::connectRequested, this, [this](const QString& id) { start(id, false); });
     connect(&page_, &DevicePage::removeRequested, this, &DeviceConnection::removePeer);
     connect(&page_, &DevicePage::preferencesChanged, this,
-            [this](bool incoming, bool audio, bool highRefresh, bool relayOnly) {
-                changePreferences({incoming, audio, highRefresh, relayOnly});
+            [this](bool incoming, bool audio, bool relayOnly) {
+                changePreferences({incoming, audio, relayOnly});
             });
     connect(&page_, &DevicePage::cancelRequested, this, [this] {
         failAttempt(QStringLiteral("已取消设备请求。"));

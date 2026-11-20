@@ -14,6 +14,10 @@ Validate an actual cross-network direct connection, automatic relay when the dir
 
 ## Native client's high-refresh target
 
+The viewer can open picture settings from the resolution and frame-rate display. Automatic quality leaves bitrate to congestion control. The 30, 14 and 8 Mbps presets and the 1–50 Mbps custom value set upper limits. The frame-rate choices set a target ceiling of 144, 90, 60 or 30 FPS. The host applies authenticated requests automatically during the active native session. Media settings expire when the session ends. The SDR 8-bit 4:2:0 path offers standard color. True color and HDR are shown as unavailable.
+
+The desktop sender asks WebRTC to prefer preserving resolution over preserving frame rate, including before the first offer. Congestion control remains active. To qualify startup on physical PCs, start with the same moving desktop and fresh sessions, then record time from first displayed frame to the first stable native-resolution image, actual frame rate and transport route. Measure visual sharpness as well as dimensions.
+
 On a stable, low-latency connection with sufficient bandwidth, the highest-quality mode should preserve the source resolution and sustain at least 144 distinct displayed frames per second during continuous motion, with responsive keyboard and mouse input. Qualify each resolution and hardware pair separately. The source must produce at least 144 unique frames per second and the viewer display must run at 144 Hz or higher. The existing browser proof of feasibility has no measured 144 Hz result.
 
 Use numbered frames to measure actual display rate, inter-frame intervals, repeats, and freezes. Compare captured and displayed detail in moving scenes and fine colored text. Record the negotiated codec, bit depth, chroma sampling, and color range. Pixel-exact lossless reproduction would require a separate acceptance test.
