@@ -133,7 +133,7 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     : QMainWindow(parent, Qt::Window)
 {
     setWindowTitle(QStringLiteral("远程控制 · EVP 远程"));
-    setWindowIcon(symbolIcon(Symbol::Brand, QColor("#2865d5"), 24));
+    setWindowIcon(native_ui::brandIcon());
     setMinimumSize(710, 380);
     resize(1100, 686);
 

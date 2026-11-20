@@ -12,7 +12,6 @@
 namespace native_ui {
 
 enum class Symbol {
-    Brand,
     Connect,
     Display,
     Arrow,
@@ -40,14 +39,6 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
     painter.scale(unit, unit);
     painter.setPen(QPen(color, 1.65, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     switch (symbol) {
-    case Symbol::Brand:
-        painter.drawRoundedRect(QRectF(3, 4.5, 13.5, 10), 2.2, 2.2);
-        painter.drawLine(QPointF(9.75, 14.5), QPointF(9.75, 18.5));
-        painter.drawLine(QPointF(6.5, 18.5), QPointF(12, 18.5));
-        painter.drawLine(QPointF(15, 18.5), QPointF(21, 12.5));
-        painter.drawLine(QPointF(17.5, 12.5), QPointF(21, 12.5));
-        painter.drawLine(QPointF(21, 12.5), QPointF(21, 16));
-        break;
     case Symbol::Connect:
         painter.drawRoundedRect(QRectF(2.7, 4.3, 11.8, 10.2), 2, 2);
         painter.drawLine(QPointF(8.6, 14.5), QPointF(8.6, 18.6));
@@ -127,6 +118,11 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
 inline QIcon symbolIcon(Symbol symbol, const QColor& color, int size)
 {
     return QIcon(symbolPixmap(symbol, color, size));
+}
+
+inline QIcon brandIcon()
+{
+    return QIcon(QStringLiteral(":/evp/evp-remote-logo.png"));
 }
 
 inline QFont uiFont(int pixels, QFont::Weight weight = QFont::Normal)

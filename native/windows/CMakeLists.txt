@@ -32,6 +32,7 @@ add_library(evp_client STATIC
     controller_dispatch.h controller_host.cpp host_input.cpp host_input.h
     devices/device_connection.cpp devices/device_connection.h devices/device_identity.cpp devices/device_identity.h
     ui/home_window.cpp ui/home_window.h ui/session_window.cpp ui/session_window.h
+    ui/system_tray.cpp ui/system_tray.h
     ui/device_page.cpp ui/device_page.h ui/select_field.cpp ui/select_field.h
     ui/floating_surface.cpp ui/floating_surface.h ui/focus_style.cpp ui/focus_style.h
     media/video_surface.cpp media/video_surface.h media/ffmpeg_decoder.cpp media/ffmpeg_decoder.h
@@ -39,6 +40,11 @@ add_library(evp_client STATIC
     rtc/rtc_viewer.cpp rtc/rtc_viewer.h rtc/rtc_host.cpp rtc/rtc_host.h
     capture/desktop_capture.cpp capture/desktop_capture.h capture/loopback_audio.cpp capture/loopback_audio.h
     capture/webrtc_ffmpeg_encoder.cpp capture/webrtc_ffmpeg_encoder.h)
+set(brand_assets "${CMAKE_CURRENT_SOURCE_DIR}/../../assets")
+qt_add_resources(evp_client evp_brand_assets
+    PREFIX "/evp"
+    BASE "${brand_assets}"
+    FILES "${brand_assets}/evp-remote-logo.png")
 target_include_directories(evp_client PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${WEBRTC_INCLUDE}" "${FFMPEG_INCLUDE}")
 target_compile_options(evp_client PRIVATE /utf-8 /EHsc /W3)
 target_compile_definitions(evp_client PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX WIN32)

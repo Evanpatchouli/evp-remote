@@ -581,7 +581,7 @@ void DeviceConnection::receiveRequest(const QJsonObject& message) {
         page_.setPairingRequest(attemptId, attempt_->name, peer);
         page_.setMessage({});
         home_.showDevicePage();
-        QApplication::alert(&home_);
+        home_.alertConfirmation(QStringLiteral("有设备配对请求等待本机确认。"));
     } else {
         page_.setMessage(QStringLiteral("正在验证可信设备「%1」…").arg(attempt_->name));
         challenge();

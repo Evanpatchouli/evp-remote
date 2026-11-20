@@ -50,7 +50,6 @@ constexpr auto homeStyle = R"(
     QWidget#rail, QWidget#settingsRail { background: #eaf1fc; border-right: 1px solid #e1eafa; }
     QLabel { color: #182844; background: transparent; }
     QLabel#subtle, QLabel#machinePlatform { color: #566986; }
-    QLabel#brandMark { background: #2865d5; border-radius: 10px; }
     QLabel#deviceIcon { background: #ecf3ff; border-radius: 10px; }
     QFrame#card { background: #ffffff; border: 1px solid #e0e8f3; border-radius: 14px; }
     QLineEdit {
@@ -186,7 +185,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     , statusMessage_(idleMessage)
 {
     setWindowTitle(QStringLiteral("EVP 远程"));
-    setWindowIcon(symbolIcon(Symbol::Brand, QColor("#2865d5"), 24));
+    setWindowIcon(native_ui::brandIcon());
     setMinimumSize(724, 470);
     resize(960, 674);
 
@@ -216,7 +215,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     auto* brandMark = label({}, "brandMark", 14);
     brandMark->setFixedSize(36, 36);
     brandMark->setAlignment(Qt::AlignCenter);
-    brandMark->setPixmap(symbolPixmap(Symbol::Brand, Qt::white, 23));
+    brandMark->setPixmap(windowIcon().pixmap(QSize(36, 36), devicePixelRatioF()));
     brand->addWidget(brandMark);
     brand->addWidget(label(QStringLiteral("EVP 远程"), "brandName", 17, QFont::DemiBold), 1);
     railLayout->addLayout(brand);
@@ -788,6 +787,22 @@ void HomeWindow::showDevicePage()
     selectPage(Page::Devices);
 }
 
+void HomeWindow::alertConfirmation(const QString& message)
+{
+    if (isVisible() && !isMinimized())
+        QApplication::alert(this);
+    else
+        emit backgroundConfirmation(message);
+}
+
+void HomeWindow::showPendingConfirmation()
+{
+    if (!hostRequestId_)
+        return;
+    selectPage(Page::Assistance);
+    scroll_->ensureWidgetVisible(hostDecisions_, 0, 12);
+}
+
 void HomeWindow::showSettingsPage()
 {
     selectPage(Page::Settings);
@@ -959,7 +974,7 @@ void HomeWindow::setHostPending(quint64 requestId)
             hostDeny_->setFocus(Qt::OtherFocusReason);
             scroll_->ensureWidgetVisible(hostDecisions_, 0, 12);
         }
-        QApplication::alert(this);
+        alertConfirmation(QStringLiteral("有远程协助请求等待本机确认。"));
     }
 }
 
@@ -1141,7 +1156,36 @@ void HomeWindow::updateForm()
     hostDecisions_->setVisible(pending);
     shareOptions_->setVisible(pending || (!hostBusy_ && autoAcceptInvitation_->isChecked()));
     hostEndButton_->setVisible(hostBusy_);
-    if (hostActive_ && (trustedSession_ || issuedAutoApprove_ || settings)) {
+    updateShareIndicator();
+    hostEndButton_->setText(hostActive_ ? QStringLiteral("结束共享")
+                                      : QStringLiteral("取消共享"));
+    invitation_->setEnabled(!busy_);
+    pasteButton_->setEnabled(!busy_);
+    joinButton_->setEnabled(!busy_ || sessionActive_);
+    cancelButton_->setVisible(busy_ && !sessionActive_);
+    if (sessionActive_) {
+        joinButton_->setText(QStringLiteral("返回控制窗口"));
+    } else {
+        joinButton_->setText(busy_ ? QStringLiteral("正在连接") : QStringLiteral("请求连接"));
+    }
+}
+
+void HomeWindow::showEvent(QShowEvent* event)
+{
+    QMainWindow::showEvent(event);
+    updateShareIndicator();
+}
+
+void HomeWindow::hideEvent(QHideEvent* event)
+{
+    QMainWindow::hideEvent(event);
+    updateShareIndicator();
+}
+
+void HomeWindow::updateShareIndicator()
+{
+    if (hostActive_ && (trustedSession_ || issuedAutoApprove_ || page_ == Page::Settings ||
+                       !isVisible() || isMinimized())) {
         if (!shareIndicator_->isVisible()) {
             shareIndicator_->setAttribute(Qt::WA_DontShowOnScreen, testAttribute(Qt::WA_DontShowOnScreen));
             shareIndicator_->adjustSize();
@@ -1153,17 +1197,6 @@ void HomeWindow::updateForm()
         }
     } else {
         shareIndicator_->hide();
-    }
-    hostEndButton_->setText(hostActive_ ? QStringLiteral("结束共享")
-                                      : QStringLiteral("取消共享"));
-    invitation_->setEnabled(!busy_);
-    pasteButton_->setEnabled(!busy_);
-    joinButton_->setEnabled(!busy_ || sessionActive_);
-    cancelButton_->setVisible(busy_ && !sessionActive_);
-    if (sessionActive_) {
-        joinButton_->setText(QStringLiteral("返回控制窗口"));
-    } else {
-        joinButton_->setText(busy_ ? QStringLiteral("正在连接") : QStringLiteral("请求连接"));
     }
 }
 

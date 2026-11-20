@@ -8,12 +8,14 @@
 
 class DevicePage;
 class QFrame;
+class QHideEvent;
 class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPushButton;
 class QScrollArea;
+class QShowEvent;
 class QStackedWidget;
 class QTabBar;
 
@@ -25,6 +27,8 @@ public:
     ~HomeWindow() override;
     DevicePage& devices();
     void showDevicePage();
+    void alertConfirmation(const QString& message);
+    void showPendingConfirmation();
 
 public slots:
     void showSettingsPage();
@@ -51,8 +55,11 @@ signals:
     void hostDenied(quint64 requestId);
     void hostEndRequested();
     void hostDesktopUnavailable();
+    void backgroundConfirmation(const QString& message);
 
 protected:
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
     bool nativeEvent(const QByteArray& eventType, void* message, qintptr* result) override;
 
 private:
@@ -73,6 +80,7 @@ private:
     void respondToHostRequest(bool approved);
     void updateBanner();
     void updateForm();
+    void updateShareIndicator();
 
     QFrame* banner_;
     QLabel* bannerIcon_;

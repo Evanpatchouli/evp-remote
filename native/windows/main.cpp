@@ -2,6 +2,8 @@
 #include "controller.h"
 #include "ui/focus_style.h"
 #include "ui/home_window.h"
+#include "ui/system_tray.h"
+#include "ui/visual_style.h"
 #include <QApplication>
 #include <QLibraryInfo>
 #include <QLocale>
@@ -25,6 +27,7 @@ int main(int argc, char** argv) {
     if (translator.load("qtbase_zh_CN", QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
         app.installTranslator(&translator);
     native_ui::installFocusStyle(app);
+    app.setWindowIcon(native_ui::brandIcon());
     HomeWindow home;
     const QSettings defaults(QCoreApplication::applicationDirPath() + "/evp-remote.ini",
                              QSettings::IniFormat);
@@ -32,6 +35,7 @@ int main(int argc, char** argv) {
     evp::DesktopController controller(home, {}, {}, QUrl(address, QUrl::StrictMode));
     evp::ClientUpdater updater(home);
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &controller, &evp::DesktopController::endSession);
+    native_ui::installSystemTray(home);
     home.show();
     return app.exec();
 }

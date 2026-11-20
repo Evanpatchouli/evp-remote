@@ -1,5 +1,13 @@
 # Current task
 
+## Windows notification area
+
+- **Execute / S1.** Keep the client registered when its main window closes. Add tray actions to reopen the main window and exit the process.
+- **Execute / S1.** Apply the selected transparent dual-screen logo to the project, window and executable icon resources.
+- **Verify / S0 and independent review.** Exercise close and reopen, keep the local stop control available while hosting in the background, and preserve normal session and update shutdown.
+
+The Qt tray probe passed close, reopen and access to the local stop button. The two-peer device smoke established control with the host window closed to the notification area. Windows loaded all seven sizes of the new ICO, and the local portable package passed the embedded ZIP, version launch and cleanup checks.
+
 ## Windows client 0.2.1
 
 - **Execute / S2.** Add the installer directory page. Keep the registered directory for silent updates, rollback and uninstall. Verify the default, custom and reinstall paths with isolated installer identities.

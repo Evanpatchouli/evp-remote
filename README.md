@@ -1,5 +1,7 @@
 # evp-remote
 
+<img src="assets/evp-remote-logo.png" alt="EVP Remote logo" width="72" height="72">
+
 A remote desktop for Windows, with attended assistance and accountless access to personally paired devices. Both PCs run the same Chinese Windows app. Screen, system sound, and input use WebRTC, with direct connections preferred and TURN as a fallback.
 
 ## Windows app

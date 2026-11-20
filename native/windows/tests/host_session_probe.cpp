@@ -3,6 +3,7 @@
 #include "host_input.h"
 #include "rtc/rtc_host.h"
 #include "ui/home_window.h"
+#include "ui/system_tray.h"
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
@@ -13,6 +14,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QSystemTrayIcon>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <windows.h>
@@ -287,8 +289,17 @@ int runHostProbe(int argc, char** argv) {
                     }
                     print({{"pairingCode", code}});
                 } else {
-                    if (device == "control")
-                        home.showMinimized();
+                    if (device == "control") {
+                        if (QSystemTrayIcon::isSystemTrayAvailable()) {
+                            native_ui::installSystemTray(home);
+                            if (!home.close() || home.isVisible()) {
+                                app.exit(5);
+                                return;
+                            }
+                        } else {
+                            home.showMinimized();
+                        }
+                    }
                     print({{"registered", true}, {"id", ui.id()}});
                 }
             }

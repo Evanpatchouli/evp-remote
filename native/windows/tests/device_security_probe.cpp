@@ -4,7 +4,9 @@
 #include "devices/device_identity.h"
 #include "ui/focus_style.h"
 #include "ui/select_field.h"
+#include "ui/system_tray.h"
 #include "update_release.h"
+#include <QAction>
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
@@ -24,6 +26,7 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QScreen>
+#include <QSystemTrayIcon>
 #include <QTabBar>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -124,11 +127,54 @@ private slots:
     void themedLifetimeSelectors_data();
     void themedLifetimeSelectors();
     void floatingStopControl();
+    void trayKeepsSharingControlsAvailable();
     void onscreenPopupOpening();
     void selectsVerifiedUpdateAssets();
     void rendersUpdateDialog_data();
     void rendersUpdateDialog();
 };
+
+void DeviceSecurityProbe::trayKeepsSharingControlsAvailable() {
+    if (!QSystemTrayIcon::isSystemTrayAvailable())
+        QSKIP("The system tray is unavailable in this Windows session.");
+    const auto quitsOnLastWindow = QApplication::quitOnLastWindowClosed();
+    const auto restore = qScopeGuard([=] { QApplication::setQuitOnLastWindowClosed(quitsOnLastWindow); });
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    native_ui::installSystemTray(window);
+    auto* tray = window.findChild<QSystemTrayIcon*>();
+    auto* open = window.findChild<QAction*>("trayOpen");
+    QVERIFY(tray && tray->isVisible() && open && window.findChild<QAction*>("trayQuit"));
+    const auto icon = tray->icon().pixmap(16, 16).toImage();
+    QVERIFY(!icon.isNull() && icon.pixelColor(0, 0).alpha() == 0);
+    QVERIFY(!QApplication::quitOnLastWindowClosed());
+    window.show();
+    QVERIFY(window.close());
+    QVERIFY(!window.isVisible() && tray->isVisible());
+    open->trigger();
+    QVERIFY(window.isVisible());
+
+    QVERIFY(window.setHostBusy(true));
+    window.setHostActive(true);
+    auto* stop = window.findChild<QPushButton*>("hostEnd");
+    QVERIFY(stop && stop->isVisible());
+    QPushButton* floating = nullptr;
+    for (auto* top : QApplication::topLevelWidgets()) {
+        if (auto* button = top->findChild<QPushButton*>("trustedShareStop")) {
+            floating = button;
+            break;
+        }
+    }
+    QVERIFY(floating && !floating->isVisible());
+    QVERIFY(window.close());
+    QVERIFY(!window.isVisible() && floating->isVisible());
+    QSignalSpy stopRequested(&window, &HomeWindow::hostEndRequested);
+    floating->click();
+    QCOMPARE(stopRequested.count(), 1);
+    tray->activated(QSystemTrayIcon::Trigger);
+    QVERIFY(window.isVisible() && !floating->isVisible());
+    QVERIFY(window.setHostBusy(false));
+}
 
 void DeviceSecurityProbe::selectsVerifiedUpdateAssets() {
     const QString tag = "v0.10.0";

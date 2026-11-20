@@ -23,6 +23,19 @@ if ($GuiTestUser) {
     if ((Test-Path -LiteralPath $store) -or (Test-Path -LiteralPath 'HKCU:\Software\EVP\EVP Remote')) {
         throw 'GUI smoke requires a fresh test profile. Existing EVP settings or device data found.'
     }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class EvpPortableSmokeWindows {
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostThreadMessageW(uint thread, uint message, UIntPtr wParam, IntPtr lParam);
+}
+'@
 }
 
 function Test-ShippingPayload {
@@ -105,8 +118,26 @@ function Invoke-PortableSmoke([bool] $ShowWindow) {
                 throw 'The extracted client did not show its Qt home window.'
             }
             if ((Get-FileHash -LiteralPath $child.Path).Hash -ne $clientHash) { throw 'Unexpected running client image.' }
-            if (!$child.CloseMainWindow() -or !$child.WaitForExit(15000) -or $child.ExitCode -ne 0) {
-                throw 'The Qt client did not exit cleanly after WM_CLOSE.'
+            [uint32] $windowProcess = 0
+            $thread = [EvpPortableSmokeWindows]::GetWindowThreadProcessId($child.MainWindowHandle, [ref]$windowProcess)
+            if (!$thread -or $windowProcess -ne $child.Id -or !$child.CloseMainWindow()) {
+                throw 'Could not close the isolated Qt home window.'
+            }
+            $timer.Restart()
+            do {
+                $child.Refresh()
+                if ($child.HasExited -or $launcher.HasExited) { throw 'Closing the window ended the portable client.' }
+                if ($child.MainWindowHandle -eq 0) { break }
+                Start-Sleep -Milliseconds 100
+            } while ($timer.Elapsed.TotalSeconds -lt 15)
+            if ($child.MainWindowHandle -ne 0) { throw 'The Qt client did not hide after WM_CLOSE.' }
+            if ($child.WaitForExit(1000) -or $launcher.HasExited) {
+                throw 'The portable client did not stay alive in the notification area.'
+            }
+            # Deliver WM_QUIT to the verified test client's UI thread for controlled teardown.
+            if (![EvpPortableSmokeWindows]::PostThreadMessageW($thread, 0x12, [UIntPtr]::Zero, [IntPtr]::Zero) -or
+                !$child.WaitForExit(15000) -or $child.ExitCode -ne 0) {
+                throw 'The isolated Qt client did not exit after WM_QUIT.'
             }
         } else {
             $output = $launcher.StandardOutput.ReadToEndAsync()
@@ -147,7 +178,7 @@ try {
     Write-Host "Verified launcher metadata, embedded ZIP, native --version $version and cleanup."
     if ($GuiTestUser) {
         Invoke-PortableSmoke $true
-        Write-Host 'Verified packaged Qt home window, WM_CLOSE, client and launcher exit, and cleanup.'
+        Write-Host 'Verified packaged Qt home window, background survival after WM_CLOSE, and controlled shutdown and cleanup.'
     }
 } finally {
     $resolved = (Resolve-Path -LiteralPath $root).Path
