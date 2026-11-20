@@ -1,5 +1,13 @@
 # Current task
 
+## Windows client 0.2.1
+
+- **Execute / S2.** Add the installer directory page. Keep the registered directory for silent updates, rollback and uninstall. Verify the default, custom and reinstall paths with isolated installer identities.
+- **Execute / S1.** Give update dialogs a compact status layout and expand only when release information or download progress is available.
+- **Verify / S0 and independent review.** Verify the installer, portable launcher, update dialog and native sessions, then publish all three 0.2.1 client artifacts.
+
+The installer checks passed fresh default and custom paths, unsafe path rejection, registered upgrades, rollback and uninstall. An isolated interactive setup exercised the directory chooser and moved registration to the new directory while retaining the old files. The Qt probes verified the compact current-version and detailed update-available states using local release metadata.
+
 ## Windows client 0.2.0
 
 - **Execute / S1.** Use shared action-button geometry and drawn icons throughout the client. Verify toolbar layout and embedded executable icons.

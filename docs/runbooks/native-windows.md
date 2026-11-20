@@ -12,7 +12,7 @@ An upgrade reuses the protected address and key previously saved in My Devices. 
 
 The app checks the latest stable GitHub release shortly after launch and every 15 minutes. To check immediately, open **设置中心 → 关于** and select **检查更新**. Selecting **下载并更新** downloads the appropriate release asset and verifies its size and SHA-256 against the release metadata. Applying an update ends current sessions and restarts the client.
 
-The portable launcher replaces its original EXE at the same location. The ZIP and installed clients download the setup EXE and start the new per-user installed copy. The ZIP directory remains available for manual cleanup. All modes use the same local settings and device pairings for the current Windows user.
+The portable launcher replaces its original EXE at the same location. The ZIP and installed clients download the setup EXE and start the new per-user installed copy. Silent updates use the registered installation directory. The ZIP directory remains available for manual cleanup. All modes use the same local settings and device pairings for the current Windows user.
 
 Installed updates keep the previous runtime until the new client passes a version and startup check. If an update was interrupted and setup reports a pending update, close the client and run the setup EXE with `/S /UPDATEROLLBACK` to restore the previous installation. If the updated client already starts normally, run that version's setup EXE with `/S /UPDATECOMMIT` to finish retiring its backup.
 
@@ -70,7 +70,7 @@ Set `version` in the root `package.json` before building. The packager writes th
 - `evp-remote-windows-x64.zip` contains the native client, Qt and FFmpeg runtime files, the app-local VC runtime, default signaling configuration and dependency notices.
 - `evp-remote-windows-x64-portable.exe` embeds that exact ZIP. The Windows .NET Framework launcher extracts the bundled files into a fresh directory under `%TEMP%`, opens the same native client, waits for it to exit, and removes the temporary directory. Each Windows user retains their existing settings and device pairings. The operating system supplies the launcher runtime. The build uses the 64-bit .NET Framework 4.x C# compiler under `%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319`.
 
-- `evp-remote-windows-x64-setup.exe` installs the same runtime under `%LOCALAPPDATA%\Programs\EVP Remote`, creates a Start Menu shortcut, and registers per-user uninstall information.
+- `evp-remote-windows-x64-setup.exe` lets you choose the installation directory. The first install suggests `%LOCALAPPDATA%\Programs\EVP Remote` and later setups suggest your registered directory. The installer creates a Start Menu shortcut and registers per-user uninstall information for the selected directory. If you choose a new location in the interactive setup, the previous runtime and user files are retained at the old location.
 
 The executable artifacts carry the full package version in their product metadata. Rebuilding the same version replaces the artifact set. Close a running release-directory portable EXE before replacing it. To verify the portable artifact, run `pwsh -File tools/test-portable-windows.ps1`. The smoke checks the embedded ZIP, launches the portable EXE alone with `--version`, and checks that the runtime directory is removed. For a visible home-window and close test, run it with `-GuiTestUser` from a disposable user's interactive desktop.
 

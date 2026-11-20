@@ -1,3 +1,4 @@
+using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 using System;
 using System.ComponentModel;
@@ -17,6 +18,7 @@ internal static class UpdateInstaller
     private const string ClientName = "EvpRemote.exe";
     private const string HelperName = "EvpRemoteUpdate.exe";
     private const string InstalledBackupName = ".evp-remote-update-backup";
+    private const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\evp-remote";
     private const int ExitWaitMilliseconds = 60000;
     private const int SetupWaitMilliseconds = 300000;
     private const int VersionWaitMilliseconds = 30000;
@@ -52,9 +54,7 @@ internal static class UpdateInstaller
                 PathEquals(Path.GetDirectoryName(original), staging))
                 throw new InvalidDataException("待更新的程序路径无效。");
 
-            string installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Programs", "EVP Remote", ClientName);
-            string destination = portable ? original : AbsolutePath(installed);
+            string destination = portable ? original : InstalledExecutable(UninstallKey);
             using (SafeWaitHandle client = WatchProcess(clientId, portable ? null : original))
             using (SafeWaitHandle launcher = portable ? WatchProcess(launcherId, original) : null)
             using (var updateLock = new Mutex(false, UpdateMutexName(destination)))
@@ -99,6 +99,36 @@ internal static class UpdateInstaller
         if (String.IsNullOrEmpty(root) || root.Length < 3 || path.IndexOf(':', root.Length) >= 0)
             throw new InvalidDataException("更新需要完整的文件路径。");
         return Path.GetFullPath(path);
+    }
+
+    private static string InstalledExecutable(string uninstallKey)
+    {
+        object registered;
+        using (RegistryKey currentUser = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64))
+        using (RegistryKey registration = currentUser.OpenSubKey(uninstallKey))
+            registered = registration == null ? null :
+                registration.GetValue("InstallLocation", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+
+        string directory = registered == null
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "EVP Remote")
+            : registered as string;
+        if (String.IsNullOrWhiteSpace(directory) || !Regex.IsMatch(directory, @"\A[A-Za-z]:[\\/]"))
+            throw new InvalidDataException("已登记的安装目录无效。");
+
+        directory = AbsolutePath(directory).TrimEnd('\\');
+        if (directory.Length <= 2)
+            throw new InvalidDataException("安装目录不能是驱动器根目录。");
+
+        for (var ancestor = new DirectoryInfo(directory); ancestor.Parent != null; ancestor = ancestor.Parent)
+        {
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(ancestor.FullName); }
+            catch (FileNotFoundException) { continue; }
+            catch (DirectoryNotFoundException) { continue; }
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                throw new InvalidDataException("已登记的安装目录必须位于普通文件夹内。\n" + ancestor.FullName);
+        }
+        return Path.Combine(directory, ClientName);
     }
 
     private static bool PathEquals(string first, string second)

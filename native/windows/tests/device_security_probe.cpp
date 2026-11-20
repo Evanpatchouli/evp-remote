@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QHostAddress>
@@ -24,6 +25,8 @@
 #include <QScrollBar>
 #include <QScreen>
 #include <QTabBar>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QVBoxLayout>
@@ -123,7 +126,8 @@ private slots:
     void floatingStopControl();
     void onscreenPopupOpening();
     void selectsVerifiedUpdateAssets();
-    void checksGitHubRelease();
+    void rendersUpdateDialog_data();
+    void rendersUpdateDialog();
 };
 
 void DeviceSecurityProbe::selectsVerifiedUpdateAssets() {
@@ -164,24 +168,69 @@ void DeviceSecurityProbe::selectsVerifiedUpdateAssets() {
     QVERIFY(!evp::trustedUpdateRedirect(QUrl("https://release-assets.githubusercontent.com.example/opaque")));
 }
 
-void DeviceSecurityProbe::checksGitHubRelease() {
-    if (!qEnvironmentVariableIntValue("EVP_PROBE_CHECK_GITHUB"))
-        QSKIP("Set EVP_PROBE_CHECK_GITHUB=1 to check the production release endpoint.");
+void DeviceSecurityProbe::rendersUpdateDialog_data() {
+    QTest::addColumn<bool>("hasUpdate");
+    QTest::newRow("current") << false;
+    QTest::newRow("available") << true;
+}
+
+void DeviceSecurityProbe::rendersUpdateDialog() {
+    QFETCH(bool, hasUpdate);
+    QTcpServer releases;
+    QVERIFY(releases.listen(QHostAddress::LocalHost));
+    const QString tag = "0.2.1";
+    const auto assetName = evp::updateAssetName(false);
+    const QJsonObject asset{{"name", assetName}, {"state", "uploaded"}, {"size", 1024},
+        {"digest", QStringLiteral("sha256:") + QString(64, 'a')},
+        {"browser_download_url", QStringLiteral("https://github.com/Evanpatchouli/evp-remote/releases/download/%1/%2")
+             .arg(tag, assetName)}};
+    const auto body = QJsonDocument(QJsonObject{{"tag_name", tag}, {"draft", false}, {"prerelease", false},
+        {"body", QStringLiteral("## Windows 客户端\n\n- 安装向导支持选择目录。\n- 检查更新界面更紧凑。")},
+        {"assets", QJsonArray{asset}}}).toJson(QJsonDocument::Compact);
+    const auto response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " +
+                          QByteArray::number(body.size()) + "\r\n\r\n" + body;
+    connect(&releases, &QTcpServer::newConnection, &releases, [&] {
+        auto* socket = releases.nextPendingConnection();
+        connect(socket, &QTcpSocket::readyRead, socket, [socket, &response, request = QByteArray{}]() mutable {
+            request.append(socket->readAll());
+            if (request.contains("\r\n\r\n")) {
+                socket->write(response);
+                socket->disconnectFromHost();
+            }
+        });
+    });
+
     const auto previousVersion = QCoreApplication::applicationVersion();
     const auto restore = qScopeGuard([&] { QCoreApplication::setApplicationVersion(previousVersion); });
-    // Exercise the manual result against an existing stable release without offering to install it.
-    QCoreApplication::setApplicationVersion("99.0.0");
+    QCoreApplication::setApplicationVersion(hasUpdate ? QStringLiteral("0.2.0") : tag);
     HomeWindow window;
     window.setAttribute(Qt::WA_DontShowOnScreen);
-    evp::ClientUpdater updater(window);
+    const QUrl endpoint(QStringLiteral("http://127.0.0.1:%1/").arg(releases.serverPort()));
+    evp::ClientUpdater updater(window, endpoint);
+    auto* dialog = window.findChild<QDialog*>("updateDialog");
+    QVERIFY(dialog);
+    dialog->setAttribute(Qt::WA_DontShowOnScreen);
     window.show();
     const device_probe::Ui ui(window);
     ui.button("settingsNavigation")->click();
     ui.button("settingsAboutNavigation")->click();
-    ui.button("checkForUpdates")->click();
+    QTest::mouseClick(ui.button("checkForUpdates"), Qt::LeftButton);
     const auto* status = window.findChild<QLabel*>("updateStatus");
-    QVERIFY(status);
-    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("当前已是最新版本")), 15000);
+    const auto* detail = window.findChild<QLabel*>("updateDetail");
+    QVERIFY(dialog && status && detail);
+    QTRY_COMPARE_WITH_TIMEOUT(status->text(), hasUpdate ? QStringLiteral("发现新版本")
+                                                       : QStringLiteral("已是最新版本"), 15000);
+    QCOMPARE(window.findChild<QWidget*>("updateVersions")->isVisible(), hasUpdate);
+    if (hasUpdate) {
+        QCOMPARE(window.findChild<QLabel*>("updateLatestVersion")->text(), tag);
+        QVERIFY(dialog->height() <= 380);
+    } else {
+        QVERIFY(detail->text().contains(QCoreApplication::applicationVersion()));
+        QVERIFY(dialog->height() <= 170);
+    }
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty())
+        QVERIFY(dialog->grab().save(QDir(preview).filePath(hasUpdate ? "update-available.png" : "update-current.png")));
 }
 
 void DeviceSecurityProbe::bindsProofToPeerAttemptNonceAndPayload() {

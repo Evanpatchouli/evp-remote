@@ -48,12 +48,15 @@ $name = "EVP 远程安装测试 $id"
 $temp = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath([IO.Path]::GetTempPath()))
 $scratch = Join-Path $temp $id
 $programs = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs'
-$install = Join-Path $programs $name
-$backup = Join-Path $programs ".$id-update-backup"
+$defaultInstall = Join-Path $programs $name
+$customRoot = Join-Path $scratch '自定义 安装'
+$install = Join-Path $customRoot 'EVP 远程'
+$backup = Join-Path $customRoot ".$id-update-backup"
 $key = "HKCU:/Software/Microsoft/Windows/CurrentVersion/Uninstall/$id"
 $link = Join-Path ([Environment]::GetFolderPath('Programs')) "$name.lnk"
 $app = Join-Path $install 'EvpRemote.exe'
 $uninstall = Join-Path $install 'Uninstall.exe'
+$alias = Join-Path $scratch 'linked-parent'
 try {
     $payload = Join-Path $scratch 'payload'
     $setup = Join-Path $scratch "$stem-setup.exe"
@@ -66,7 +69,21 @@ try {
     )
     & $makeNsis @arguments
     if ($LASTEXITCODE -ne 0) { throw 'Failed to build the isolated installer.' }
-    if ((Invoke-Silent $setup) -ne 0) { throw 'Silent installation failed.' }
+
+    $outside = [IO.Directory]::CreateDirectory((Join-Path $scratch 'outside')).FullName
+    $sentinel = Join-Path $outside 'sentinel.txt'
+    [IO.File]::WriteAllText($sentinel, 'outside the installation directory')
+    [void](New-Item -ItemType Junction -Path $alias -Target $outside)
+    foreach ($invalid in [IO.Path]::GetPathRoot($install), $outside, (Join-Path $alias 'child')) {
+        if ((Invoke-Silent $setup "/D=$invalid") -eq 0 -or (Test-Path -LiteralPath $key)) {
+            throw "Setup accepted an unsafe destination: $invalid"
+        }
+    }
+    if (![IO.File]::Exists($sentinel) -or [IO.Directory]::Exists((Join-Path $outside 'child'))) {
+        throw 'Setup changed files outside the installation directory.'
+    }
+    [void][IO.Directory]::CreateDirectory($install)
+    if ((Invoke-Silent $setup "/D=$install") -ne 0) { throw 'Silent custom directory installation failed.' }
     $entry = Get-ItemProperty -LiteralPath $key
     if ($entry.DisplayVersion -cne $version -or $entry.InstallLocation -ine $install -or
         $entry.UninstallString -ine "`"$uninstall`"" -or ![IO.File]::Exists($link)) {
@@ -91,12 +108,11 @@ try {
         }
     } finally { $locked.Dispose() }
 
-    $outside = [IO.Directory]::CreateDirectory((Join-Path $scratch 'outside')).FullName
-    $sentinel = Join-Path $outside 'sentinel.txt'
-    [IO.File]::WriteAllText($sentinel, 'outside the installation directory')
     [void](New-Item -ItemType Junction -Path (Join-Path $install 'junction-test') -Target $outside)
-    if ((Invoke-Silent $setup) -ne 0 -or [IO.File]::Exists($marker) -or ![IO.File]::Exists($sentinel)) {
-        throw 'Setup failed to replace the previous installation safely.'
+    $ignored = Join-Path $customRoot 'should-not-be-used'
+    if ((Invoke-Silent $setup "/D=$ignored") -ne 0 -or [IO.File]::Exists($marker) -or
+        [IO.Directory]::Exists($ignored) -or ![IO.File]::Exists($sentinel)) {
+        throw 'Setup failed to replace the registered installation safely.'
     }
 
     $previous = '0.0.0-installer-smoke'
@@ -138,11 +154,23 @@ try {
         [IO.File]::Exists($link) -or (Test-Path -LiteralPath $key)) {
         throw 'Silent uninstall did not remove the installation, shortcut and registration.'
     }
-    Write-Host "Verified EVP Remote $version setup metadata, silent install, locked replacement, update rollback and commit, payload hashes and uninstall."
+    if ((Invoke-Silent $setup) -ne 0 -or
+        (Get-ItemProperty -LiteralPath $key).InstallLocation -ine $defaultInstall) {
+        throw 'Fresh setup did not use the per-user default directory.'
+    }
+    $process = Start-Process -FilePath (Join-Path $defaultInstall 'Uninstall.exe') -ArgumentList '/S' -Wait -PassThru -WindowStyle Hidden
+    if ($process.ExitCode -ne 0 -or [IO.Directory]::Exists($defaultInstall) -or (Test-Path -LiteralPath $key)) {
+        throw 'Default install could not be uninstalled.'
+    }
+    Write-Host "Verified EVP Remote $version default/custom paths, unsafe path rejection, registered upgrades, rollback, commit, payload hashes and uninstall."
 } finally {
     [IO.File]::Delete($link)
     if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key }
-    foreach ($folder in @(@($install, $programs, $name), @($backup, $programs, ".$id-update-backup"), @($scratch, $temp, $id))) {
+    $junction = Get-Item -LiteralPath $alias -Force -ErrorAction SilentlyContinue
+    if ($junction -and ($junction.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        [IO.Directory]::Delete($alias)
+    }
+    foreach ($folder in @(@($defaultInstall, $programs, $name), @($scratch, $temp, $id))) {
         if ([IO.Directory]::Exists($folder[0])) {
             $resolved = (Resolve-Path -LiteralPath $folder[0]).Path
             if ((Split-Path $resolved -Parent) -ine $folder[1] -or (Split-Path $resolved -Leaf) -cne $folder[2]) {

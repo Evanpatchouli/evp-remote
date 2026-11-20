@@ -18,6 +18,9 @@ enum class Symbol {
     Arrow,
     Back,
     ChevronDown,
+    Check,
+    Refresh,
+    Download,
     Clipboard,
     Warning,
     End,
@@ -70,6 +73,19 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
     case Symbol::ChevronDown:
         painter.setPen(QPen(color, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter.drawPolyline(QPolygonF{QPointF(5, 9), QPointF(12, 16), QPointF(19, 9)});
+        break;
+    case Symbol::Check:
+        painter.drawEllipse(QRectF(3.2, 3.2, 17.6, 17.6));
+        painter.drawPolyline(QPolygonF{QPointF(7.6, 12.2), QPointF(10.6, 15.2), QPointF(16.8, 8.8)});
+        break;
+    case Symbol::Refresh:
+        painter.drawArc(QRectF(4, 4, 16, 16), 30 * 16, 300 * 16);
+        painter.drawPolyline(QPolygonF{QPointF(20, 4), QPointF(20, 9), QPointF(15, 9)});
+        break;
+    case Symbol::Download:
+        painter.drawLine(QPointF(12, 3.5), QPointF(12, 14.5));
+        painter.drawPolyline(QPolygonF{QPointF(7.5, 10), QPointF(12, 14.5), QPointF(16.5, 10)});
+        painter.drawPolyline(QPolygonF{QPointF(4.5, 15.5), QPointF(4.5, 19.5), QPointF(19.5, 19.5), QPointF(19.5, 15.5)});
         break;
     case Symbol::Clipboard:
         painter.drawRoundedRect(QRectF(5.8, 5.5, 12.4, 15), 2, 2);

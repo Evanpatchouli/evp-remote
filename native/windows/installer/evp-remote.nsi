@@ -18,16 +18,15 @@ SetCompressor /SOLID lzma
 !define PUBLISHER "Evanpatchouli"
 !define WEBSITE "https://github.com/Evanpatchouli/evp-remote"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${INSTALL_ID}"
-!define INSTALL_PARENT "$LOCALAPPDATA\Programs"
-!define INSTALL_PATH "${INSTALL_PARENT}\${INSTALL_NAME}"
-!define UPDATE_BACKUP "${INSTALL_PARENT}\.${INSTALL_ID}-update-backup"
+!define INSTALL_PATH "$LOCALAPPDATA\Programs\${INSTALL_NAME}"
 !define PENDING_VERSION "PendingVersion"
 !define OWNERSHIP_FILE ".evp-remote-install"
 !define SHORTCUT "$SMPROGRAMS\${INSTALL_NAME}.lnk"
 
 Name "${PRODUCT}"
 OutFile "${OUTPUT_EXE}"
-InstallDir "${INSTALL_PATH}"
+; A trailing separator keeps NSIS Browse from appending the product folder.
+InstallDir "${INSTALL_PATH}\"
 VIProductVersion "${NUMERIC_VERSION}"
 VIFileVersion "${NUMERIC_VERSION}"
 
@@ -38,6 +37,9 @@ VIFileVersion "${NUMERIC_VERSION}"
 !define MUI_FINISHPAGE_RUN_NOTCHECKED
 !define MUI_FINISHPAGE_NOREBOOTSUPPORT
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE ConfirmDestination
+!define MUI_DIRECTORYPAGE_TEXT_TOP "$(ChooseDestination)"
+!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -70,16 +72,25 @@ LangString UninstallFailed ${LANG_ENGLISH} "EVP Remote could not be uninstalled.
 LangString UninstallFailed ${LANG_SIMPCHINESE} "无法卸载 EVP 远程。请关闭正在运行的 EVP 远程窗口后重试。"
 LangString PendingUpdate ${LANG_ENGLISH} "An EVP Remote update is pending. Wait for it to finish. If it was interrupted before startup was confirmed, close EVP Remote and run setup with /S /UPDATEROLLBACK. If startup was confirmed, run setup with /S /UPDATECOMMIT."
 LangString PendingUpdate ${LANG_SIMPCHINESE} "请等待 EVP 远程更新完成。如果更新在确认启动前中断，请关闭 EVP 远程，然后使用 /S /UPDATEROLLBACK 运行安装程序。如果已确认启动，请使用 /S /UPDATECOMMIT 完成更新。"
+LangString ChooseDestination ${LANG_ENGLISH} "Choose where to install EVP Remote. To change locations, select a new or empty folder. The previous folder will be left in place. Manage the active installation through Windows Settings > Apps."
+LangString ChooseDestination ${LANG_SIMPCHINESE} "请选择 EVP 远程的安装目录。更改位置时，请选择新文件夹或空文件夹。旧文件夹会保留，请在 Windows 设置的应用页面管理当前安装。"
+LangString InvalidDestination ${LANG_ENGLISH} "Choose a valid folder on a local drive. The folder must be empty or already registered for EVP Remote. It cannot be inside or contain the previous installation folder."
+LangString InvalidDestination ${LANG_SIMPCHINESE} "请选择本地磁盘上的有效文件夹。文件夹须为空或已登记为 EVP 远程安装目录，且新旧安装目录不能相互包含。"
 
 Var StageDir
 Var BackupDir
 Var HadPrevious
-Var CreatedShortcut
 Var FailureMessage
 Var UpdateMode
 Var PreviousVersion
 Var PendingStarted
 Var DiscardDir
+Var RegisteredDir
+Var InstallParent
+Var UpdateBackup
+Var Relocating
+Var ShortcutStage
+Var RegisteredVersion
 
 !macro Initialize
   ${IfNot} ${RunningX64}
@@ -102,8 +113,24 @@ Var DiscardDir
 
 Function .onInit
   !insertmacro Initialize
-  ; The updater and Windows shortcuts share a stable per-user path.
-  StrCpy $INSTDIR "${INSTALL_PATH}"
+  ReadRegStr $RegisteredDir HKCU "${UNINSTALL_KEY}" "InstallLocation"
+  ${If} $RegisteredDir != ""
+    StrCpy $INSTDIR "$RegisteredDir"
+  ${Else}
+    ; NSIS can discard an invalid /D path before exposing $INSTDIR. Validate
+    ; the explicit path rather than installing to the default as a fallback.
+    System::Call 'kernel32::GetCommandLineW() w .r0'
+    ${GetOptionsS} $0 "/D=" $1
+    ${IfNot} ${Errors}
+      StrCpy $INSTDIR "$1"
+    ${EndIf}
+    StrLen $0 $INSTDIR
+    StrCpy $1 $INSTDIR 1 -1
+    ${If} $0 > 3
+    ${AndIf} $1 == "\"
+      StrCpy $INSTDIR $INSTDIR -1
+    ${EndIf}
+  ${EndIf}
   ${GetParameters} $0
   ${GetOptions} $0 "/UPDATEBACKUP" $1
   ${IfNot} ${Errors}
@@ -126,6 +153,7 @@ FunctionEnd
 
 Function un.onInit
   !insertmacro Initialize
+  ReadRegStr $RegisteredDir HKCU "${UNINSTALL_KEY}" "InstallLocation"
 FunctionEnd
 
 ; Never follow directory links when removing a previous installation.
@@ -163,8 +191,87 @@ Function ${PREFIX}RemoveTree
   Pop $0
 FunctionEnd
 !macroend
-!insertmacro RemoveTree ""
-!insertmacro RemoveTree "un."
+
+; Require a canonical local path and reject links or aliases at every existing
+; ancestor. A missing directory is valid and can be created during setup.
+!macro ValidatePath PREFIX
+Function ${PREFIX}ValidatePath
+  Exch $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  ClearErrors
+  StrCpy $1 $0 2 1
+  StrCmp $1 ":\" 0 invalid
+  StrCpy $1 $0 3
+  StrCmp $1 $0 invalid
+  StrCpy $2 $0 1 -1
+  StrCmp $2 "\" invalid
+  System::Call 'kernel32::GetDriveTypeW(w r1) i .r2'
+  ${If} $2 <> 2
+  ${AndIf} $2 <> 3
+    Goto invalid
+  ${EndIf}
+  StrCpy $2 $0 "" 3
+  StrCpy $3 '/:*?<>|$\"'
+  System::Call 'shlwapi::StrPBrkW(w r2, w r3) p .r4'
+  StrCmp $4 0 0 invalid
+  System::Call 'kernel32::GetFullPathNameW(w r0, i ${NSIS_MAX_STRLEN}, w .r2, p 0) i .r3'
+  ${If} $3 = 0
+  ${OrIf} $3 >= ${NSIS_MAX_STRLEN}
+    Goto invalid
+  ${EndIf}
+  StrCmp $0 $2 0 invalid
+
+ancestor:
+  StrCpy $2 $0 1 -1
+  StrCmp $2 " " invalid
+  StrCmp $2 "." invalid
+  System::Call 'kernel32::GetFileAttributesW(w r0) i .r2 ?e'
+  Pop $3
+  ${If} $2 = -1
+    ${If} $3 <> 2
+    ${AndIf} $3 <> 3
+      Goto invalid
+    ${EndIf}
+  ${Else}
+    IntOp $2 $2 & 0x410
+    StrCmp $2 16 0 invalid
+    System::Call 'kernel32::CreateFileW(w r0, i 0x80, i 7, p 0, i 3, i 0x02200000, p 0) p .r4'
+    StrCmp $4 -1 invalid
+    System::Call 'kernel32::GetFinalPathNameByHandleW(p r4, w .r2, i ${NSIS_MAX_STRLEN}, i 0) i .r3'
+    System::Call 'kernel32::CloseHandle(p r4)'
+    ${If} $3 = 0
+    ${OrIf} $3 >= ${NSIS_MAX_STRLEN}
+      Goto invalid
+    ${EndIf}
+    StrCpy $2 $2 "" 4
+    StrCmp $2 $0 0 invalid
+  ${EndIf}
+  StrCmp $0 $1 valid
+  ${GetParent} $0 $0
+  StrLen $2 $0
+  ${If} $2 = 2
+    StrCpy $0 "$0\"
+  ${EndIf}
+  StrCmp $0 "" invalid ancestor
+
+valid:
+  ClearErrors
+  Goto done
+invalid:
+  SetErrors
+done:
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+!macroend
+!insertmacro ValidatePath ""
+!insertmacro ValidatePath "un."
 
 !macro CheckOwnedFolder PATH FAIL
   System::Call 'kernel32::GetFileAttributesW(w "${PATH}") i .r0'
@@ -183,10 +290,127 @@ FunctionEnd
   ${EndIf}
 !macroend
 
+!macro DestinationParent
+  ${GetParent} $INSTDIR $InstallParent
+  StrCpy $UpdateBackup "$InstallParent\.${INSTALL_ID}-update-backup"
+  StrLen $0 $InstallParent
+  ${If} $0 = 2
+    StrCpy $InstallParent "$InstallParent\"
+  ${ElseIf} $0 = 3
+    StrCpy $UpdateBackup "$InstallParent.${INSTALL_ID}-update-backup"
+  ${EndIf}
+!macroend
+
+Function CheckDestination
+  StrCpy $FailureMessage "$(InvalidDestination)"
+  StrCpy $Relocating 0
+  Push "$INSTDIR"
+  Call ValidatePath
+  IfErrors invalid
+  !insertmacro DestinationParent
+  ${If} $INSTDIR == $UpdateBackup
+    Goto invalid
+  ${EndIf}
+  ${If} $RegisteredDir != ""
+    ReadRegStr $RegisteredVersion HKCU "${UNINSTALL_KEY}" "DisplayVersion"
+    IfErrors invalid
+  ${EndIf}
+  ${If} $RegisteredDir != ""
+  ${AndIf} $RegisteredDir != $INSTDIR
+    Push "$RegisteredDir"
+    Call ValidatePath
+    IfErrors invalid
+    !insertmacro CheckOwnedFolder "$RegisteredDir" invalid
+    StrLen $0 "$RegisteredDir\"
+    StrCpy $1 "$INSTDIR\" $0
+    StrCmp $1 "$RegisteredDir\" invalid
+    StrLen $0 "$INSTDIR\"
+    StrCpy $1 "$RegisteredDir\" $0
+    StrCmp $1 "$INSTDIR\" invalid
+    ${GetParent} $RegisteredDir $0
+    ReadRegStr $1 HKCU "${UNINSTALL_KEY}" "${PENDING_VERSION}"
+    StrCmp $1 "" 0 pending
+    IfFileExists "$0\.${INSTALL_ID}-update-backup" pending
+    ClearErrors
+    ; An open runtime image prevents safe relocation of the active registration.
+    System::Call 'kernel32::CreateFileW(w "$RegisteredDir\EvpRemote.exe", i 0x10000, i 0, p 0, i 3, i 0x00200000, p 0) p .r0'
+    StrCmp $0 -1 busy
+    System::Call 'kernel32::CloseHandle(p r0)'
+    StrCpy $Relocating 1
+  ${EndIf}
+  IfFileExists "$INSTDIR" 0 valid
+  ${If} $INSTDIR == $RegisteredDir
+    !insertmacro CheckOwnedFolder "$INSTDIR" invalid
+    Goto valid
+  ${EndIf}
+  ; The earlier attribute check established that this is a normal directory.
+  FindFirst $0 $1 "$INSTDIR\*"
+  IfErrors invalid
+  ${While} $1 != ""
+    ${If} $1 != "."
+    ${AndIf} $1 != ".."
+      FindClose $0
+      Goto invalid
+    ${EndIf}
+    FindNext $0 $1
+  ${EndWhile}
+  FindClose $0
+valid:
+  ClearErrors
+  Return
+pending:
+  StrCpy $FailureMessage "$(PendingUpdate)"
+  Goto invalid
+busy:
+  StrCpy $FailureMessage "$(InstallFailed)"
+invalid:
+  SetErrors
+FunctionEnd
+
+Function ConfirmDestination
+  Call CheckDestination
+  ${If} ${Errors}
+    MessageBox MB_ICONSTOP "$FailureMessage"
+    Abort
+  ${EndIf}
+FunctionEnd
+!insertmacro RemoveTree ""
+!insertmacro RemoveTree "un."
+
+; The 0.2.0 uninstaller can unregister whatever is installed at the time it
+; runs. Refresh only that generated file before publishing a new location.
+; The refreshed uninstaller still works at the old path if relocation fails.
+Function GuardPreviousUninstaller
+  IfFileExists "$RegisteredDir\Uninstall.exe" 0 done
+  System::Call 'kernel32::GetFileAttributesW(w "$RegisteredDir\Uninstall.exe") i .r0'
+  IntOp $0 $0 & 0x410
+  StrCmp $0 0 0 failed
+  GetTempFileName $1 "$RegisteredDir"
+  IfErrors failed
+  System::Call 'kernel32::CopyFileW(w "$INSTDIR\Uninstall.exe", w r1, i 0) i .r0'
+  StrCmp $0 0 discard
+  System::Call 'kernel32::MoveFileExW(w r1, w "$RegisteredDir\Uninstall.exe", i 9) i .r0'
+  StrCmp $0 0 discard
+done:
+  ClearErrors
+  Return
+discard:
+  Delete "$1"
+failed:
+  SetErrors
+FunctionEnd
+
+!macro RegisterPath PATH
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "${PATH}\EvpRemote.exe,0"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "${PATH}"
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '$\"${PATH}\Uninstall.exe$\"'
+  WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '$\"${PATH}\Uninstall.exe$\" /S'
+!macroend
+
 ; Commit and rollback use the same guarded paths as ordinary setup. The backup
 ; exists until the update helper confirms that the replacement started.
 Function FinishUpdate
-  StrCpy $BackupDir "${UPDATE_BACKUP}"
+  StrCpy $BackupDir "$UpdateBackup"
   ${If} $PreviousVersion == ""
   ${AndIf} $UpdateMode == "rollback"
     Goto failed
@@ -198,7 +422,7 @@ Function FinishUpdate
   IfFileExists "$INSTDIR" 0 no_active
   !insertmacro CheckOwnedFolder "$INSTDIR" failed
 
-  GetTempFileName $DiscardDir "${INSTALL_PARENT}"
+  GetTempFileName $DiscardDir "$InstallParent"
   IfErrors failed
   Delete "$DiscardDir"
   IfErrors failed
@@ -272,9 +496,10 @@ failed:
 FunctionEnd
 
 Section
+  Call CheckDestination
+  IfErrors failed
   StrCpy $FailureMessage "$(InstallFailed)"
-  ClearErrors
-  SetOutPath "${INSTALL_PARENT}"
+  SetOutPath "$InstallParent"
   IfErrors failed
   ReadRegStr $PreviousVersion HKCU "${UNINSTALL_KEY}" "${PENDING_VERSION}"
   ClearErrors
@@ -287,18 +512,14 @@ Section
   ${If} $PreviousVersion != ""
     Goto pending
   ${EndIf}
-  IfFileExists "${UPDATE_BACKUP}" pending
+  IfFileExists "$UpdateBackup" pending
   ${If} $UpdateMode == "backup"
     !insertmacro CheckOwnedFolder "$INSTDIR" unmanaged
     ReadRegStr $PreviousVersion HKCU "${UNINSTALL_KEY}" "DisplayVersion"
     IfErrors failed
     StrCmp $PreviousVersion "" failed
   ${EndIf}
-  IfFileExists "$INSTDIR" 0 staging
-  !insertmacro CheckOwnedFolder "$INSTDIR" unmanaged
-
-staging:
-  GetTempFileName $StageDir "${INSTALL_PARENT}"
+  GetTempFileName $StageDir "$InstallParent"
   IfErrors failed
   Delete "$StageDir"
   SetOutPath "$StageDir"
@@ -313,19 +534,22 @@ staging:
   FileWrite $0 "${INSTALL_ID}$\r$\n"
   FileClose $0
   IfErrors failed
-  SetOutPath "${INSTALL_PARENT}"
+  SetOutPath "$InstallParent"
   IfErrors failed
+  ; Recheck the path immediately before replacing a directory or registering it.
+  Call CheckDestination
+  IfErrors failed
+  StrCpy $FailureMessage "$(InstallFailed)"
 
   ${If} $UpdateMode == "backup"
     !insertmacro CheckOwnedFolder "$INSTDIR" unmanaged
-    StrCpy $BackupDir "${UPDATE_BACKUP}"
+    StrCpy $BackupDir "$UpdateBackup"
     WriteRegStr HKCU "${UNINSTALL_KEY}" "${PENDING_VERSION}" "$PreviousVersion"
     IfErrors failed
     StrCpy $PendingStarted 1
   ${Else}
     IfFileExists "$INSTDIR" 0 install_staged
-    !insertmacro CheckOwnedFolder "$INSTDIR" unmanaged
-    GetTempFileName $BackupDir "${INSTALL_PARENT}"
+    GetTempFileName $BackupDir "$InstallParent"
     IfErrors failed
     Delete "$BackupDir"
   ${EndIf}
@@ -338,25 +562,38 @@ install_staged:
   IfErrors restore
   SetOutPath "$INSTDIR"
   IfErrors rollback
-  IfFileExists "${SHORTCUT}" registered
-  CreateShortCut "${SHORTCUT}" "$INSTDIR\EvpRemote.exe"
-  IfErrors rollback
-  StrCpy $CreatedShortcut 1
+  ${If} $Relocating == 1
+    Call GuardPreviousUninstaller
+    IfErrors rollback
+  ${EndIf}
 
-registered:
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${PRODUCT}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "Publisher" "${PUBLISHER}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "URLInfoAbout" "${WEBSITE}"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayIcon" "$INSTDIR\EvpRemote.exe,0"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
-  WriteRegStr HKCU "${UNINSTALL_KEY}" "QuietUninstallString" '$\"$INSTDIR\Uninstall.exe$\" /S'
+  !insertmacro RegisterPath "$INSTDIR"
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
   IfErrors rollback
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${VERSION}"
   IfErrors rollback
 
+  ${If} $Relocating == 1
+    Goto publish_shortcut
+  ${EndIf}
+  IfFileExists "${SHORTCUT}" installed
+publish_shortcut:
+  GetTempFileName $ShortcutStage "$SMPROGRAMS"
+  IfErrors rollback
+  Delete "$ShortcutStage"
+  IfErrors rollback
+  StrCpy $ShortcutStage "$ShortcutStage.lnk"
+  CreateShortCut "$ShortcutStage" "$INSTDIR\EvpRemote.exe"
+  IfErrors rollback
+  System::Call 'kernel32::MoveFileExW(w "$ShortcutStage", w "${SHORTCUT}", i 9) i .r0'
+  StrCmp $0 0 rollback
+  StrCpy $ShortcutStage ""
+
+installed:
   ${If} $HadPrevious == 1
   ${AndIf} $UpdateMode != "backup"
     Push $BackupDir
@@ -374,12 +611,15 @@ pending:
   Goto failed
 
 rollback:
-  SetOutPath "${INSTALL_PARENT}"
-  ${If} $CreatedShortcut == 1
-    Delete "${SHORTCUT}"
+  SetOutPath "$InstallParent"
+  ${If} $ShortcutStage != ""
+    Delete "$ShortcutStage"
   ${EndIf}
-  ${If} $HadPrevious != 1
+  ${If} $RegisteredDir == ""
     DeleteRegKey HKCU "${UNINSTALL_KEY}"
+  ${Else}
+    !insertmacro RegisterPath "$RegisteredDir"
+    WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "$RegisteredVersion"
   ${EndIf}
   Push $INSTDIR
   Call RemoveTree
@@ -396,7 +636,9 @@ restore:
   ${EndIf}
 
 failed:
-  SetOutPath "${INSTALL_PARENT}"
+  ${If} $StageDir != ""
+    SetOutPath "$InstallParent"
+  ${EndIf}
   ${If} $PendingStarted == 1
   ${AndIf} $HadPrevious != 1
     DeleteRegValue HKCU "${UNINSTALL_KEY}" "${PENDING_VERSION}"
@@ -413,14 +655,18 @@ done:
 SectionEnd
 
 Section "Uninstall"
-  StrCmp $INSTDIR "${INSTALL_PATH}" 0 failed
+  StrCmp $INSTDIR $RegisteredDir 0 failed
+  Push "$INSTDIR"
+  Call un.ValidatePath
+  IfErrors failed
+  !insertmacro DestinationParent
   ReadRegStr $PreviousVersion HKCU "${UNINSTALL_KEY}" "${PENDING_VERSION}"
   StrCmp $PreviousVersion "" 0 pending
-  IfFileExists "${UPDATE_BACKUP}" pending
+  IfFileExists "$UpdateBackup" pending
   !insertmacro CheckOwnedFolder "$INSTDIR" failed
   ClearErrors
-  SetOutPath "${INSTALL_PARENT}"
-  GetTempFileName $BackupDir "${INSTALL_PARENT}"
+  SetOutPath "$InstallParent"
+  GetTempFileName $BackupDir "$InstallParent"
   IfErrors failed
   Delete "$BackupDir"
   Rename "$INSTDIR" "$BackupDir"
