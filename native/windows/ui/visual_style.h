@@ -16,9 +16,12 @@ enum class Symbol {
     Connect,
     Display,
     Arrow,
+    Back,
+    ChevronDown,
     Clipboard,
     Warning,
     End,
+    Power,
     Settings,
 };
 
@@ -55,10 +58,18 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
         painter.drawLine(QPointF(12, 16.8), QPointF(12, 20.1));
         painter.drawLine(QPointF(8.5, 20.1), QPointF(15.5, 20.1));
         break;
+    case Symbol::Back:
+        painter.translate(24, 0);
+        painter.scale(-1, 1);
+        [[fallthrough]];
     case Symbol::Arrow:
         painter.drawLine(QPointF(4.5, 12), QPointF(19, 12));
         painter.drawLine(QPointF(13.7, 6.7), QPointF(19, 12));
         painter.drawLine(QPointF(13.7, 17.3), QPointF(19, 12));
+        break;
+    case Symbol::ChevronDown:
+        painter.setPen(QPen(color, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawPolyline(QPolygonF{QPointF(5, 9), QPointF(12, 16), QPointF(19, 9)});
         break;
     case Symbol::Clipboard:
         painter.drawRoundedRect(QRectF(5.8, 5.5, 12.4, 15), 2, 2);
@@ -74,6 +85,10 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
         break;
     case Symbol::End:
         painter.drawRoundedRect(QRectF(5.5, 5.5, 13, 13), 2.4, 2.4);
+        break;
+    case Symbol::Power:
+        painter.drawArc(QRectF(4, 4.5, 16, 16), 120 * 16, 300 * 16);
+        painter.drawLine(QPointF(12, 2.5), QPointF(12, 11.5));
         break;
     case Symbol::Settings: {
         QPolygonF outline;

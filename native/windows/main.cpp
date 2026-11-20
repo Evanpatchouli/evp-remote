@@ -1,3 +1,4 @@
+#include "client_updater.h"
 #include "controller.h"
 #include "ui/focus_style.h"
 #include "ui/home_window.h"
@@ -29,6 +30,7 @@ int main(int argc, char** argv) {
                              QSettings::IniFormat);
     const auto address = qEnvironmentVariable("EVP_SIGNAL_URL", defaults.value("signalingUrl").toString());
     evp::DesktopController controller(home, {}, {}, QUrl(address, QUrl::StrictMode));
+    evp::ClientUpdater updater(home);
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &controller, &evp::DesktopController::endSession);
     home.show();
     return app.exec();

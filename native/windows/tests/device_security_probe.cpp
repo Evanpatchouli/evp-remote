@@ -1,8 +1,10 @@
+#include "client_updater.h"
 #include "controller.h"
 #include "device_probe.h"
 #include "devices/device_identity.h"
 #include "ui/focus_style.h"
 #include "ui/select_field.h"
+#include "update_release.h"
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
@@ -120,7 +122,67 @@ private slots:
     void themedLifetimeSelectors();
     void floatingStopControl();
     void onscreenPopupOpening();
+    void selectsVerifiedUpdateAssets();
+    void checksGitHubRelease();
 };
+
+void DeviceSecurityProbe::selectsVerifiedUpdateAssets() {
+    const QString tag = "v0.10.0";
+    const auto makeAsset = [&tag](bool portable, const QString& host = "github.com") {
+        const auto name = evp::updateAssetName(portable);
+        return QJsonObject{{"name", name}, {"state", "uploaded"}, {"size", 1024},
+                           {"digest", QStringLiteral("sha256:") + QString(64, 'a')},
+                           {"browser_download_url", QStringLiteral("https://%1/Evanpatchouli/evp-remote/releases/download/%2/%3")
+                               .arg(host, tag, name)}};
+    };
+    QJsonObject release{{"tag_name", tag}, {"body", "Update notes"}, {"draft", false}, {"prerelease", false}};
+    const auto read = [&](bool portable, const QString& current = "0.2.0") {
+        return evp::readUpdateRelease(QJsonDocument(release).toJson(QJsonDocument::Compact), current, portable);
+    };
+    release.insert("assets", QJsonArray{makeAsset(false), makeAsset(true)});
+    for (const bool portable : {false, true}) {
+        const auto result = read(portable);
+        QVERIFY(result && result->newer && result->assetUrl.path().endsWith(evp::updateAssetName(portable)));
+        QCOMPARE(result->version, QString("0.10.0"));
+        QCOMPARE(result->size, 1024);
+        QCOMPARE(result->sha256, QByteArray(32, '\xaa'));
+    }
+    const auto alreadyCurrent = read(false, "0.10.0");
+    QVERIFY(alreadyCurrent && !alreadyCurrent->newer);
+    const auto fromPreview = read(false, "0.10.0-beta.1");
+    QVERIFY(fromPreview && fromPreview->newer);
+
+    auto missingDigest = makeAsset(true);
+    missingDigest.remove("digest");
+    release.insert("assets", QJsonArray{makeAsset(false, "github.com.example.org"), missingDigest});
+    QVERIFY(read(false) && read(false)->assetUrl.isEmpty());
+    QVERIFY(read(true) && read(true)->assetUrl.isEmpty());
+    release.insert("prerelease", true);
+    QVERIFY(!read(false));
+    QVERIFY(evp::trustedUpdateRedirect(QUrl("https://release-assets.githubusercontent.com/opaque?token=test")));
+    QVERIFY(!evp::trustedUpdateRedirect(QUrl("http://release-assets.githubusercontent.com/opaque")));
+    QVERIFY(!evp::trustedUpdateRedirect(QUrl("https://release-assets.githubusercontent.com.example/opaque")));
+}
+
+void DeviceSecurityProbe::checksGitHubRelease() {
+    if (!qEnvironmentVariableIntValue("EVP_PROBE_CHECK_GITHUB"))
+        QSKIP("Set EVP_PROBE_CHECK_GITHUB=1 to check the production release endpoint.");
+    const auto previousVersion = QCoreApplication::applicationVersion();
+    const auto restore = qScopeGuard([&] { QCoreApplication::setApplicationVersion(previousVersion); });
+    // Exercise the manual result against an existing stable release without offering to install it.
+    QCoreApplication::setApplicationVersion("99.0.0");
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    evp::ClientUpdater updater(window);
+    window.show();
+    const device_probe::Ui ui(window);
+    ui.button("settingsNavigation")->click();
+    ui.button("settingsAboutNavigation")->click();
+    ui.button("checkForUpdates")->click();
+    const auto* status = window.findChild<QLabel*>("updateStatus");
+    QVERIFY(status);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("当前已是最新版本")), 15000);
+}
 
 void DeviceSecurityProbe::bindsProofToPeerAttemptNonceAndPayload() {
     evp::DeviceIdentity host, viewer;
@@ -349,7 +411,7 @@ void DeviceSecurityProbe::settingsEditorDiscardsDrafts() {
     window.setAttribute(Qt::WA_DontShowOnScreen);
     window.show();
     const device_probe::Ui ui(window);
-    for (const auto* name : {"settingsNavigation", "settingsServerUrl", "settingsDeploymentKey",
+    for (const auto* name : {"settingsNavigation", "settingsBack", "settingsServerUrl", "settingsDeploymentKey",
                              "saveSettings", "settingsMessage", "forgetDeploymentKey"})
         QCOMPARE(window.findChildren<QWidget*>(name).size(), 1);
     for (const auto* name : {"hostKey", "hostSignalingUrl", "signalingUrl", "deviceDeploymentKey",
@@ -363,9 +425,17 @@ void DeviceSecurityProbe::settingsEditorDiscardsDrafts() {
     auto* forget = window.findChild<QCheckBox*>("forgetDeploymentKey");
     QVERIFY(address && key && forget);
     QSignalSpy saves(&window, &HomeWindow::settingsRequested);
+    auto* back = ui.button("settingsBack");
+    auto* tabs = window.findChild<QTabBar*>("assistanceTabs");
+    QVERIFY(back && !back->icon().isNull() && tabs);
     for (const auto* destination : {"navigation", "deviceNavigation"}) {
+        ui.button(destination)->click();
+        if (tabs->isVisible())
+            tabs->setCurrentIndex(1);
         ui.button("settingsNavigation")->click();
         QVERIFY(address->isVisible() && key->isVisible());
+        QVERIFY(back->isVisible() && !ui.button("navigation")->isVisible() &&
+                !ui.button("deviceNavigation")->isVisible());
         QCOMPARE(QUrl(address->text()), committed);
         QCOMPARE(key->echoMode(), QLineEdit::Password);
         QVERIFY(key->text().isEmpty() && !forget->isChecked());
@@ -373,13 +443,28 @@ void DeviceSecurityProbe::settingsEditorDiscardsDrafts() {
         address->setText("ws://127.0.0.1:8882/");
         QVERIFY(key->text().isEmpty());
         key->setText("draft-only");
-        ui.button(destination)->click();
+        back->click();
         QVERIFY(!key->isVisible() && key->text().isEmpty());
+        QVERIFY(!back->isVisible() && ui.button(destination)->isVisible());
+        QCOMPARE(tabs->isVisible(), qstrcmp(destination, "navigation") == 0);
+        if (tabs->isVisible())
+            QCOMPARE(tabs->currentIndex(), 1);
     }
     QCOMPARE(saves.count(), 0);
     ui.button("settingsNavigation")->click();
     QCOMPARE(QUrl(address->text()), committed);
     QVERIFY(key->text().isEmpty());
+    auto* about = ui.button("settingsAboutNavigation");
+    auto* connection = ui.button("settingsConnectionNavigation");
+    auto* checkForUpdates = ui.button("checkForUpdates");
+    QVERIFY(about && connection && checkForUpdates && !checkForUpdates->isVisible());
+    about->click();
+    QVERIFY(checkForUpdates->isVisible() && !address->isVisible());
+    QSignalSpy checks(&window, &HomeWindow::checkForUpdatesRequested);
+    checkForUpdates->click();
+    QCOMPARE(checks.count(), 1);
+    connection->click();
+    QVERIFY(address->isVisible() && !checkForUpdates->isVisible());
     const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
     if (!preview.isEmpty()) {
         QCoreApplication::processEvents();

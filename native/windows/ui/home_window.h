@@ -14,6 +14,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QScrollArea;
+class QStackedWidget;
 class QTabBar;
 
 class HomeWindow final : public QMainWindow {
@@ -41,6 +42,7 @@ public slots:
 
 signals:
     void settingsRequested(const QUrl& url, const QString& key, bool forgetKey);
+    void checkForUpdatesRequested();
     void joinRequested(const QString& invite);
     void cancelRequested();
     void sessionActivationRequested();
@@ -58,6 +60,7 @@ private:
     QWidget* createHostPage();
     QWidget* createSettingsPage();
     void selectPage(Page page);
+    void selectSettingsView(bool about);
     void resetSettingsDraft();
     void updateKeyPlaceholder();
     void updateSettingsAvailability();
@@ -86,7 +89,12 @@ private:
     QWidget* deviceSummary_;
     QPushButton* deviceNavigation_;
     QPushButton* settingsNavigation_;
+    QStackedWidget* rails_;
+    QPushButton* settingsBack_;
+    QPushButton* settingsConnectionNavigation_;
+    QPushButton* settingsAboutNavigation_;
     QWidget* settingsPage_;
+    QStackedWidget* settingsViews_;
     QWidget* settingsForm_;
     QLineEdit* settingsServerUrl_;
     QLineEdit* settingsDeploymentKey_;
@@ -121,6 +129,7 @@ private:
     bool sessionActive_ = false;
     bool hostPage_ = false;
     Page page_ = Page::Assistance;
+    Page pageBeforeSettings_ = Page::Assistance;
     QUrl savedServerUrl_;
     bool hasSavedKey_ = false;
     bool settingsEditable_ = true;

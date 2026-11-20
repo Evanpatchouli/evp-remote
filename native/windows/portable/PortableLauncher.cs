@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
@@ -33,6 +34,11 @@ internal static class PortableLauncher
                 start.UseShellExecute = false;
                 start.WorkingDirectory = runtime;
                 start.RedirectStandardOutput = versionRequest;
+                using (var launcher = Process.GetCurrentProcess())
+                {
+                    start.EnvironmentVariables["EVP_PORTABLE_LAUNCHER_PATH"] = launcher.MainModule.FileName;
+                    start.EnvironmentVariables["EVP_PORTABLE_LAUNCHER_PID"] = launcher.Id.ToString(CultureInfo.InvariantCulture);
+                }
                 using (var client = Process.Start(start))
                 {
                     if (client == null)

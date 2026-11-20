@@ -1,5 +1,6 @@
 #include "home_window.h"
 
+#include "action_button.h"
 #include "device_page.h"
 #include "devices/device_identity.h"
 #include "floating_surface.h"
@@ -9,6 +10,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QCoreApplication>
 #include <QFormLayout>
 #include <QFocusEvent>
 #include <QFrame>
@@ -16,10 +18,10 @@
 #include <QLineEdit>
 #include <QKeyEvent>
 #include <QMouseEvent>
-#include <QPushButton>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QStackedWidget>
 #include <QStyleOptionTab>
 #include <QSysInfo>
 #include <QTabBar>
@@ -32,6 +34,7 @@
 
 namespace {
 
+using native_ui::ActionButton;
 using native_ui::label;
 using native_ui::Symbol;
 using native_ui::symbolIcon;
@@ -44,7 +47,7 @@ const auto hostIdleMessage = QStringLiteral("设置有效期和确认方式，�
 
 constexpr auto homeStyle = R"(
     QWidget#home, QWidget#homeBody, QScrollArea#homeScroll { background: #f7f9fd; }
-    QWidget#rail { background: #eaf1fc; border-right: 1px solid #e1eafa; }
+    QWidget#rail, QWidget#settingsRail { background: #eaf1fc; border-right: 1px solid #e1eafa; }
     QLabel { color: #182844; background: transparent; }
     QLabel#subtle, QLabel#machinePlatform { color: #566986; }
     QLabel#brandMark { background: #2865d5; border-radius: 10px; }
@@ -59,7 +62,7 @@ constexpr auto homeStyle = R"(
     QLineEdit:disabled { background: #f4f7fc; color: #566986; }
     QPushButton[roleNavigation="true"] {
         background: transparent; color: #214c98; border: 1px solid transparent;
-        border-radius: 9px; padding: 0 12px; text-align: left;
+        padding: 0 12px; text-align: left;
     }
     QPushButton[roleNavigation="true"]:checked { background: #dbe8ff; }
     QPushButton[roleNavigation="true"]:hover { background: #cddfff; }
@@ -76,17 +79,25 @@ constexpr auto homeStyle = R"(
         background: #e4eeff; color: #174ca8; border-bottom-color: #2865d5;
     }
     QTabBar#assistanceTabs::tab:disabled { background: transparent; color: #78869c; }
-    QPushButton#paste, QPushButton#cancel, QPushButton#copyHostInvitation, QPushButton#hostDeny {
+    QPushButton#paste, QPushButton#cancel, QPushButton#copyHostInvitation, QPushButton#hostDeny,
+    QPushButton#checkForUpdates, QPushButton#settingsBack {
         background: #f8faff; color: #284675; border: 1px solid #ccd9ec;
-        border-radius: 8px; padding: 0 12px;
+        padding: 0 12px;
     }
-    QPushButton#paste:hover, QPushButton#cancel:hover, QPushButton#copyHostInvitation:hover, QPushButton#hostDeny:hover { background: #edf4ff; border-color: #a4bce4; }
-    QPushButton#paste:pressed, QPushButton#cancel:pressed, QPushButton#copyHostInvitation:pressed, QPushButton#hostDeny:pressed { background: #e0ecff; }
-    QPushButton#paste:focus, QPushButton#cancel:focus, QPushButton#copyHostInvitation:focus, QPushButton#hostDeny:focus { border-color: #3475e4; }
+    QPushButton#paste:hover, QPushButton#cancel:hover, QPushButton#copyHostInvitation:hover,
+    QPushButton#hostDeny:hover, QPushButton#checkForUpdates:hover,
+    QPushButton#settingsBack:hover { background: #edf4ff; border-color: #a4bce4; }
+    QPushButton#paste:pressed, QPushButton#cancel:pressed, QPushButton#copyHostInvitation:pressed,
+    QPushButton#hostDeny:pressed, QPushButton#checkForUpdates:pressed,
+    QPushButton#settingsBack:pressed { background: #e0ecff; }
+    QPushButton#paste:focus, QPushButton#cancel:focus, QPushButton#copyHostInvitation:focus,
+    QPushButton#hostDeny:focus, QPushButton#checkForUpdates:focus,
+    QPushButton#settingsBack:focus { border-color: #3475e4; }
+    QPushButton#settingsBack { padding: 0; }
     QPushButton#paste:disabled { color: #667899; border-color: #dfe6f1; background: #f4f7fc; }
     QPushButton#join, QPushButton#hostCreate, QPushButton#hostApprove, QPushButton#saveSettings {
         background: #2463da; color: #ffffff; border: 2px solid transparent;
-        border-radius: 8px; padding: 0 17px;
+        padding: 0 17px;
     }
     QPushButton#join:hover, QPushButton#hostCreate:hover, QPushButton#hostApprove:hover, QPushButton#saveSettings:hover { background: #1956c5; }
     QPushButton#join:pressed, QPushButton#hostCreate:pressed, QPushButton#hostApprove:pressed, QPushButton#saveSettings:pressed { background: #1348ac; }
@@ -94,7 +105,7 @@ constexpr auto homeStyle = R"(
     QPushButton#join:disabled, QPushButton#saveSettings:disabled { color: #43608f; background: #e2eafb; }
     QPushButton#hostEnd {
         background: #922f31; color: white; border: 2px solid transparent;
-        border-radius: 8px; padding: 0 11px;
+        padding: 0 11px;
     }
     QPushButton#hostEnd:hover { background: #7c2225; }
     QPushButton#hostEnd:pressed { background: #61191d; }
@@ -141,25 +152,22 @@ private:
     bool keyboardFocus_ = false;
 };
 
-QPushButton* roleButton(const QString& text, const char* name, Symbol symbol) {
-    auto* button = new QPushButton(text);
+ActionButton* roleButton(const QString& text, const char* name, const QIcon& icon = {}) {
+    auto* button = new ActionButton(icon, text);
     button->setObjectName(QString::fromLatin1(name));
     button->setProperty("roleNavigation", true);
     button->setFont(uiFont(14, QFont::DemiBold));
-    button->setIcon(symbolIcon(symbol, QColor("#275cae"), 19));
     button->setIconSize(QSize(19, 19));
     button->setMinimumHeight(44);
-    button->setCursor(Qt::PointingHandCursor);
     button->setCheckable(true);
     return button;
 }
 
-QPushButton* hostButton(const QString& text, const char* name) {
-    auto* button = new QPushButton(text);
+ActionButton* hostButton(const QString& text, const char* name) {
+    auto* button = new ActionButton(text);
     button->setObjectName(QString::fromLatin1(name));
     button->setFont(uiFont(14, QFont::DemiBold));
     button->setMinimumHeight(41);
-    button->setCursor(Qt::PointingHandCursor);
     return button;
 }
 
@@ -191,13 +199,16 @@ HomeWindow::HomeWindow(QWidget* parent)
     shell->setContentsMargins(0, 0, 0, 0);
     shell->setSpacing(0);
 
+    rails_ = new QStackedWidget;
+    rails_->setFixedWidth(184);
+    shell->addWidget(rails_);
+
     auto* rail = new QWidget;
     rail->setObjectName(QStringLiteral("rail"));
-    rail->setFixedWidth(184);
     auto* railLayout = new QVBoxLayout(rail);
     railLayout->setContentsMargins(16, 25, 16, 24);
     railLayout->setSpacing(0);
-    shell->addWidget(rail);
+    rails_->addWidget(rail);
 
     auto* brand = new QHBoxLayout;
     brand->setContentsMargins(4, 0, 0, 0);
@@ -210,8 +221,11 @@ HomeWindow::HomeWindow(QWidget* parent)
     brand->addWidget(label(QStringLiteral("EVP 远程"), "brandName", 17, QFont::DemiBold), 1);
     railLayout->addLayout(brand);
     railLayout->addSpacing(34);
-    deviceNavigation_ = roleButton(QStringLiteral("我的设备"), "deviceNavigation", Symbol::Display);
-    assistanceNavigation_ = roleButton(QStringLiteral("远程协助"), "navigation", Symbol::Connect);
+    const QColor navigationIconColor("#275cae");
+    deviceNavigation_ = roleButton(QStringLiteral("我的设备"), "deviceNavigation",
+                                   symbolIcon(Symbol::Display, navigationIconColor, 19));
+    assistanceNavigation_ = roleButton(QStringLiteral("远程协助"), "navigation",
+                                       symbolIcon(Symbol::Connect, navigationIconColor, 19));
     railLayout->addWidget(deviceNavigation_);
     railLayout->addSpacing(6);
     railLayout->addWidget(assistanceNavigation_);
@@ -227,8 +241,8 @@ HomeWindow::HomeWindow(QWidget* parent)
     indicatorLayout->setContentsMargins(0, 0, 0, 0);
     auto* stop = hostButton(QStringLiteral("正在共享本机 · 停止共享"), "trustedShareStop");
     indicatorLayout->addWidget(stop);
-    stop->setStyleSheet(QStringLiteral(
-        "QPushButton { color: white; background: #922f31; border: 0; border-radius: 8px; padding: 0 14px; }"
+    shareIndicator_->setStyleSheet(QStringLiteral(
+        "QPushButton { color: white; background: #922f31; border: 0; padding: 0 14px; }"
         "QPushButton:hover { background: #7c2225; } QPushButton:pressed { background: #61191d; }"));
     stop->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
     native_ui::styleFloatingSurface(*shareIndicator_, *stop);
@@ -238,8 +252,34 @@ HomeWindow::HomeWindow(QWidget* parent)
     role->setContentsMargins(8, 0, 0, 0);
     railLayout->addWidget(role);
     railLayout->addSpacing(6);
-    settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation", Symbol::Settings);
+    settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation",
+                                     symbolIcon(Symbol::Settings, navigationIconColor, 19));
     railLayout->addWidget(settingsNavigation_);
+
+    auto* settingsRail = new QWidget;
+    settingsRail->setObjectName(QStringLiteral("settingsRail"));
+    auto* settingsRailLayout = new QVBoxLayout(settingsRail);
+    settingsRailLayout->setContentsMargins(16, 25, 16, 24);
+    settingsRailLayout->setSpacing(0);
+    auto* settingsHeader = new QHBoxLayout;
+    settingsHeader->setSpacing(10);
+    settingsBack_ = new ActionButton(symbolIcon(Symbol::Back, QColor("#456594"), 18), {});
+    settingsBack_->setObjectName(QStringLiteral("settingsBack"));
+    settingsBack_->setAccessibleName(QStringLiteral("返回"));
+    settingsBack_->setToolTip(settingsBack_->accessibleName());
+    settingsBack_->setIconSize(QSize(18, 18));
+    settingsBack_->setFixedWidth(36);
+    settingsHeader->addWidget(settingsBack_);
+    settingsHeader->addWidget(label(QStringLiteral("设置中心"), "settingsCenterTitle", 17, QFont::DemiBold), 1);
+    settingsRailLayout->addLayout(settingsHeader);
+    settingsRailLayout->addSpacing(34);
+    settingsConnectionNavigation_ = roleButton(QStringLiteral("连接设置"), "settingsConnectionNavigation");
+    settingsAboutNavigation_ = roleButton(QStringLiteral("关于"), "settingsAboutNavigation");
+    settingsRailLayout->addWidget(settingsConnectionNavigation_);
+    settingsRailLayout->addSpacing(6);
+    settingsRailLayout->addWidget(settingsAboutNavigation_);
+    settingsRailLayout->addStretch();
+    rails_->addWidget(settingsRail);
 
     auto* mainLayout = new QVBoxLayout;
     mainLayout->setSpacing(0);
@@ -356,34 +396,31 @@ HomeWindow::HomeWindow(QWidget* parent)
     auto* invitationRow = new QHBoxLayout;
     invitationRow->setSpacing(8);
     invitationRow->addWidget(invitation_, 1);
-    pasteButton_ = new QPushButton(QStringLiteral("粘贴"));
+    pasteButton_ = new ActionButton(QStringLiteral("粘贴"));
     pasteButton_->setObjectName(QStringLiteral("paste"));
     pasteButton_->setAccessibleName(QStringLiteral("粘贴邀请码"));
     pasteButton_->setFont(uiFont(13, QFont::DemiBold));
     pasteButton_->setMinimumHeight(41);
     pasteButton_->setIcon(symbolIcon(Symbol::Clipboard, QColor("#456594"), 17));
     pasteButton_->setIconSize(QSize(17, 17));
-    pasteButton_->setCursor(Qt::PointingHandCursor);
     invitationRow->addWidget(pasteButton_);
     formLayout->addLayout(invitationRow);
     formLayout->addSpacing(13);
 
-    joinButton_ = new QPushButton(QStringLiteral("请求连接"));
+    joinButton_ = new ActionButton(QStringLiteral("请求连接"));
     joinButton_->setObjectName(QStringLiteral("join"));
     joinButton_->setFont(uiFont(14, QFont::DemiBold));
     joinButton_->setMinimumSize(119, 41);
     joinButton_->setIcon(symbolIcon(Symbol::Arrow, Qt::white, 18));
     joinButton_->setIconSize(QSize(18, 18));
     joinButton_->setLayoutDirection(Qt::RightToLeft);
-    joinButton_->setCursor(Qt::PointingHandCursor);
     auto* actions = new QHBoxLayout;
     actions->setSpacing(8);
     actions->addWidget(joinButton_);
-    cancelButton_ = new QPushButton(QStringLiteral("取消连接"));
+    cancelButton_ = new ActionButton(QStringLiteral("取消连接"));
     cancelButton_->setObjectName(QStringLiteral("cancel"));
     cancelButton_->setFont(uiFont(13, QFont::DemiBold));
     cancelButton_->setMinimumHeight(41);
-    cancelButton_->setCursor(Qt::PointingHandCursor);
     actions->addWidget(cancelButton_);
     actions->addStretch();
     formLayout->addLayout(actions);
@@ -397,6 +434,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     settingsPage_ = createSettingsPage();
     contentLayout->addWidget(settingsPage_);
 
+    setTabOrder(settingsBack_, settingsConnectionNavigation_);
+    setTabOrder(settingsConnectionNavigation_, settingsAboutNavigation_);
+    setTabOrder(settingsAboutNavigation_, settingsServerUrl_);
     setTabOrder(hostEndButton_, settingsNavigation_);
     setTabOrder(settingsNavigation_, deviceNavigation_);
     setTabOrder(deviceNavigation_, assistanceNavigation_);
@@ -410,6 +450,16 @@ HomeWindow::HomeWindow(QWidget* parent)
     connect(assistanceTabs_, &QTabBar::currentChanged, this, [this](int index) { switchRole(index == 1, true); });
     connect(deviceNavigation_, &QPushButton::clicked, this, &HomeWindow::showDevicePage);
     connect(settingsNavigation_, &QPushButton::clicked, this, &HomeWindow::showSettingsPage);
+    connect(settingsConnectionNavigation_, &QPushButton::clicked, this, [this] { selectSettingsView(false); });
+    connect(settingsAboutNavigation_, &QPushButton::clicked, this, [this] { selectSettingsView(true); });
+    connect(settingsBack_, &QPushButton::clicked, this, [this] {
+        if (pageBeforeSettings_ == Page::Devices) {
+            showDevicePage();
+            deviceNavigation_->setFocus(Qt::ShortcutFocusReason);
+        } else {
+            switchRole(hostPage_);
+        }
+    });
     connect(devicePage_, &DevicePage::returnRequested, this, &HomeWindow::sessionActivationRequested);
     connect(hostEndButton_, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
     connect(pasteButton_, &QPushButton::clicked, this, &HomeWindow::pasteInvitation);
@@ -569,12 +619,17 @@ QWidget* HomeWindow::createSettingsPage()
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 8, 0, 0);
-    layout->setSpacing(13);
-    layout->addWidget(label(QStringLiteral("设置"), "title", 29, QFont::DemiBold));
+    settingsViews_ = new QStackedWidget;
+    layout->addWidget(settingsViews_);
+
+    auto* connectionPage = new QWidget;
+    auto* connection = new QVBoxLayout(connectionPage);
+    connection->setContentsMargins(0, 0, 0, 0);
+    connection->setSpacing(13);
     auto* card = new QFrame;
     auto* form = hostCard(card);
     settingsForm_ = card;
-    layout->addWidget(card);
+    connection->addWidget(card);
     form->addWidget(label(QStringLiteral("连接设置"), "sectionTitle", 17, QFont::DemiBold));
     auto* serverLabel = label(QStringLiteral("信令服务器"), "fieldLabel", 13, QFont::DemiBold);
     settingsServerUrl_ = new QLineEdit;
@@ -605,11 +660,33 @@ QWidget* HomeWindow::createSettingsPage()
     form->addWidget(save, 0, Qt::AlignLeft);
     settingsBusyMessage_ = label(QStringLiteral("当前连接设置只读。"), "subtle", 13);
     settingsBusyMessage_->setWordWrap(true);
-    layout->addWidget(settingsBusyMessage_);
+    connection->addWidget(settingsBusyMessage_);
     settingsMessage_ = label({}, "settingsMessage", 13);
     settingsMessage_->setWordWrap(true);
-    layout->addWidget(settingsMessage_);
+    connection->addWidget(settingsMessage_);
     settingsMessage_->hide();
+    connection->addStretch();
+    settingsViews_->addWidget(connectionPage);
+
+    auto* aboutPage = new QWidget;
+    auto* about = new QVBoxLayout(aboutPage);
+    about->setContentsMargins(0, 0, 0, 0);
+    auto* applicationCard = new QFrame;
+    auto* application = hostCard(applicationCard);
+    application->addWidget(label(QStringLiteral("EVP 远程"), "applicationName", 17, QFont::DemiBold));
+    auto* updateRow = new QHBoxLayout;
+    const auto version = QCoreApplication::applicationVersion();
+    if (!version.isEmpty())
+        updateRow->addWidget(label(QStringLiteral("当前版本 %1").arg(version), "applicationVersion", 13));
+    auto* checkForUpdates = new ActionButton(QStringLiteral("检查更新"));
+    checkForUpdates->setObjectName(QStringLiteral("checkForUpdates"));
+    checkForUpdates->setFont(uiFont(14, QFont::DemiBold));
+    updateRow->addWidget(checkForUpdates);
+    updateRow->addStretch();
+    application->addLayout(updateRow);
+    about->addWidget(applicationCard);
+    about->addStretch();
+    settingsViews_->addWidget(aboutPage);
 
     connect(settingsServerUrl_, &QLineEdit::textChanged, this, [this] {
         settingsDeploymentKey_->setText({});
@@ -628,9 +705,11 @@ QWidget* HomeWindow::createSettingsPage()
             settingsDeploymentKey_->setFocus();
     });
     connect(save, &QPushButton::clicked, this, &HomeWindow::saveSettings);
+    connect(checkForUpdates, &QPushButton::clicked, this, &HomeWindow::checkForUpdatesRequested);
     setTabOrder(settingsServerUrl_, settingsDeploymentKey_);
     setTabOrder(settingsDeploymentKey_, forgetDeploymentKey_);
     setTabOrder(forgetDeploymentKey_, save);
+    setTabOrder(save, checkForUpdates);
     updateKeyPlaceholder();
     return page;
 }
@@ -675,7 +754,7 @@ void HomeWindow::updateSettingsAvailability()
     settingsForm_->setEnabled(enabled);
     settingsBusyMessage_->setVisible(!enabled);
     if (moveFocus)
-        settingsNavigation_->setFocus(Qt::OtherFocusReason);
+        settingsBack_->setFocus(Qt::OtherFocusReason);
 }
 
 void HomeWindow::setSettingsMessage(const QString& message)
@@ -712,16 +791,29 @@ void HomeWindow::showDevicePage()
 void HomeWindow::showSettingsPage()
 {
     selectPage(Page::Settings);
+    selectSettingsView(false);
     if (settingsForm_->isEnabled())
         settingsServerUrl_->setFocus(Qt::ShortcutFocusReason);
     else
-        settingsNavigation_->setFocus(Qt::ShortcutFocusReason);
+        settingsBack_->setFocus(Qt::ShortcutFocusReason);
+}
+
+void HomeWindow::selectSettingsView(bool about)
+{
+    settingsViews_->setCurrentIndex(about ? 1 : 0);
+    settingsConnectionNavigation_->setChecked(!about);
+    settingsAboutNavigation_->setChecked(about);
+    scroll_->ensureVisible(0, 0, 0, 0);
 }
 
 void HomeWindow::selectPage(Page page)
 {
-    if (page_ == Page::Settings && page != page_)
-        resetSettingsDraft();
+    if (page != page_) {
+        if (page == Page::Settings)
+            pageBeforeSettings_ = page_;
+        else if (page_ == Page::Settings)
+            resetSettingsDraft();
+    }
     page_ = page;
     updateForm();
     updateBanner();
@@ -1020,6 +1112,8 @@ void HomeWindow::updateForm()
 {
     const bool assistance = page_ == Page::Assistance;
     const bool devices = page_ == Page::Devices;
+    const bool settings = page_ == Page::Settings;
+    rails_->setCurrentIndex(settings ? 1 : 0);
     viewerFormPage_->setVisible(assistance && !hostPage_);
     hostFormPage_->setVisible(assistance && hostPage_);
     devicePage_->setVisible(devices);
@@ -1028,8 +1122,8 @@ void HomeWindow::updateForm()
     deviceTitle_->setVisible(devices);
     deviceSummary_->setVisible(devices);
     assistanceHeader_->setVisible(assistance);
-    settingsPage_->setVisible(page_ == Page::Settings);
-    settingsNavigation_->setChecked(page_ == Page::Settings);
+    settingsPage_->setVisible(settings);
+    settingsNavigation_->setChecked(settings);
     updateSettingsAvailability();
     {
         const QSignalBlocker blocker(assistanceTabs_);
@@ -1047,7 +1141,7 @@ void HomeWindow::updateForm()
     hostDecisions_->setVisible(pending);
     shareOptions_->setVisible(pending || (!hostBusy_ && autoAcceptInvitation_->isChecked()));
     hostEndButton_->setVisible(hostBusy_);
-    if (hostActive_ && (trustedSession_ || issuedAutoApprove_)) {
+    if (hostActive_ && (trustedSession_ || issuedAutoApprove_ || settings)) {
         if (!shareIndicator_->isVisible()) {
             shareIndicator_->setAttribute(Qt::WA_DontShowOnScreen, testAttribute(Qt::WA_DontShowOnScreen));
             shareIndicator_->adjustSize();

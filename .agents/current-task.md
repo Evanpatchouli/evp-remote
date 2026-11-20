@@ -1,5 +1,14 @@
 # Current task
 
+## Windows client 0.2.0
+
+- **Execute / S1.** Use shared action-button geometry and drawn icons throughout the client. Verify toolbar layout and embedded executable icons.
+- **Execute / S2.** Produce equivalent ZIP, portable and per-user setup artifacts and exercise clean install, replacement and uninstall in an isolated profile.
+- **Execute / S2.** Check stable GitHub releases at startup and every 15 minutes. Select assets by distribution, verify downloaded bytes, and test replacement and restart.
+- **Verify / S0 and independent review.** Check native sessions, three artifact formats, updater failure handling, and the release assets. Commit, push and tag the verified 0.2.0 source.
+
+The Qt probes passed Settings Center navigation, native sessions, release asset selection and a live GitHub release check. The isolated installer and updater fixtures covered both portable replacement and installed rollback, including a ZIP client updating an existing installation. The OS recognized the embedded icon in all three executable types.
+
 ## Controller-side picture settings
 
 - **Decide / S2.** Use the authorized native data channel for session-local bitrate and frame-rate limits. Keep congestion control active and report the host's confirmed limits. Expose the current SDR output and show which color modes require a different media format.

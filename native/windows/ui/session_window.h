@@ -45,7 +45,6 @@ private:
     QWidget* toolbar_ = nullptr;
     QLabel* statusLabel_;
     QLabel* routeLabel_;
-    QLabel* videoFormatLabel_;
     QLabel* inputLabel_;
     QPushButton* videoSettingsButton_;
     QDialog* videoSettingsPanel_;

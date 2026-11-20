@@ -5,7 +5,9 @@ param(
     [string] $WebRtcRoot = $env:EVP_WEBRTC_ROOT,
     [string] $FfmpegRoot = $env:EVP_FFMPEG_ROOT,
     [string] $BuildDir,
-    [string] $DefaultSignalUrl = ''
+    [string] $DefaultSignalUrl = '',
+    [string] $NsisRoot = $env:EVP_NSIS_ROOT,
+    [string] $OutputDir = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,5 +40,7 @@ $package = @{
     WebRtcRoot = $WebRtcRoot
     FfmpegRoot = $FfmpegRoot
     DefaultSignalUrl = $DefaultSignalUrl
+    NsisRoot = $NsisRoot
+    OutputDir = $OutputDir
 }
 & (Join-Path $PSScriptRoot 'package-native-windows.ps1') @package

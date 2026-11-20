@@ -1,12 +1,22 @@
 # Unified Windows client
 
-On each Windows PC, double-click **`evp-remote-windows-x64-portable.exe`**. Alternatively, extract **`evp-remote-windows-x64.zip`** and open **EvpRemote.exe**. A configuration that already has My Devices set up opens its device list. Use the sidebar to start Remote Assistance. The active viewer gets its own control window, and a machine can switch roles after ending its current invitation or session.
+On each Windows PC, run **`evp-remote-windows-x64-setup.exe`**, double-click **`evp-remote-windows-x64-portable.exe`**, or extract **`evp-remote-windows-x64.zip`** and open **EvpRemote.exe**. A configuration that already has My Devices set up opens its device list. Use the sidebar to start Remote Assistance. The active viewer gets its own control window, and a machine can switch roles after ending its current invitation or session.
 
 ## Shared settings
 
-Open **设置** at the bottom of the sidebar and enter the deployment's `wss://` address. Add the deployment key if this PC will create invitations or use My Devices, then save. An invitation guest can save just the address. Both modes use these settings for the current Windows user, including after restarting the portable EXE.
+Open **设置** at the bottom of the main sidebar. In **设置中心 → 连接设置**, enter the deployment's `wss://` address. Add the deployment key if this PC will create invitations or use My Devices, then save. An invitation guest can save just the address. Both modes use these settings for the current Windows user, including after restarting the portable EXE. The back button returns to the previous page.
 
 An upgrade reuses the protected address and key previously saved in My Devices. If there is no saved endpoint, the client uses a valid previous Remote Assistance address, then the `EVP_SIGNAL_URL` or packaged default address. Existing device IDs and pairings carry over. For the same address, a blank key field retains its saved key. To rotate it, type the new key and save. To remove it, use the forget-key option. Changing to a different address with a blank key saves an address-only configuration. End the current invitation, pairing request or session before applying new settings.
+
+## Check for updates
+
+The app checks the latest stable GitHub release shortly after launch and every 15 minutes. To check immediately, open **设置中心 → 关于** and select **检查更新**. Selecting **下载并更新** downloads the appropriate release asset and verifies its size and SHA-256 against the release metadata. Applying an update ends current sessions and restarts the client.
+
+The portable launcher replaces its original EXE at the same location. The ZIP and installed clients download the setup EXE and start the new per-user installed copy. The ZIP directory remains available for manual cleanup. All modes use the same local settings and device pairings for the current Windows user.
+
+Installed updates keep the previous runtime until the new client passes a version and startup check. If an update was interrupted and setup reports a pending update, close the client and run the setup EXE with `/S /UPDATEROLLBACK` to restore the previous installation. If the updated client already starts normally, run that version's setup EXE with `/S /UPDATECOMMIT` to finish retiring its backup.
+
+Publish the ZIP, portable EXE and setup EXE under the stable release tag matching the build version. Keep their filenames below so clients can select the right asset.
 
 ## Remote Assistance
 
@@ -19,7 +29,7 @@ Both invitation and pairing codes offer 5, 15 or 30 minutes and 1, 2, 5 or 12 ho
 
 The native sender captures desktop updates with DXGI Desktop Duplication, includes the pointer, and encodes H.264 using FFmpeg. It currently reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
 
-In a native-to-native session, click **远程画面** in the viewer toolbar to change the bitrate limit or target frame rate. The host applies changes automatically within the current session. The toolbar continues to show actual received dimensions and successful presentations. No changes are saved to the host's preferences.
+In a native-to-native session, click the resolution and frame-rate control with the down arrow to change the bitrate limit or target frame rate. The host applies changes automatically within the current session. The toolbar shows actual received dimensions and successful presentations. The changes apply to the current session.
 
 In both connection modes, a host with no default audio output can still share its screen and accept keyboard and mouse input. If enabled system audio cannot start, the host reports **系统声音不可用** and the viewer reports **对方未共享声音**. The saved preference applies again at the next connection.
 
@@ -32,13 +42,13 @@ In both connection modes, a host with no default audio output can still share it
 3. Enable **允许可信设备远控本机（无需逐次确认）** only on each PC you want to control. Keep the target client running on a signed-in, unlocked desktop. On the controlling PC select the online device and click **连接选中设备**, or double-click its row. No invitation, password, or approval prompt is needed for this session.
 4. To stop the current session, click **结束共享** on the target or **结束控制** on the controlling PC. Turn off inbound control to stop an incoming session and block future incoming connections without losing pairings. Select a peer and click **移除配对** to revoke it locally even while offline; the other PC may still show its old entry but cannot authenticate. If a pairing completed on only one PC or a device loses its installation key, pair again, and remove any obsolete entry.
 
-The online indicator tracks the target's signaling connection. The target also needs one active display and an unlocked Windows session. Locking the desktop or losing signaling ends the session. After re-registration, select the device again to reconnect. Choose system sound and TURN-only before starting a session. New sessions start with a 60 FPS ceiling. Change it from **远程画面** on the controlling PC. A floating **正在共享本机 · 停止共享** button stays available on the host while sharing, including when its main window is minimized. The local session limit is one hour.
+The online indicator tracks the target's signaling connection. The target also needs one active display and an unlocked Windows session. Locking the desktop or losing signaling ends the session. After re-registration, select the device again to reconnect. Choose system sound and TURN-only before starting a session. New sessions start with a 60 FPS ceiling. Change it from the resolution and frame-rate control on the controlling PC. A floating **正在共享本机 · 停止共享** button stays available on the host while sharing, including when its main window is minimized. The local session limit is one hour.
 
 If the app reports a local storage error, restore write access to the Windows user's application data directory. Review the trusted list and inbound switch, then save the connection settings again in **设置**. Repeat any revocation that was reported as unsaved.
 
 ## Build both roles
 
-Use Windows x64, Visual Studio 2022 with Desktop development with C++, a Windows SDK, CMake 3.24+, PowerShell 7 and Node.js with npm. The native dependency build was validated with:
+Use Windows x64, Visual Studio 2022 with Desktop development with C++, a Windows SDK, CMake 3.24+, PowerShell 7, Node.js with npm, and NSIS 3. The packager discovers NSIS through `EVP_NSIS_ROOT`, PATH, or a standard NSIS or Tauri cache installation. The native dependency build was validated with:
 
 - Qt **6.8.3 msvc2022_64**, Qt Base, Widgets, Network, WebSockets, and translations. Qt Test is required for the interop probe. [Qt for Windows](https://doc.qt.io/qt-6/windows.html)
 - Shiguredo **webrtc-rs 0.157.0**, the native libwebrtc C ABI Windows x64 archive. Verify SHA-256 `efb4e3dbce5b759f7b4e8b74479098f5ace17521e6343211bf923616a3e5544c` before extracting. Its root contains `include/webrtc_c.h`, `lib/webrtc_c.lib`, and the notice files. This SDK lets the application plug in its own FFmpeg decoder factory. [Release archive](https://github.com/shiguredo/webrtc-rs/releases/download/0.157.0/libwebrtc_c-windows_x86_64.tar.gz)
@@ -55,12 +65,16 @@ npm run build
 
 `npm run build` invokes `build:client`, which runs `tools/build-client.ps1`. CMake caches the SDK locations in `.build/windows-x64` for subsequent runs. For a different build directory or a prefilled signaling address, pass options through npm, for example `npm run build -- -BuildDir "D:\EVP Build" -DefaultSignalUrl wss://remote.example.net/`.
 
-Set `version` in the root `package.json` before building. The packager writes two artifacts in `release/<version>/` and prints a SHA-256 hash for each.
+Set `version` in the root `package.json` before building. The packager writes three artifacts in `release/<version>/` and prints a SHA-256 hash for each.
 
 - `evp-remote-windows-x64.zip` contains the native client, Qt and FFmpeg runtime files, the app-local VC runtime, default signaling configuration and dependency notices.
 - `evp-remote-windows-x64-portable.exe` embeds that exact ZIP. The Windows .NET Framework launcher extracts the bundled files into a fresh directory under `%TEMP%`, opens the same native client, waits for it to exit, and removes the temporary directory. Each Windows user retains their existing settings and device pairings. The operating system supplies the launcher runtime. The build uses the 64-bit .NET Framework 4.x C# compiler under `%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319`.
 
-Both executables carry the full package version in their product metadata. Rebuilding the same version replaces the pair. Close a running release-directory portable EXE before replacing it. To verify a release, run `pwsh -File tools/test-portable-windows.ps1`. The smoke checks the embedded ZIP, launches the portable EXE alone with `--version`, and checks that the runtime directory is removed. For a visible home-window and close test, use `-GuiTestUser 'DOMAIN\user'` from that disposable user's interactive desktop.
+- `evp-remote-windows-x64-setup.exe` installs the same runtime under `%LOCALAPPDATA%\Programs\EVP Remote`, creates a Start Menu shortcut, and registers per-user uninstall information.
+
+The executable artifacts carry the full package version in their product metadata. Rebuilding the same version replaces the artifact set. Close a running release-directory portable EXE before replacing it. To verify the portable artifact, run `pwsh -File tools/test-portable-windows.ps1`. The smoke checks the embedded ZIP, launches the portable EXE alone with `--version`, and checks that the runtime directory is removed. For a visible home-window and close test, run it with `-GuiTestUser` from a disposable user's interactive desktop.
+
+Run `pwsh -File tools/test-installer-windows.ps1` to verify installation, locked-file recovery, ZIP payload equality and uninstall with an isolated installer identity.
 
 ## Verify the two native roles
 

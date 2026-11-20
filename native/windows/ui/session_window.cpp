@@ -1,5 +1,6 @@
 #include "session_window.h"
 
+#include "action_button.h"
 #include "floating_surface.h"
 #include "visual_style.h"
 
@@ -8,7 +9,6 @@
 #include <QDialog>
 #include <QFrame>
 #include <QHBoxLayout>
-#include <QPushButton>
 #include <QScreen>
 #include <QShortcut>
 #include <QSize>
@@ -20,6 +20,7 @@
 
 namespace {
 
+using native_ui::ActionButton;
 using native_ui::label;
 using native_ui::Symbol;
 using native_ui::symbolIcon;
@@ -30,19 +31,23 @@ constexpr auto sessionStyle = R"(
     QWidget#sessionToolbar { background: #f8faff; border-bottom: 1px solid #e0e8f3; }
     QLabel { color: #182844; background: transparent; }
     QLabel#sessionMark { background: #e8f1ff; border-radius: 8px; }
-    QLabel#sessionStatus, QLabel#sessionMetricName { color: #526684; }
+    QLabel#sessionStatus { color: #526684; }
     QFrame#toolbarDivider { background-color: #dce5f1; border: none; }
     QWidget#sessionViewport { background: #101824; }
     QPushButton#sessionVideoSettings {
-        background: #f4f8ff; border: 1px solid #dbe5f5; border-radius: 8px;
+        background: #f4f8ff; color: #182844; border: 1px solid #dbe5f5; padding: 0 10px;
     }
     QPushButton#sessionVideoSettings:hover { background: #e5eeff; border-color: #b2c8eb; }
     QPushButton#sessionVideoSettings:pressed { background: #d9e7ff; }
     QPushButton#sessionVideoSettings:focus { border-color: #3475e4; }
-    QLabel#sessionVideoChevron { color: #456594; }
+    QPushButton#fullscreen {
+        background: palette(button); color: palette(button-text); border: 1px solid palette(mid); padding: 0 12px;
+    }
+    QPushButton#fullscreen:hover { background: palette(light); }
+    QPushButton#fullscreen:pressed { background: palette(midlight); }
+    QPushButton#fullscreen:focus { border-color: palette(highlight); }
     QPushButton#endSession {
-        background: #fdf0ed; color: #963b2f; border: 1px solid #efd8d2;
-        border-radius: 8px; padding: 0 12px;
+        background: #fdf0ed; color: #963b2f; border: 1px solid #efd8d2; padding: 0 12px;
     }
     QPushButton#endSession:hover { background: #fde5df; border-color: #e8b7ad; }
     QPushButton#endSession:pressed { background: #f7d7d0; }
@@ -61,7 +66,7 @@ constexpr auto videoSettingsStyle = R"(
     }
     QPushButton[videoChoice="true"], QPushButton#videoCustomApply {
         background: #f8faff; color: #263955; border: 1px solid #d9e3f1;
-        border-radius: 7px; padding: 0 8px;
+        padding: 0 8px;
     }
     QPushButton[videoChoice="true"]:hover, QPushButton#videoCustomApply:hover {
         background: #edf4ff; border-color: #b2c8eb;
@@ -95,21 +100,13 @@ struct VideoOption {
     QString text;
 };
 
-class VideoSettingsTrigger final : public QPushButton {
+class VideoChoice final : public ActionButton {
 public:
-    QSize sizeHint() const override { return layout() ? layout()->sizeHint() : QPushButton::sizeHint(); }
-    QSize minimumSizeHint() const override { return sizeHint(); }
-};
-
-class VideoChoice final : public QPushButton {
-public:
-    explicit VideoChoice(const VideoOption& option) : QPushButton(option.text) {
+    explicit VideoChoice(const VideoOption& option) : ActionButton(option.text) {
         setObjectName(QString::fromLatin1(option.name));
         setProperty("videoChoice", true);
         setFont(uiFont(13, QFont::DemiBold));
-        setMinimumHeight(32);
         setCheckable(true);
-        setCursor(Qt::PointingHandCursor);
     }
 
 protected:
@@ -183,35 +180,18 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     divider->setFixedSize(1, 28);
     tools->addWidget(divider, 0, Qt::AlignVCenter);
 
-    auto* routeMetric = new QVBoxLayout;
-    routeMetric->setSpacing(3);
-    routeMetric->addWidget(label(QStringLiteral("连接线路"), "sessionMetricName", 12));
     routeLabel_ = label({}, "sessionRoute", 13, QFont::DemiBold);
     routeLabel_->setWordWrap(true);
     routeLabel_->setMaximumWidth(156);
-    routeMetric->addWidget(routeLabel_);
-    tools->addLayout(routeMetric);
+    tools->addWidget(routeLabel_, 0, Qt::AlignVCenter);
 
-    videoSettingsButton_ = new VideoSettingsTrigger;
+    videoSettingsButton_ = new ActionButton(symbolIcon(Symbol::ChevronDown, QColor("#456594"), 14), {});
     videoSettingsButton_->setObjectName(QStringLiteral("sessionVideoSettings"));
     videoSettingsButton_->setAccessibleName(QStringLiteral("远程画面设置"));
-    videoSettingsButton_->setToolTip(QStringLiteral("点击调整画面设置。下方为远端画面尺寸和每秒提交给显卡的不同帧数。"));
-    videoSettingsButton_->setCursor(Qt::PointingHandCursor);
-    auto* videoMetric = new QHBoxLayout(videoSettingsButton_);
-    videoMetric->setSizeConstraint(QLayout::SetNoConstraint);
-    videoMetric->setContentsMargins(10, 4, 9, 4);
-    videoMetric->setSpacing(8);
-    auto* videoMetricText = new QVBoxLayout;
-    videoMetricText->setSpacing(2);
-    auto* videoMetricName = label(QStringLiteral("远程画面"), "sessionMetricName", 12);
-    videoFormatLabel_ = label({}, "sessionVideoFormat", 13, QFont::DemiBold);
-    auto* videoChevron = label(QStringLiteral("⌄"), "sessionVideoChevron", 17, QFont::DemiBold);
-    for (auto* child : {videoMetricName, videoFormatLabel_, videoChevron})
-        child->setAttribute(Qt::WA_TransparentForMouseEvents);
-    videoMetricText->addWidget(videoMetricName);
-    videoMetricText->addWidget(videoFormatLabel_);
-    videoMetric->addLayout(videoMetricText);
-    videoMetric->addWidget(videoChevron, 0, Qt::AlignVCenter);
+    videoSettingsButton_->setToolTip(QStringLiteral("点击调整画面设置。按钮显示远端画面尺寸和每秒提交给显卡的不同帧数。"));
+    videoSettingsButton_->setFont(uiFont(13, QFont::DemiBold));
+    videoSettingsButton_->setIconSize(QSize(14, 14));
+    videoSettingsButton_->setLayoutDirection(Qt::RightToLeft);
     tools->addWidget(videoSettingsButton_, 0, Qt::AlignVCenter);
     createVideoSettingsPanel();
     connect(videoSettingsButton_, &QPushButton::clicked, this, [this] {
@@ -229,12 +209,10 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
 
     inputLabel_ = label({}, "sessionInput", 12, QFont::DemiBold);
     tools->addWidget(inputLabel_, 0, Qt::AlignVCenter);
-    auto* fullscreen = new QPushButton(QStringLiteral("全屏"));
+    auto* fullscreen = new ActionButton(QStringLiteral("全屏"));
     fullscreen->setObjectName(QStringLiteral("fullscreen"));
     fullscreen->setToolTip(QStringLiteral("全屏显示画面，按 Ctrl+Alt+F11 返回"));
     fullscreen->setAccessibleDescription(fullscreen->toolTip());
-    fullscreen->setMinimumHeight(36);
-    fullscreen->setCursor(Qt::PointingHandCursor);
     tools->addWidget(fullscreen);
     const auto toggle = [this] {
         videoSettingsPanel_->hide();
@@ -246,13 +224,10 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     connect(shortcut, &QShortcut::activated, this, toggle);
     auto* popupShortcut = new QShortcut(shortcut->key(), videoSettingsPanel_);
     connect(popupShortcut, &QShortcut::activated, this, toggle);
-    auto* end = new QPushButton(QStringLiteral("结束控制"));
+    auto* end = new ActionButton(symbolIcon(Symbol::Power, QColor("#963b2f"), 17), QStringLiteral("结束控制"));
     end->setObjectName(QStringLiteral("endSession"));
     end->setFont(uiFont(13, QFont::DemiBold));
-    end->setIcon(symbolIcon(Symbol::End, QColor("#963b2f"), 17));
     end->setIconSize(QSize(17, 17));
-    end->setMinimumHeight(36);
-    end->setCursor(Qt::PointingHandCursor);
     connect(end, &QPushButton::clicked, this, &SessionWindow::close);
     tools->addWidget(end, 0, Qt::AlignVCenter);
 
@@ -330,12 +305,11 @@ void SessionWindow::createVideoSettingsPanel()
     customBitrate_->setMinimumHeight(32);
     customLabel->setBuddy(customBitrate_);
     custom->addWidget(customBitrate_);
-    applyBitrate_ = new QPushButton(QStringLiteral("应用"));
+    applyBitrate_ = new ActionButton(QStringLiteral("应用"));
     applyBitrate_->setObjectName(QStringLiteral("videoCustomApply"));
     applyBitrate_->setAccessibleName(QStringLiteral("应用自定义码率"));
     applyBitrate_->setFont(uiFont(13, QFont::DemiBold));
-    applyBitrate_->setMinimumSize(54, 32);
-    applyBitrate_->setCursor(Qt::PointingHandCursor);
+    applyBitrate_->setMinimumWidth(54);
     custom->addWidget(applyBitrate_);
     connect(applyBitrate_, &QPushButton::clicked, this, [this] {
         customBitrate_->interpretText();
@@ -447,6 +421,7 @@ void SessionWindow::setInputAvailable(bool available)
 void SessionWindow::setRoute(const QString& route)
 {
     routeLabel_->setText(route.isEmpty() ? QStringLiteral("待确认") : route);
+    routeLabel_->setAccessibleName(QStringLiteral("连接线路：%1").arg(routeLabel_->text()));
 }
 
 void SessionWindow::setVideoFormat(const QSize& resolution, double fps)
@@ -460,9 +435,7 @@ void SessionWindow::setVideoFormat(const QSize& resolution, double fps)
         metrics.append(QStringLiteral("%1 帧/秒").arg(QString::number(fps, 'f', fractionDigits)));
     }
     const auto format = metrics.isEmpty() ? QStringLiteral("等待画面") : metrics.join(QStringLiteral(" · "));
-    videoFormatLabel_->setText(format);
-    videoSettingsButton_->layout()->invalidate();
-    videoSettingsButton_->updateGeometry();
+    videoSettingsButton_->setText(format);
     videoSettingsButton_->setAccessibleDescription(format + QStringLiteral("。打开画面设置"));
 }
 

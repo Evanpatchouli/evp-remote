@@ -17,7 +17,7 @@ enable_language(RC)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets WebSockets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Network Widgets WebSockets)
 set(EVP_WEBRTC_ROOT "" CACHE PATH "Root of the x64 libwebrtc SDK")
 set(EVP_FFMPEG_ROOT "" CACHE PATH "Root of the shared x64 FFmpeg development distribution")
 find_path(WEBRTC_INCLUDE webrtc_c.h PATHS "${EVP_WEBRTC_ROOT}/include" NO_DEFAULT_PATH REQUIRED)
@@ -27,6 +27,7 @@ foreach(component avcodec avutil swscale swresample)
     find_library(FFMPEG_${component} NAMES ${component} PATHS "${EVP_FFMPEG_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
 endforeach()
 add_library(evp_client STATIC
+    client_updater.cpp client_updater.h update_release.cpp update_release.h
     controller.cpp controller.h code_options.h viewer_input.cpp viewer_input.h
     controller_dispatch.h controller_host.cpp host_input.cpp host_input.h
     devices/device_connection.cpp devices/device_connection.h devices/device_identity.cpp devices/device_identity.h
@@ -42,7 +43,7 @@ target_include_directories(evp_client PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVA
 target_compile_options(evp_client PRIVATE /utf-8 /EHsc /W3)
 target_compile_definitions(evp_client PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX WIN32)
 target_link_options(evp_client INTERFACE /NODEFAULTLIB:LIBCMT)
-target_link_libraries(evp_client PUBLIC Qt6::Widgets Qt6::WebSockets PRIVATE
+target_link_libraries(evp_client PUBLIC Qt6::Network Qt6::Widgets Qt6::WebSockets PRIVATE
     "${WEBRTC_LIBRARY}" "${FFMPEG_avcodec}" "${FFMPEG_avutil}" "${FFMPEG_swscale}" "${FFMPEG_swresample}"
     d3d11 dxgi d3dcompiler user32 ws2_32 winmm avrt uuid strmiids dmoguids iphlpapi msdmo
     secur32 wmcodecdspuuid ole32 oleaut32 advapi32 bcrypt crypt32 ntdll userenv Wtsapi32)

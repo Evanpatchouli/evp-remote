@@ -6,7 +6,8 @@ param(
     [string] $FfmpegRoot,
     [Parameter(Mandatory)] [string] $BuildDir,
     [string] $DefaultSignalUrl = '',
-    [string] $OutputDir = ''
+    [string] $OutputDir = '',
+    [string] $NsisRoot = $env:EVP_NSIS_ROOT
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,7 @@ if ($version -isnot [string] -or ![semver]::TryParse($version, [ref]$parsedVersi
     $parsedVersion.ToString() -cne $version) {
     throw 'package.json must contain a valid, canonical semantic version.'
 }
+$numericVersion = "$($parsedVersion.Major).$($parsedVersion.Minor).$($parsedVersion.Patch).0"
 
 function Get-RequiredFile([string] $Path) {
     $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
@@ -42,11 +44,8 @@ function Assert-X64Image([string] $Path) {
 }
 
 function New-PortableExecutable([string] $Archive, [string] $Destination) {
-    $framework = Join-Path $env:SystemRoot 'Microsoft.NET/Framework64/v4.0.30319'
-    $compiler = Get-RequiredFile (Join-Path $framework 'csc.exe')
     $work = Split-Path -LiteralPath $Archive
     $assemblyInfo = Join-Path $work 'PortableVersion.cs'
-    $numericVersion = "$($parsedVersion.Major).$($parsedVersion.Minor).$($parsedVersion.Patch).0"
     [IO.File]::WriteAllLines($assemblyInfo, @(
         'using System.Reflection;'
         '[assembly: AssemblyTitle("EVP Remote Portable")]'
@@ -55,9 +54,10 @@ function New-PortableExecutable([string] $Archive, [string] $Destination) {
         "[assembly: AssemblyInformationalVersion(`"$version`")]"
     ))
     $arguments = @(
-        '/nologo', '/noconfig', '/target:winexe', '/platform:x64', '/optimize+', '/codepage:65001'
+        $cscGuiArgs
         '/reference:System.dll', '/reference:System.IO.Compression.dll'
         '/reference:System.IO.Compression.FileSystem.dll', '/reference:System.Windows.Forms.dll'
+        "/win32icon:$appIcon"
         "/resource:$([IO.Path]::GetFileName($Archive)),evp-remote-client.zip", "/out:$Destination"
         $assemblyInfo, (Join-Path $repo 'native/windows/portable/PortableLauncher.cs')
     )
@@ -72,22 +72,74 @@ function New-PortableExecutable([string] $Archive, [string] $Destination) {
     }
 }
 
-function Publish-ClientPair([string] $ZipSource, [string] $ExeSource, [string] $ZipPath, [string] $ExePath) {
-    $backup = Join-Path (Split-Path -LiteralPath $ZipSource) 'previous.zip'
-    $lockName = Join-Path (Split-Path -LiteralPath $ZipPath) '.evp-client-publish.lock'
+function New-UpdateInstaller([string] $Destination) {
+    $arguments = @(
+        $cscGuiArgs
+        '/reference:System.dll', '/reference:System.Windows.Forms.dll'
+        "/out:$Destination", (Join-Path $repo 'native/windows/portable/UpdateInstaller.cs')
+    )
+    & $compiler @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'Building the client update helper failed.' }
+}
+
+function Find-NsisCompiler {
+    if ($NsisRoot) { return Get-RequiredFile (Join-Path $NsisRoot 'makensis.exe') }
+    $command = Get-Command makensis.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($command) { return $command.Source }
+    foreach ($candidate in @(
+        (Join-Path ${env:ProgramFiles(x86)} 'NSIS/makensis.exe'),
+        (Join-Path $env:LOCALAPPDATA 'tauri/NSIS/makensis.exe')
+    )) {
+        if ([IO.File]::Exists($candidate)) { return $candidate }
+    }
+    throw 'Install Unicode NSIS 3 or configure EVP_NSIS_ROOT to the folder containing makensis.exe.'
+}
+
+function New-SetupExecutable([string] $Staging, [string] $Destination) {
+    $arguments = @(
+        '/WX', '/V2', '/INPUTCHARSET', 'UTF8', "/DPACKAGE_ROOT=$Staging", "/DOUTPUT_EXE=$Destination"
+        "/DVERSION=$version", "/DNUMERIC_VERSION=$numericVersion", "/DAPP_ICON=$appIcon"
+        (Join-Path $repo 'native/windows/installer/evp-remote.nsi')
+    )
+    & $makeNsis @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'Building the Windows setup executable failed.' }
+    [void](Get-RequiredFile $Destination)
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($Destination).ProductVersion -cne $version) {
+        throw 'The setup executable does not match the package version.'
+    }
+}
+
+function Publish-ClientArtifacts([object[]] $Files) {
+    $lockName = Join-Path $dist '.evp-client-publish.lock'
     $publishLock = [IO.FileStream]::new($lockName, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write,
         [IO.FileShare]::None, 1, [IO.FileOptions]::DeleteOnClose)
     try {
-        $hadZip = [IO.File]::Exists($ZipPath)
-        if ($hadZip) { [IO.File]::Replace($ZipSource, $ZipPath, $backup) }
-        else { [IO.File]::Move($ZipSource, $ZipPath) }
-        try { [IO.File]::Move($ExeSource, $ExePath, $true) }
-        catch {
-            if ($hadZip) { [IO.File]::Move($backup, $ZipPath, $true) }
-            else { [IO.File]::Delete($ZipPath) }
-            throw
+        try {
+            foreach ($file in $Files) {
+                if ([IO.File]::Exists($file.Destination)) {
+                    [IO.File]::Copy($file.Destination, $file.Backup)
+                }
+            }
+            foreach ($file in $Files) {
+                [IO.File]::Move($file.Source, $file.Destination, $true)
+                $file.Published = $true
+            }
+        } catch {
+            $publishFailure = $_
+            $restoreFailures = foreach ($file in $Files | Where-Object Published) {
+                try {
+                    if ([IO.File]::Exists($file.Backup)) {
+                        [IO.File]::Move($file.Backup, $file.Destination, $true)
+                    } else { [IO.File]::Delete($file.Destination) }
+                } catch { $file.Destination }
+            }
+            if ($restoreFailures) {
+                throw "Publishing failed ($publishFailure). Could not restore $($restoreFailures -join ', '). Remaining backups are at $packageWork."
+            }
+            foreach ($file in $Files) { [IO.File]::Delete($file.Backup) }
+            throw $publishFailure
         }
-        [IO.File]::Delete($backup)
+        foreach ($file in $Files) { [IO.File]::Delete($file.Backup) }
     } finally { $publishLock.Dispose() }
 }
 
@@ -135,6 +187,11 @@ Assert-X64Image $exe
 if ([Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion -cne $version) {
     throw "The executable does not match package.json version $version. Rebuild EvpRemote before packaging."
 }
+$appIcon = Get-RequiredFile (Join-Path $repo 'native/windows/ui/evp-remote.ico')
+$framework = Join-Path $env:SystemRoot 'Microsoft.NET/Framework64/v4.0.30319'
+$compiler = Get-RequiredFile (Join-Path $framework 'csc.exe')
+$cscGuiArgs = @('/nologo', '/noconfig', '/target:winexe', '/platform:x64', '/optimize+', '/codepage:65001')
+$makeNsis = Find-NsisCompiler
 $deployQt = Get-RequiredFile (Join-Path $QtRoot 'bin/windeployqt.exe')
 $qtCore = Get-RequiredFile (Join-Path $QtRoot 'bin/Qt6Core.dll')
 $qtVersion = (Get-Item -LiteralPath $qtCore).VersionInfo.ProductVersion
@@ -183,9 +240,16 @@ if (!$OutputDir) {
 $dist = [IO.Directory]::CreateDirectory($OutputDir).FullName
 $destination = Join-Path $dist 'evp-remote-windows-x64.zip'
 $portable = Join-Path $dist 'evp-remote-windows-x64-portable.exe'
+$setup = Join-Path $dist 'evp-remote-windows-x64-setup.exe'
 $packageWork = Join-Path $dist ('.pack-' + [guid]::NewGuid().ToString('N'))
 $temporaryZip = Join-Path $packageWork 'payload.zip'
-$temporaryExe = Join-Path $packageWork 'evp-remote-windows-x64-portable.exe'
+$temporaryPortable = Join-Path $packageWork ([IO.Path]::GetFileName($portable))
+$temporarySetup = Join-Path $packageWork ([IO.Path]::GetFileName($setup))
+$publishFiles = @(
+    [pscustomobject]@{ Source = $temporaryZip; Destination = $destination; Backup = (Join-Path $packageWork 'previous.zip'); Published = $false }
+    [pscustomobject]@{ Source = $temporaryPortable; Destination = $portable; Backup = (Join-Path $packageWork 'previous-portable.exe'); Published = $false }
+    [pscustomobject]@{ Source = $temporarySetup; Destination = $setup; Backup = (Join-Path $packageWork 'previous-setup.exe'); Published = $false }
+)
 $tempDirectory = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $stagingName = 'evp-remote-native-' + [guid]::NewGuid().ToString('N')
 $staging = [IO.Directory]::CreateDirectory((Join-Path $tempDirectory $stagingName)).FullName
@@ -195,6 +259,7 @@ try {
     [void][IO.Directory]::CreateDirectory($packageWork)
     $app = Join-Path $staging 'EvpRemote.exe'
     Copy-Item -LiteralPath $exe -Destination $app
+    New-UpdateInstaller (Join-Path $staging 'EvpRemoteUpdate.exe')
     $deployArgs = @(
         '--release', '--dir', $staging, '--no-compiler-runtime', '--no-opengl-sw', '--no-ffmpeg'
         '--no-system-d3d-compiler', '--no-system-dxc-compiler', '--no-translations'
@@ -225,7 +290,7 @@ try {
     [IO.File]::WriteAllLines((Join-Path $staging 'evp-remote.ini'), @('[General]', "signalingUrl=$iniValue"))
     [IO.File]::WriteAllLines((Join-Path $staging '使用说明.txt'), @(
         "EVP 远程 $version · Windows x64"
-        '两台电脑各自双击便携版 EXE 即可打开；使用 ZIP 时，先完整解压再打开 EvpRemote.exe。'
+        '双击安装版 EXE 安装后，从开始菜单打开 EVP Remote。便携版 EXE 可直接打开；使用 ZIP 时，先完整解压再打开 EvpRemote.exe。'
         ''
         '首次使用时，打开侧栏底部「设置」，保存信令地址。创建邀请码或使用「我的设备」的电脑还需保存部署密钥。仅凭邀请码协助他人时，只需保存地址。'
         '打开侧栏「远程协助」。被控端在「共享本机」标签中创建邀请码，控制端在「远程协助」标签中输入邀请码并请求连接。'
@@ -354,24 +419,25 @@ try {
     }
 
     [IO.Compression.ZipFile]::CreateFromDirectory($staging, $temporaryZip, [IO.Compression.CompressionLevel]::Optimal, $false)
-    New-PortableExecutable $temporaryZip $temporaryExe
-    $artifacts = @(
-        [pscustomobject]@{ Algorithm = 'SHA256'; Hash = (Get-FileHash -LiteralPath $temporaryZip -Algorithm SHA256).Hash; Path = $destination }
-        [pscustomobject]@{ Algorithm = 'SHA256'; Hash = (Get-FileHash -LiteralPath $temporaryExe -Algorithm SHA256).Hash; Path = $portable }
-    )
-    Publish-ClientPair $temporaryZip $temporaryExe $destination $portable
+    New-PortableExecutable $temporaryZip $temporaryPortable
+    New-SetupExecutable $staging $temporarySetup
+    $artifacts = foreach ($file in $publishFiles) {
+        [pscustomobject]@{ Algorithm = 'SHA256'; Hash = (Get-FileHash -LiteralPath $file.Source -Algorithm SHA256).Hash; Path = $file.Destination }
+    }
+    Publish-ClientArtifacts $publishFiles
 }
 finally {
-    foreach ($scratchFile in $temporaryZip, $temporaryExe, (Join-Path $packageWork 'PortableVersion.cs')) {
-        [IO.File]::Delete($scratchFile)
-    }
-    if ([IO.Directory]::Exists($packageWork) -and ![IO.File]::Exists((Join-Path $packageWork 'previous.zip'))) {
-        [IO.Directory]::Delete($packageWork)
+    if ([IO.Directory]::Exists($packageWork)) {
+        foreach ($file in $publishFiles) { [IO.File]::Delete($file.Source) }
+        [IO.File]::Delete((Join-Path $packageWork 'PortableVersion.cs'))
+        if (!$([IO.Directory]::EnumerateFileSystemEntries($packageWork) | Select-Object -First 1)) {
+            [IO.Directory]::Delete($packageWork)
+        }
     }
     if ($staging.StartsWith($tempDirectory, [StringComparison]::OrdinalIgnoreCase) -and
         (Split-Path $staging -Leaf).StartsWith('evp-remote-native-', [StringComparison]::Ordinal)) {
         Remove-Item -LiteralPath $staging -Recurse -Force
     }
 }
-Write-Host "Packaged EVP Remote $version at $destination and $portable"
+Write-Host "Packaged EVP Remote $version for Windows x64 in $dist"
 $artifacts

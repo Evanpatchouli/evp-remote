@@ -1,4 +1,5 @@
 #include "device_page.h"
+#include "action_button.h"
 #include "select_field.h"
 #include "visual_style.h"
 
@@ -9,7 +10,6 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QListWidget>
-#include <QPushButton>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -27,12 +27,10 @@ QVBoxLayout* addCard(QVBoxLayout* page) {
     return layout;
 }
 
-QPushButton* button(const QString& text, const char* name, bool primary = false) {
-    auto* result = new QPushButton(text);
+native_ui::ActionButton* button(const QString& text, const char* name, bool primary = false) {
+    auto* result = new native_ui::ActionButton(text);
     result->setObjectName(name);
     result->setProperty("deviceAction", primary ? "primary" : "secondary");
-    result->setMinimumHeight(34);
-    result->setCursor(Qt::PointingHandCursor);
     return result;
 }
 
@@ -66,7 +64,7 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
         QPushButton[deviceAction="primary"]:hover { background: #1956c5; }
         QPushButton[deviceAction="secondary"] { background: #f8faff; color: #284675; border: 1px solid #ccd9ec; }
         QPushButton[deviceAction="secondary"]:hover { background: #edf4ff; }
-        QPushButton[deviceAction] { border-radius: 7px; padding: 0 10px; }
+        QPushButton[deviceAction] { padding: 0 10px; }
         QPushButton[deviceAction]:focus { border: 1px solid #3475e4; }
         QPushButton[deviceAction]:disabled { background: #f0f4fa; color: #667899; border: 1px solid #dfe6f1; }
         QListWidget#trustedDeviceList { background: white; border: 2px solid #e0e8f3; border-radius: 9px; }
