@@ -189,7 +189,13 @@ if ($LASTEXITCODE -ne 0 -or $ffmpegReport -notmatch '(?m)^ffmpeg version (\S+)')
     throw "Could not identify the FFmpeg build and its license from $ffmpeg."
 }
 $ffmpegVersion = $Matches[1]
-if ($ffmpegReport -notmatch 'GNU Lesser General Public License' -or $ffmpegReport -match '(?m)(?:^|\s)--enable-(?:gpl|nonfree)(?:\s|$)') {
+$gplClient = $version -ceq '0.3.1'
+if ($gplClient) {
+    if ($ffmpegReport -notmatch 'GNU General Public License' -or $ffmpegReport -notmatch '--enable-libx264\b' -or
+        $ffmpegReport -match '--enable-nonfree\b') {
+        throw 'The GPL client release requires a redistributable GPL FFmpeg SDK with libx264.'
+    }
+} elseif ($ffmpegReport -notmatch 'GNU Lesser General Public License' -or $ffmpegReport -match '(?m)(?:^|\s)--enable-(?:gpl|nonfree)(?:\s|$)') {
     throw 'Packaging requires a matching LGPL FFmpeg SDK built without --enable-gpl or --enable-nonfree.'
 }
 
@@ -337,7 +343,13 @@ try {
     }
 
     $licences = [IO.Directory]::CreateDirectory((Join-Path $staging 'licenses')).FullName
-    Copy-Item -LiteralPath (Get-RequiredFile (Join-Path $repo 'LICENSE')) -Destination $staging
+    if ($gplClient) {
+        foreach ($notice in 'LICENSE', 'COPYING') {
+            Copy-Item -LiteralPath (Get-RequiredFile (Join-Path $repo "native/windows/$notice")) -Destination $staging
+        }
+    } else {
+        Copy-Item -LiteralPath (Get-RequiredFile (Join-Path $repo 'LICENSE')) -Destination $staging
+    }
     $qtNotices = [IO.Directory]::CreateDirectory((Join-Path $licences 'qt')).FullName
     $qtSbom = [IO.Directory]::CreateDirectory((Join-Path $qtNotices 'sbom')).FullName
     foreach ($module in 'qtbase', 'qtwebsockets', 'qttranslations') {

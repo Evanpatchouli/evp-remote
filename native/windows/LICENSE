@@ -1,0 +1,19 @@
+EVP Remote 0.3.1 native Windows client
+
+The rights holders license the original Windows client code and binary
+distributions of this release under the GNU General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version (GPL-3.0-or-later).
+Commercial use and redistribution are permitted under that license.
+The client is provided without any warranty. See COPYING for the terms.
+
+This grant also covers the original corresponding source of these binaries:
+native/windows, the included project logo, version manifest, and scripts
+used to build, install and package the Windows client. This grant applies
+to those materials in the 0.3.1 source tag and the corresponding release
+packaging revision. The repository's non-commercial restrictions do not
+apply when exercising this GPL grant. No other project components are
+relicensed. Third-party components retain their respective licenses.
+
+Distribution files and corresponding source:
+https://github.com/Evanpatchouli/evp-remote/releases/tag/0.3.1
