@@ -1,5 +1,12 @@
 # Current task
 
+## Noncommercial distribution and companion website
+
+- Decide / S2: scope the license to original material and preserve dependency terms.
+- Execute / S2: initialize the sibling VitePress repository and implement its blue product homepage and build-time download configuration.
+- Execute / S1: document each client workflow using annotated native UI captures from isolated profiles.
+- Verify / S0: check packaging, site build, navigation and responsive presentation. Audit the Chinese copy and wait for editorial approval before rewriting it.
+
 ## Windows notification area
 
 - **Execute / S1.** Keep the client registered when its main window closes. Add tray actions to reopen the main window and exit the process.

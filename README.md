@@ -47,3 +47,9 @@ npm run test:session -- direct
 ```
 
 The browser smoke uses two separate local browser processes, a changing test image, a generated tone, and a recording input adapter. It measures decoded audio energy, visible video frames, selected route, keyboard/mouse delivery, and teardown. Public-network and physical Windows device qualification additionally require the field test.
+
+## License
+
+The [EVP Remote Non-Commercial License 1.0](LICENSE) covers the original client, signaling server and accompanying project materials offered under it. You may use, self-host, modify and share copies free of charge solely for non-commercial purposes. When sharing, include the license, retain notices and identify your changes. The license does not permit direct or indirect commercial use, including resale, internal use supporting a company's profit-making business, or paid services, even if EVP Remote itself is free.
+
+Third-party components keep their own licenses. Earlier grants remain in effect under their original terms. For native Windows distributions, use a matching LGPL FFmpeg SDK, not a GPL-enabled or non-redistributable build. Including notices is not a substitute for meeting dependency license requirements, including applicable source and relinking obligations.

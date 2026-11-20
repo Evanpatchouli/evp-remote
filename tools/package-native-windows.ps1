@@ -182,6 +182,17 @@ foreach ($component in 'avcodec', 'avutil', 'swscale', 'swresample') {
     Assert-BuildInput "FFMPEG_$component" (Join-Path $FfmpegRoot "lib/$component.lib")
 }
 
+$ffmpeg = Get-RequiredFile (Join-Path $FfmpegRoot 'bin/ffmpeg.exe')
+$ffmpegBuild = & $ffmpeg -L 2>&1 | ForEach-Object { $_.ToString() }
+$ffmpegReport = $ffmpegBuild -join "`n"
+if ($LASTEXITCODE -ne 0 -or $ffmpegReport -notmatch '(?m)^ffmpeg version (\S+)') {
+    throw "Could not identify the FFmpeg build and its license from $ffmpeg."
+}
+$ffmpegVersion = $Matches[1]
+if ($ffmpegReport -notmatch 'GNU Lesser General Public License' -or $ffmpegReport -match '(?m)(?:^|\s)--enable-(?:gpl|nonfree)(?:\s|$)') {
+    throw 'Packaging requires a matching LGPL FFmpeg SDK built without --enable-gpl or --enable-nonfree.'
+}
+
 $exe = Get-RequiredFile (Join-Path $BuildDir 'Release/EvpRemote.exe')
 Assert-X64Image $exe
 if ([Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion -cne $version) {
@@ -326,6 +337,7 @@ try {
     }
 
     $licences = [IO.Directory]::CreateDirectory((Join-Path $staging 'licenses')).FullName
+    Copy-Item -LiteralPath (Get-RequiredFile (Join-Path $repo 'LICENSE')) -Destination $staging
     $qtNotices = [IO.Directory]::CreateDirectory((Join-Path $licences 'qt')).FullName
     $qtSbom = [IO.Directory]::CreateDirectory((Join-Path $qtNotices 'sbom')).FullName
     foreach ($module in 'qtbase', 'qtwebsockets', 'qttranslations') {
@@ -369,12 +381,6 @@ try {
     }
     $ffmpegNotices = [IO.Directory]::CreateDirectory((Join-Path $licences 'ffmpeg')).FullName
     Copy-Item -LiteralPath (Get-RequiredFile (Join-Path $FfmpegRoot 'LICENSE.txt')) -Destination $ffmpegNotices
-    $ffmpeg = Get-RequiredFile (Join-Path $FfmpegRoot 'bin/ffmpeg.exe')
-    $ffmpegBuild = & $ffmpeg -L 2>&1 | ForEach-Object { $_.ToString() }
-    if ($LASTEXITCODE -ne 0 -or ($ffmpegBuild -join [Environment]::NewLine) -notmatch '(?m)^ffmpeg version (\S+)') {
-        throw "Could not identify the FFmpeg build and its license from $ffmpeg."
-    }
-    $ffmpegVersion = $Matches[1]
     $ffmpegSource = if ($ffmpegVersion -match '-g([0-9a-f]{7,40})(?:-|$)') {
         "Upstream FFmpeg revision: https://github.com/FFmpeg/FFmpeg/commit/$($Matches[1])"
     }

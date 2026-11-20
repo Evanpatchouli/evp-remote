@@ -54,7 +54,9 @@ Use Windows x64, Visual Studio 2022 with Desktop development with C++, a Windows
 
 - Qt **6.8.3 msvc2022_64**, Qt Base, Widgets, Network, WebSockets, and translations. Qt Test is required for the interop probe. [Qt for Windows](https://doc.qt.io/qt-6/windows.html)
 - Shiguredo **webrtc-rs 0.157.0**, the native libwebrtc C ABI Windows x64 archive. Verify SHA-256 `efb4e3dbce5b759f7b4e8b74479098f5ace17521e6343211bf923616a3e5544c` before extracting. Its root contains `include/webrtc_c.h`, `lib/webrtc_c.lib`, and the notice files. This SDK lets the application plug in its own FFmpeg decoder factory. [Release archive](https://github.com/shiguredo/webrtc-rs/releases/download/0.157.0/libwebrtc_c-windows_x86_64.tar.gz)
-- Shared FFmpeg x64 development distribution with matching **avcodec 63, avutil 61, swscale** headers, MSVC import libraries and DLLs. The tested build is `N-125258-gdf94900c98-20260624` with D3D11VA enabled. The local preview includes the distribution's build configuration and notices. The acceptance workstation also needs the matching `ffprobe` CLI.
+- FFmpeg: choose a shared x64 **LGPL** SDK with D3D11VA and the tested video library majors **avcodec 63, avutil 61 and swscale 10**. The audio path also links **swresample 7**. Use headers, MSVC import libraries, runtime DLLs and `ffmpeg.exe` from the same build; the acceptance workstation also needs its matching `ffprobe.exe`.
+
+Before packaging, run `& "$env:EVP_FFMPEG_ROOT/bin/ffmpeg.exe" -L`. The report must identify the GNU Lesser General Public License and contain neither `--enable-gpl` nor `--enable-nonfree`. The previously tested local SDK (`N-125258-gdf94900c98-20260624`) enables GPL: it can still be used for local build and runtime checks, but the packager rejects it before creating new release artifacts. To package a release, point `EVP_FFMPEG_ROOT` at the matching LGPL SDK and rebuild; do not swap only the CLI or DLLs.
 
 From the repository root, set these three paths for the first build. Point them at the installed x64 SDKs.
 
@@ -80,7 +82,7 @@ Run `pwsh -File tools/test-installer-windows.ps1` to verify installation, locked
 
 ## Verify the two native roles
 
-After a production build, run `npm ci` and `npm test` from the repository root. Enable the probes in that build directory, extract the versioned archive into a fresh test directory, and add the test drivers and the matching Qt Test DLL.
+After a successful production **package**, run `npm ci` and `npm test` from the repository root. Enable the probes in that build directory, extract the newly built archive into a fresh test directory, and add the test drivers and the matching Qt Test DLL. If the FFmpeg license check stopped packaging, record package verification as blocked. Local checks do not verify the ZIP, portable EXE or installer; do not use artifacts left over from an earlier build.
 
 ```powershell
 $build = '.build/windows-x64'

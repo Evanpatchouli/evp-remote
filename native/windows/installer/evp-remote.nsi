@@ -53,7 +53,7 @@ VIFileVersion "${NUMERIC_VERSION}"
   VIAddVersionKey /LANG=${LANGUAGE} "CompanyName" "${PUBLISHER}"
   VIAddVersionKey /LANG=${LANGUAGE} "ProductVersion" "${VERSION}"
   VIAddVersionKey /LANG=${LANGUAGE} "FileVersion" "${VERSION}"
-  VIAddVersionKey /LANG=${LANGUAGE} "LegalCopyright" "${PUBLISHER}"
+  VIAddVersionKey /LANG=${LANGUAGE} "LegalCopyright" "See LICENSE and third-party notices."
 !macroend
 !insertmacro VersionInfo ${LANG_ENGLISH}
 !insertmacro VersionInfo ${LANG_SIMPCHINESE}

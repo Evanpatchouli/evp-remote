@@ -22,6 +22,7 @@ function Add-Entry([string]$Source, [string]$Name) {
 }
 try {
     try {
+        Add-Entry (Join-Path $root 'LICENSE') 'LICENSE'
         Add-Entry $runtime.path 'runtime/node.exe'
         Add-Entry $runtimeLicense 'runtime/LICENSE'
         Add-Entry (Join-Path $PSScriptRoot 'Start-EVP-Remote.cmd') 'Start-EVP-Remote.cmd'

@@ -3,7 +3,7 @@ WORKDIR /srv/evp
 COPY package.json package-lock.json ./
 # The locked production dependencies are JavaScript; no native install scripts are used.
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-COPY deploy/linux/compose.yaml deploy/linux/configure.sh deploy/
+COPY LICENSE deploy/linux/compose.yaml deploy/linux/configure.sh deploy/
 ARG EVP_SIGNAL_IMAGE
 RUN if [ -n "$EVP_SIGNAL_IMAGE" ]; then \
       sed -i "/^  signal:$/,/^  [^ ]/s|^    image: .*|    image: $EVP_SIGNAL_IMAGE|" deploy/compose.yaml && \
