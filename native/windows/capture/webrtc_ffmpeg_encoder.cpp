@@ -114,7 +114,7 @@ void setOptions(AVDictionary** options, const Backend& backend) {
 struct Encoder {
     struct Stamp { std::int64_t pts; std::uint32_t rtpTimestamp; };
 
-    bool open(const Backend& backend) {
+    bool open(const Backend& backend, AVBufferRef* reuseFrames = nullptr) {
         const auto* implementation = avcodec_find_encoder_by_name(backend.codec);
         if (!implementation) return false;
         std::unique_ptr<AVCodecContext, FreeCodec> candidate(avcodec_alloc_context3(implementation));
@@ -136,7 +136,14 @@ struct Encoder {
         candidate->colorspace = AVCOL_SPC_BT709;
         candidate->thread_count = threadCount;
         candidate->pix_fmt = backend.vendor ? backend.hardwareFormat : AV_PIX_FMT_YUV420P;
-        if (backend.vendor && !configureHardware(*candidate, backend)) return false;
+        if (reuseFrames) {
+            const auto* frames = reinterpret_cast<const AVHWFramesContext*>(reuseFrames->data);
+            candidate->hw_device_ctx = av_buffer_ref(frames->device_ref);
+            candidate->hw_frames_ctx = av_buffer_ref(reuseFrames);
+            if (!candidate->hw_device_ctx || !candidate->hw_frames_ctx) return false;
+        } else if (backend.vendor && !configureHardware(*candidate, backend)) {
+            return false;
+        }
 
         AVDictionary* options = nullptr;
         setOptions(&options, backend);
@@ -169,7 +176,7 @@ struct Encoder {
         active = &backend;
         pending.clear();
         firstFrame = true;
-        if (callbacks.onBackend) callbacks.onBackend(QString::fromLatin1(backend.name));
+        if (!reuseFrames && callbacks.onBackend) callbacks.onBackend(QString::fromLatin1(backend.name));
         return true;
     }
 
@@ -189,8 +196,51 @@ struct Encoder {
         if (callbacks.onError) callbacks.onError(QStringLiteral("FFmpeg H.264 encoding failed"));
     }
 
+    void setRates(std::uint32_t rate, double fps) {
+        if (!rate) {
+            paused = true;
+            return;
+        }
+        if (paused) firstFrame = true;
+        paused = false;
+        bitRate = static_cast<int>(std::min(rate, 200'000'000u));
+        if (!codec) return;
+        if (std::isfinite(fps) && fps >= 1 && fps <= 240) {
+            codec->framerate.num = static_cast<int>(std::lround(fps));
+        }
+        // FFmpeg's AMF wrapper programs rate control at open. Keep its applied
+        // bitrate intact for comparison with the latest WebRTC target on Encode.
+        if (active != &amf) {
+            codec->bit_rate = bitRate;
+            codec->rc_max_rate = bitRate;
+            codec->rc_buffer_size = std::max(10'000, bitRate / 5);
+        }
+    }
+
+    bool applyAmfBitrate(std::int64_t timestamp) {
+        // Compare against the last applied rate so gradual changes accumulate.
+        // React sooner to congestion; frequent upward IDRs would consume headroom.
+        const auto applied = codec->bit_rate;
+        const bool decrease = bitRate * 100LL <= applied * 85;
+        const bool increase = bitRate * 100LL >= applied * 125;
+        if (!decrease && !increase) return true;
+        const auto cooldownUs = decrease ? 500'000 : 2'000'000;
+        if (lastAmfChangeUs >= 0 && timestamp - lastAmfChangeUs < cooldownUs) return true;
+
+        // Ready packets were delivered by drain(). Retire any still in flight
+        // with their timestamp entries; open() starts the next segment with an
+        // IDR. Reuse the D3D11 pool without holding two hardware encoders open.
+        const std::unique_ptr<AVBufferRef, FreeBuffer> frames(av_buffer_ref(codec->hw_frames_ctx));
+        release();
+        lastAmfChangeUs = timestamp;
+        return open(amf, frames.get()) || open(x264);
+    }
+
     bool encode(const webrtc_VideoFrame* input, bool keyframe, int& emitted) {
-        if (!drain(emitted) || pending.size() >= maxPendingFrames) return false;
+        if (!drain(emitted)) return false;
+        const auto timestamp = webrtc_VideoFrame_timestamp_us(input);
+        if (active == &amf && !applyAmfBitrate(timestamp)) return false;
+        if (pending.size() >= maxPendingFrames) return false;
         auto* buffer = webrtc_VideoFrame_video_frame_buffer(input);
         if (!buffer) return false;
         const std::unique_ptr<webrtc_VideoFrameBuffer, decltype(&webrtc_VideoFrameBuffer_Release)> source(
@@ -224,7 +274,6 @@ struct Encoder {
             return false;
         }
 
-        const auto timestamp = webrtc_VideoFrame_timestamp_us(input);
         frame->pts = std::max(lastPts + 1, av_rescale_q(timestamp, AVRational{1, 1'000'000}, codec->time_base));
         lastPts = frame->pts;
         frame->pict_type = firstFrame || keyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
@@ -306,6 +355,7 @@ struct Encoder {
     webrtc_VideoEncoder_EncodedImageCallback* callback = nullptr;
     std::deque<Stamp> pending;
     std::int64_t lastPts = -1;
+    std::int64_t lastAmfChangeUs = -1;
     int width = 0;
     int height = 0;
     int threadCount = 1;
@@ -325,6 +375,7 @@ const webrtc_VideoEncoder_cbs encoderCallbacks{
         encoder.release();
         encoder.reportedError = false;
         encoder.paused = false;
+        encoder.lastAmfChangeUs = -1;
         encoder.width = webrtc_VideoCodec_width(config);
         encoder.height = webrtc_VideoCodec_height(config);
         if (encoder.width < 2 || encoder.height < 2 || ((encoder.width | encoder.height) & 1)) {
@@ -370,23 +421,9 @@ const webrtc_VideoEncoder_cbs encoderCallbacks{
         return webrtc_VideoCodecStatus_Ok;
     },
     [](const webrtc_VideoEncoder_RateControlParameters* parameters, void* data) {
-        auto& encoder = *static_cast<Encoder*>(data);
-        const auto rate = webrtc_VideoEncoder_RateControlParameters_bitrate_sum_bps(parameters);
-        if (!rate) {
-            encoder.paused = true;
-            return;
-        }
-        if (encoder.paused) encoder.firstFrame = true;
-        encoder.paused = false;
-        encoder.bitRate = static_cast<int>(std::min(rate, 200'000'000u));
-        if (!encoder.codec) return;
-        encoder.codec->bit_rate = encoder.bitRate;
-        encoder.codec->rc_max_rate = encoder.bitRate;
-        encoder.codec->rc_buffer_size = std::max(10'000, encoder.bitRate / 5);
-        const auto fps = webrtc_VideoEncoder_RateControlParameters_framerate_fps(parameters);
-        if (std::isfinite(fps) && fps >= 1 && fps <= 240) {
-            encoder.codec->framerate.num = static_cast<int>(std::lround(fps));
-        }
+        static_cast<Encoder*>(data)->setRates(
+            webrtc_VideoEncoder_RateControlParameters_bitrate_sum_bps(parameters),
+            webrtc_VideoEncoder_RateControlParameters_framerate_fps(parameters));
     },
     [](void* data) {
         const auto& encoder = *static_cast<Encoder*>(data);

@@ -1,5 +1,12 @@
 # Current task
 
+## AMD AMF desktop bitrate changes
+
+- **Execute / S2.** Apply substantial WebRTC bitrate changes to the active AMF hardware encoder at a frame boundary. Coalesce jitter, keep congestion-driven reductions responsive and start the new stream segment with an IDR.
+- **Verify / S0 and independent review.** Exercise the production encoder on the AMD GPU with a synthetic 1080p text desktop, then check picture settings, media and input in a native loopback session.
+
+The Radeon D3D11 hardware probe reproduced the stale AMF bitrate on the old implementation. At the end of the 8 Mbps phase, decoded luma PSNR increased from 17.48 dB on the old implementation to 35.55 dB with the fix. The updated probe stayed on AMF through rate changes, jitter, pause and resume. Both attended and trusted-device loopback sessions passed with media and input. The local portable build passed the launcher and payload checks. A repeat on the user's physical pair remains outstanding.
+
 ## Windows focus outlines
 
 Replace the native dotted focus primitive with a solid keyboard cue and use the existing focus border on styled buttons. The sidebar regression reproduced the inner frame in both themes before the fix. The standard Qt suite and live picture-settings smoke passed after the fix. The optional desktop-compositor probe failed at its initial screen sample on both the 0.3.2 baseline and the revised client.

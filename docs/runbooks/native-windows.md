@@ -115,6 +115,18 @@ For forced relay, run `tools/unified-session-smoke.mjs` and `tools/device-sessio
 
 The `expiry` case waits five minutes for the production pairing code to expire, then submits the original code through the UI. The `direct` case also checks signed session fields, protected-store write failures, the local stop control, and teardown on desktop loss.
 
+### Verify AMD AMF bitrate changes
+
+On a Windows host with an AMD D3D11 adapter, build the optional `EvpAmfRateProbe` target and run it with the matching client runtime libraries:
+
+```powershell
+cmake --build $build --config Release --target EvpAmfRateProbe --parallel
+Copy-Item "$build/Release/EvpAmfRateProbe.exe" -Destination $testRuntime
+& "$testRuntime/EvpAmfRateProbe.exe"
+```
+
+The probe encodes a static 1080p text pattern at the idle desktop cadence. It raises the WebRTC rate target from 300 kbps to 8 Mbps and lowers it again, checks decoded luma detail, and checks keyframes and RTP timestamps across transitions. Small fluctuations should keep the current AMF encoder. Substantial changes reopen it on a frame boundary using the existing D3D11 device and frame pool. Exit code 77 indicates that AMF could not be opened on this machine.
+
 ## Qualify 144 FPS and input latency
 
 Use the [high-refresh contract](../specs/windows-session.md#native-clients-high-refresh-target). For each target resolution, record the host and viewer GPUs, display refresh modes, original numbered source, stream dimensions, codec, direct/relay route, and duration of continuous motion. A protocol trace or a virtual display reporting 144 Hz is insufficient to certify the physical screen.
