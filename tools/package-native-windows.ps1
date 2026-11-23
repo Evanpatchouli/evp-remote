@@ -189,7 +189,7 @@ if ($LASTEXITCODE -ne 0 -or $ffmpegReport -notmatch '(?m)^ffmpeg version (\S+)')
     throw "Could not identify the FFmpeg build and its license from $ffmpeg."
 }
 $ffmpegVersion = $Matches[1]
-$gplClient = $version -ceq '0.3.1'
+$gplClient = $version -cin @('0.3.1', '0.3.2')
 if ($gplClient) {
     if ($ffmpegReport -notmatch 'GNU General Public License' -or $ffmpegReport -notmatch '--enable-libx264\b' -or
         $ffmpegReport -match '--enable-nonfree\b') {
