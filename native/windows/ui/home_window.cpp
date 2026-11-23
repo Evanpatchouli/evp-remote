@@ -1,6 +1,7 @@
 #include "home_window.h"
 
 #include "action_button.h"
+#include "check_box.h"
 #include "device_page.h"
 #include "devices/device_identity.h"
 #include "floating_surface.h"
@@ -10,7 +11,6 @@
 
 #include <QApplication>
 #include <QButtonGroup>
-#include <QCheckBox>
 #include <QClipboard>
 #include <QColorDialog>
 #include <QCoreApplication>
@@ -604,7 +604,7 @@ QWidget* HomeWindow::createHostPage()
     invitationLifetime_->setMaximumWidth(200);
     fields->addRow(lifetimeLabel, invitationLifetime_);
 
-    autoAcceptInvitation_ = new QCheckBox(QStringLiteral("持码免本机确认"));
+    autoAcceptInvitation_ = new native_ui::CheckBox(QStringLiteral("持码免本机确认"));
     autoAcceptInvitation_->setObjectName(QStringLiteral("autoAcceptInvitation"));
     setupLayout->addWidget(autoAcceptInvitation_, 0, Qt::AlignLeft);
     auto* scope = label(QStringLiteral("仅对本次邀请码有效。开启后，首位使用此码的人可直接查看屏幕并控制本机。"),
@@ -654,12 +654,12 @@ QWidget* HomeWindow::createHostPage()
     auto* optionsLayout = new QVBoxLayout(shareOptions_);
     optionsLayout->setContentsMargins(0, 0, 0, 0);
     optionsLayout->setSpacing(4);
-    shareAudio_ = new QCheckBox(QStringLiteral("共享系统声音"));
+    shareAudio_ = new native_ui::CheckBox(QStringLiteral("共享系统声音"));
     shareAudio_->setObjectName(QStringLiteral("hostShareAudio"));
     shareAudio_->setChecked(true);
-    highRefresh_ = new QCheckBox(QStringLiteral("原生分辨率，目标 144 帧/秒"));
+    highRefresh_ = new native_ui::CheckBox(QStringLiteral("原生分辨率，目标 144 帧/秒"));
     highRefresh_->setObjectName(QStringLiteral("hostHighRefresh"));
-    relayOnly_ = new QCheckBox(QStringLiteral("仅使用 TURN 中继"));
+    relayOnly_ = new native_ui::CheckBox(QStringLiteral("仅使用 TURN 中继"));
     relayOnly_->setObjectName(QStringLiteral("hostRelayOnly"));
     for (auto* option : {shareAudio_, highRefresh_, relayOnly_})
         optionsLayout->addWidget(option, 0, Qt::AlignLeft);
@@ -735,9 +735,9 @@ QWidget* HomeWindow::createSettingsPage()
     keyLabel->setBuddy(settingsDeploymentKey_);
     form->addWidget(keyLabel);
     form->addWidget(settingsDeploymentKey_);
-    forgetDeploymentKey_ = new QCheckBox(QStringLiteral("清除已保存的密钥"));
+    forgetDeploymentKey_ = new native_ui::CheckBox(QStringLiteral("清除已保存的密钥"));
     forgetDeploymentKey_->setObjectName(QStringLiteral("forgetDeploymentKey"));
-    form->addWidget(forgetDeploymentKey_);
+    form->addWidget(forgetDeploymentKey_, 0, Qt::AlignLeft);
     auto* save = hostButton(QStringLiteral("保存设置"), "saveSettings");
     form->addWidget(save, 0, Qt::AlignLeft);
     settingsBusyMessage_ = label(QStringLiteral("当前连接设置只读。"), "subtle", 13);

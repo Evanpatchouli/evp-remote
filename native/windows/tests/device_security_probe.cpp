@@ -134,6 +134,7 @@ private slots:
     void cleanSidebarFocus();
     void cleanDeviceListFocus();
     void cleanCheckBoxFocus();
+    void checkBoxCursorFollowsEnabledState();
     void themedLifetimeSelectors_data();
     void themedLifetimeSelectors();
     void floatingStopControl();
@@ -1218,6 +1219,22 @@ void DeviceSecurityProbe::cleanDeviceListFocus() {
     QVERIFY2(rowInterior() == clicked, "A click must clear the keyboard cue even while the list keeps focus.");
     QTest::keyClick(list, Qt::Key_Tab);
     QVERIFY(connectButton->hasFocus());
+}
+
+void DeviceSecurityProbe::checkBoxCursorFollowsEnabledState() {
+    HomeWindow window;
+    const auto boxes = window.findChildren<QCheckBox*>();
+    auto* invitation = window.findChild<QCheckBox*>("autoAcceptInvitation");
+    QVERIFY(invitation && invitation->isEnabled());
+    for (const auto enabled : {true, false, true}) {
+        window.setEnabled(enabled);
+        for (const auto* box : boxes)
+            QCOMPARE(box->cursor().shape(), box->isEnabled() ? Qt::PointingHandCursor : Qt::ArrowCursor);
+    }
+    invitation->setDisabled(true);
+    QCOMPARE(invitation->cursor().shape(), Qt::ArrowCursor);
+    invitation->setEnabled(true);
+    QCOMPARE(invitation->cursor().shape(), Qt::PointingHandCursor);
 }
 
 void DeviceSecurityProbe::cleanCheckBoxFocus() {

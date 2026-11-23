@@ -1,11 +1,11 @@
 #include "device_page.h"
 #include "action_button.h"
+#include "check_box.h"
 #include "select_field.h"
 #include "theme.h"
 #include "visual_style.h"
 
 #include <QApplication>
-#include <QCheckBox>
 #include <QClipboard>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -149,7 +149,7 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     pairing->addWidget(hint);
     auto* lifetimeLabel = label(QStringLiteral("配对码有效期"), "fieldLabel", 13);
     pairingLifetime_ = native_ui::codeLifetimeSelector(lifetimeLabel, "pairingLifetime");
-    autoAcceptPairing_ = new QCheckBox(QStringLiteral("持码免本机确认"));
+    autoAcceptPairing_ = new native_ui::CheckBox(QStringLiteral("持码免本机确认"));
     autoAcceptPairing_->setObjectName("autoAcceptPairing");
     auto* issuance = row(pairing, lifetimeLabel, pairingLifetime_, false);
     issuance->addWidget(autoAcceptPairing_);
@@ -170,13 +170,13 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
 
     auto* settings = addCard(page);
     settings->addWidget(label(QStringLiteral("远控权限"), "fieldLabel", 14, QFont::DemiBold));
-    incoming_ = new QCheckBox(QStringLiteral("允许可信设备远控本机（无需逐次确认）"));
+    incoming_ = new native_ui::CheckBox(QStringLiteral("允许可信设备远控本机（无需逐次确认）"));
     incoming_->setObjectName("allowTrustedControl");
-    settings->addWidget(incoming_);
+    settings->addWidget(incoming_, 0, Qt::AlignLeft);
     auto* options = new QHBoxLayout;
-    audio_ = new QCheckBox(QStringLiteral("共享系统声音"));
+    audio_ = new native_ui::CheckBox(QStringLiteral("共享系统声音"));
     audio_->setObjectName("deviceShareAudio");
-    relayOnly_ = new QCheckBox(QStringLiteral("仅使用 TURN 中继"));
+    relayOnly_ = new native_ui::CheckBox(QStringLiteral("仅使用 TURN 中继"));
     relayOnly_->setObjectName("deviceRelayOnly");
     for (auto* option : {audio_, relayOnly_})
         options->addWidget(option);
