@@ -131,6 +131,8 @@ The probe encodes a static 1080p text pattern at the idle desktop cadence. It ra
 
 ### Diagnose picture quality and frame delivery offline
 
+Run `EvpVideoSurfaceProbe` with Qt's Windows platform plugin and a D3D11 adapter. It checks small text strokes, high-frequency stripes, native-size pixels, cached redraws and color reconstruction on offscreen textures. When the adapter supports NV12 textures, it also checks rotated and padded hardware surfaces.
+
 Build the optional `EvpVideoAdmissionProbe` target and run it with the matching runtime DLLs. The admission probe uses real x264 output and synthetic outbound RTP counters to exercise frame pacing, recovery requests, packet QP and timestamps without a session.
 
 The host samples the change in total local packet-send delay per sent video packet. Two consecutive windows averaging at least 80 ms temporarily cap excess delta-frame inputs at approximately 30 FPS. A healthy window clears the cap and stale observations expire. The first frame and requested IDRs bypass this pacing limit. A full hardware encoder drains before accepting more input. A persistent full queue still triggers codec recovery.

@@ -1,5 +1,9 @@
 #include "video_surface.h"
 
+#ifdef EVP_VIDEO_SURFACE_READBACK_PROBE
+#include "../tests/video_surface_readback.h"
+#endif
+
 #include <QMetaObject>
 #include <QTimer>
 
@@ -32,6 +36,12 @@ cbuffer Parameters : register(b0) {
     float2 textureScale;
     float4 textureBounds;
 };
+cbuffer DownsampleParameters : register(b1) {
+    float2 sourceDimensions;
+    float2 axis;
+    float reduction;
+    uint displayOutput;
+};
 Texture2D plane0 : register(t0);
 Texture2D plane1 : register(t1);
 Texture2D plane2 : register(t2);
@@ -53,14 +63,84 @@ Vertex vertexMain(uint id : SV_VertexID) {
     return output;
 }
 
-float4 pixelMain(Vertex input) : SV_Target {
-    float4 base = plane0.Sample(linearClamp, min(input.uv, textureBounds.xy));
-    if (format == 1) return float4(base.rgb, 1);
-    float2 chromaUv = min(input.uv, textureBounds.zw);
-    float2 chroma = plane1.Sample(linearClamp, chromaUv).rg;
-    if (format == 0) chroma.y = plane2.Sample(linearClamp, chromaUv).r;
-    float4 yuv = float4(base.r, chroma, 1);
+float3 sampleBase(float2 uv) {
+    return plane0.SampleLevel(linearClamp, min(uv, textureBounds.xy), 0).rgb;
+}
+
+float2 sampleChroma(float2 uv) {
+    uv = min(uv, textureBounds.zw);
+    float2 chroma = plane1.SampleLevel(linearClamp, uv, 0).rg;
+    if (format == 0) chroma.y = plane2.SampleLevel(linearClamp, uv, 0).r;
+    return chroma;
+}
+
+bool hasChromaPlanes() {
+    return format == 0 || format == 2;
+}
+
+float3 samplePicture(float2 uv) {
+    float3 base = sampleBase(uv);
+    if (hasChromaPlanes()) base.gb = sampleChroma(uv);
+    return base;
+}
+
+float4 displayPicture(float3 picture) {
+    if (format == 1) return float4(saturate(picture), 1);
+    float4 yuv = float4(picture, 1);
     return float4(saturate(float3(dot(yuv, red), dot(yuv, green), dot(yuv, blue))), 1);
+}
+
+float4 pixelMain(Vertex input) : SV_Target {
+    return displayPicture(samplePicture(input.uv));
+}
+
+float lanczos2(float distance) {
+    distance = abs(distance);
+    if (distance >= 2) return 0;
+    if (distance < 0.0001) return 1;
+    float angle = distance * 1.570796327;
+    float sine, cosine;
+    sincos(angle, sine, cosine);
+    float sinc = sine / angle;
+    return sinc * sinc * cosine;
+}
+
+float3 sampleLanczos(float2 uv) {
+    float center = dot(uv * sourceDimensions, axis) - 0.5;
+    float firstTap = floor(center - 2 * reduction) + 1;
+    float2 texel = axis / sourceDimensions;
+    float3 sum = 0;
+    float normalization = 0;
+    // A 2x box prefilter bounds the remaining reduction to two and the
+    // Lanczos radius to four source texels. Merge adjacent same-sign taps
+    // into one hardware-linear lookup while retaining the negative lobes.
+    [loop] for (int pair = 0; pair < 4; ++pair) {
+        float offset = firstTap + pair * 2 - center;
+        float left = lanczos2(offset / reduction);
+        float right = lanczos2((offset + 1) / reduction);
+        float weight = left + right;
+        if (left * right > 0) {
+            sum += weight * sampleBase(uv + (offset + right / weight) * texel);
+        } else {
+            if (left != 0) sum += left * sampleBase(uv + offset * texel);
+            if (right != 0) sum += right * sampleBase(uv + (offset + 1) * texel);
+        }
+        normalization += weight;
+    }
+    return sum / normalization;
+}
+
+float4 pixelDownsample(Vertex input) : SV_Target {
+    float3 picture;
+    if (reduction > 0) {
+        picture = sampleLanczos(input.uv);
+        // Separate 4:2:0 planes are still being upsampled or mapped 1:1
+        // here. Keep their linear reconstruction on the first axis.
+        if (hasChromaPlanes()) picture.gb = sampleChroma(input.uv);
+    } else {
+        picture = samplePicture(input.uv);
+    }
+    return displayOutput ? displayPicture(picture) : float4(picture, 1);
 }
 )";
 
@@ -73,6 +153,17 @@ struct ShaderParameters {
 };
 
 static_assert(sizeof(ShaderParameters) == 80);
+
+struct DownsampleParameters {
+    float sourceDimensions[2];
+    float axis[2];
+    float reduction;
+    unsigned displayOutput;
+    float padding[2]{};
+};
+
+static_assert(sizeof(DownsampleParameters) == 32);
+constexpr unsigned packedYuvFormat = 3;
 
 ShaderParameters shaderParameters(VideoSurface::Color color, int rotation, unsigned format,
                                   QSize visible, QSize texture, bool paddedNv12) {
@@ -203,6 +294,34 @@ struct VideoSurface::Frame {
 
 struct VideoSurface::State {
     struct Gpu {
+        using Resources = std::array<ID3D11ShaderResourceView*, 3>;
+
+        struct FilterTarget {
+            QSize size;
+            ComPtr<ID3D11RenderTargetView> target;
+            ComPtr<ID3D11ShaderResourceView> view;
+
+            bool ensure(ID3D11Device* device, QSize requested) {
+                if (size == requested) return view != nullptr;
+                target.Reset();
+                view.Reset();
+                size = requested;
+                D3D11_TEXTURE2D_DESC desc{};
+                desc.Width = size.width();
+                desc.Height = size.height();
+                desc.MipLevels = 1;
+                desc.ArraySize = 1;
+                desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+                desc.SampleDesc.Count = 1;
+                desc.Usage = D3D11_USAGE_DEFAULT;
+                desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+                ComPtr<ID3D11Texture2D> texture;
+                return SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture))
+                    && SUCCEEDED(device->CreateRenderTargetView(texture.Get(), nullptr, &target))
+                    && SUCCEEDED(device->CreateShaderResourceView(texture.Get(), nullptr, &view));
+            }
+        };
+
         HRESULT initializeDevice() {
             if (device) return S_OK;
             constexpr UINT bgra = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
@@ -254,6 +373,24 @@ struct VideoSurface::State {
             sampling.ComparisonFunc = D3D11_COMPARISON_NEVER;
             sampling.MaxLOD = D3D11_FLOAT32_MAX;
             return device->CreateSamplerState(&sampling, &sampler);
+        }
+
+        bool initializeDownsampler() {
+            if (downsampleAttempted) return downsampleParameters != nullptr;
+            downsampleAttempted = true;
+            ComPtr<ID3DBlob> code;
+            auto result = D3DCompile(shader, sizeof(shader) - 1, nullptr, nullptr, nullptr,
+                                     "pixelDownsample", "ps_4_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+                                     &code, nullptr);
+            if (FAILED(result)) return false;
+            result = device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(),
+                                               nullptr, &downsampleShader);
+            if (FAILED(result)) return false;
+            D3D11_BUFFER_DESC buffer{};
+            buffer.ByteWidth = sizeof(DownsampleParameters);
+            buffer.Usage = D3D11_USAGE_DEFAULT;
+            buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            return SUCCEEDED(device->CreateBuffer(&buffer, nullptr, &downsampleParameters));
         }
 
         HRESULT resize(HWND hwnd, QSize size) {
@@ -423,8 +560,120 @@ struct VideoSurface::State {
             return HRESULT_FROM_WIN32(GetLastError());
         }
 
-        HRESULT draw(QSize size, const Frame* frame, HRESULT& frameResult) {
-            ContextLock lock(multithread.Get());
+        void drawPicture(ID3D11RenderTargetView* destination, const QRectF& area,
+                         ID3D11PixelShader* pixel, const ShaderParameters& constants,
+                         const Resources& resources) {
+            const D3D11_VIEWPORT viewport{static_cast<float>(area.x()), static_cast<float>(area.y()),
+                static_cast<float>(area.width()), static_cast<float>(area.height()), 0.f, 1.f};
+            context->RSSetViewports(1, &viewport);
+            context->OMSetRenderTargets(1, &destination, nullptr);
+            context->PSSetShader(pixel, nullptr, 0);
+            context->UpdateSubresource(parameters.Get(), 0, nullptr, &constants, 0, 0);
+            context->PSSetShaderResources(0, static_cast<UINT>(resources.size()), resources.data());
+            context->Draw(3, 0);
+            const Resources unbound{};
+            context->PSSetShaderResources(0, static_cast<UINT>(unbound.size()), unbound.data());
+        }
+
+        void setDownsampleParameters(QSize source, bool horizontal, float reduction, bool display) {
+            const DownsampleParameters constants{
+                {static_cast<float>(source.width()), static_cast<float>(source.height())},
+                {horizontal ? 1.f : 0.f, horizontal ? 0.f : 1.f}, reduction, display ? 1u : 0u};
+            context->UpdateSubresource(downsampleParameters.Get(), 0, nullptr, &constants, 0, 0);
+        }
+
+        bool drawDownsampled(QSize windowSize, const QRectF& area, const Frame& frame,
+                             const ShaderParameters& original, Resources resources) {
+            const QSize source(frame.width, frame.height);
+            if (source != filterSource) {
+                filterSource = source;
+                prefilters = {};
+                filteredAxis = {};
+                filteredSequence = 0;
+            }
+
+            // Filter the axis that fills the viewport first. Its intermediate
+            // grid matches physical output pixels, even when the letterboxed
+            // axis has a fractional origin or size.
+            const auto oriented = frame.orientedSize();
+            const bool fillsWidth = static_cast<std::int64_t>(windowSize.width()) * oriented.height()
+                <= static_cast<std::int64_t>(windowSize.height()) * oriented.width();
+            const bool horizontalFirst = fillsWidth != (frame.rotation % 180 != 0);
+            const int outputLength = fillsWidth ? windowSize.width() : windowSize.height();
+            const int sourceLength = horizontalFirst ? source.width() : source.height();
+            if (outputLength >= sourceLength || !initializeDownsampler()) return false;
+
+            // Paint requests and Present retries can redraw the same upload.
+            // Only the final pass depends on the full fitted viewport.
+            const bool reuse = uploaded == filteredSequence && horizontalFirst == filteredHorizontal
+                && outputLength == filteredLength;
+
+            // Do the wider reductions with exact pairs of source texels. Use
+            // ceil division so an odd final texel can be replicated at the edge.
+            QSize working = source;
+            float reduction = static_cast<float>(sourceLength) / outputLength;
+            unsigned levels = 0;
+            while (reduction > 2.f) {
+                working = QSize((working.width() + 1) / 2, (working.height() + 1) / 2);
+                if (!reuse && !prefilters[levels].ensure(device.Get(), working)) return false;
+                reduction *= 0.5f;
+                ++levels;
+            }
+            const QSize intermediate = horizontalFirst ? QSize(outputLength, working.height())
+                                                       : QSize(working.width(), outputLength);
+            const unsigned packedFormat = frame.format == Frame::Format::Bgra ? original.format
+                                                                             : packedYuvFormat;
+            auto constants = original;
+            const auto divisor = static_cast<float>(1u << levels);
+            context->PSSetConstantBuffers(1, 1, downsampleParameters.GetAddressOf());
+            if (!reuse) {
+                filteredSequence = 0;
+                if (!filteredAxis.ensure(device.Get(), intermediate)) return false;
+                constants.rotation = 0;
+                QSize textureSize = inputTextureSize;
+                if (levels) setDownsampleParameters(textureSize, horizontalFirst, 0.f, false);
+                for (unsigned level = 0; level < levels; ++level) {
+                    const auto& output = prefilters[level];
+                    constants.textureScale[0] = 2.f * output.size.width() / textureSize.width();
+                    constants.textureScale[1] = 2.f * output.size.height() / textureSize.height();
+                    drawPicture(output.target.Get(), QRectF(QPointF(), output.size),
+                                downsampleShader.Get(), constants, resources);
+                    textureSize = output.size;
+                    resources = {output.view.Get(), nullptr, nullptr};
+                    constants.format = packedFormat;
+                    std::fill_n(constants.textureBounds, 4, 1.f);
+                }
+
+                // The box levels can have a partial final texel. Use the
+                // visible span along the filter axis and keep all texels on
+                // the opposite axis for the final pass.
+                const float spanX = source.width() / divisor / textureSize.width();
+                const float spanY = source.height() / divisor / textureSize.height();
+                constants.textureScale[0] = levels && !horizontalFirst ? 1.f : spanX;
+                constants.textureScale[1] = levels && horizontalFirst ? 1.f : spanY;
+                setDownsampleParameters(textureSize, horizontalFirst, reduction, false);
+                drawPicture(filteredAxis.target.Get(), QRectF(QPointF(), filteredAxis.size),
+                            downsampleShader.Get(), constants, resources);
+                filteredSequence = uploaded;
+                filteredHorizontal = horizontalFirst;
+                filteredLength = outputLength;
+            }
+
+            constants.rotation = frame.rotation;
+            constants.format = packedFormat;
+            constants.textureScale[0] = horizontalFirst ? 1.f
+                : source.width() / divisor / intermediate.width();
+            constants.textureScale[1] = horizontalFirst ? source.height() / divisor / intermediate.height()
+                                                        : 1.f;
+            std::fill_n(constants.textureBounds, 4, 1.f);
+            setDownsampleParameters(intermediate, !horizontalFirst, reduction, true);
+            drawPicture(target.Get(), area, downsampleShader.Get(), constants,
+                        {filteredAxis.view.Get(), nullptr, nullptr});
+            return true;
+        }
+
+        HRESULT drawVideo(QSize size, const Frame* frame) {
+            HRESULT frameResult = S_OK;
             if (frame) frameResult = upload(*frame);
 
             constexpr float black[4]{0.f, 0.f, 0.f, 1.f};
@@ -433,27 +682,25 @@ struct VideoSurface::State {
                 // The native child window uses physical pixels. Input mapping from
                 // the parent uses the equivalent fit in Qt logical coordinates.
                 const auto area = fit(size, frame->orientedSize());
-                const D3D11_VIEWPORT viewport{static_cast<float>(area.x()), static_cast<float>(area.y()),
-                    static_cast<float>(area.width()), static_cast<float>(area.height()), 0.f, 1.f};
-                context->RSSetViewports(1, &viewport);
-                context->OMSetRenderTargets(1, target.GetAddressOf(), nullptr);
                 context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
                 context->VSSetShader(vertexShader.Get(), nullptr, 0);
-                context->PSSetShader(pixelShader.Get(), nullptr, 0);
+                context->VSSetConstantBuffers(0, 1, parameters.GetAddressOf());
+                context->PSSetConstantBuffers(0, 1, parameters.GetAddressOf());
+                context->PSSetSamplers(0, 1, sampler.GetAddressOf());
                 const auto constants = shaderParameters(frame->color, frame->rotation,
                     static_cast<unsigned>(frame->format), QSize(frame->width, frame->height), inputTextureSize,
                     frame->format == Frame::Format::Nv12);
-                context->UpdateSubresource(parameters.Get(), 0, nullptr, &constants, 0, 0);
-                context->VSSetConstantBuffers(0, 1, parameters.GetAddressOf());
-                context->PSSetConstantBuffers(0, 1, parameters.GetAddressOf());
-                std::array<ID3D11ShaderResourceView*, 3> resources{
-                    views[0].Get(), views[1].Get(), views[2].Get()};
-                context->PSSetShaderResources(0, static_cast<UINT>(resources.size()), resources.data());
-                context->PSSetSamplers(0, 1, sampler.GetAddressOf());
-                context->Draw(3, 0);
-                resources = {};
-                context->PSSetShaderResources(0, static_cast<UINT>(resources.size()), resources.data());
+                const Resources resources{views[0].Get(), views[1].Get(), views[2].Get()};
+                if (!drawDownsampled(size, area, *frame, constants, resources)) {
+                    drawPicture(target.Get(), area, pixelShader.Get(), constants, resources);
+                }
             }
+            return frameResult;
+        }
+
+        HRESULT draw(QSize size, const Frame* frame, HRESULT& frameResult) {
+            ContextLock lock(multithread.Get());
+            frameResult = drawVideo(size, frame);
             const auto result = swapChain->Present(syncInterval, presentFlags);
             if (result == S_OK) renderCredit = false;
             return result;
@@ -473,6 +720,15 @@ struct VideoSurface::State {
         ComPtr<ID3D11PixelShader> pixelShader;
         ComPtr<ID3D11Buffer> parameters;
         ComPtr<ID3D11SamplerState> sampler;
+        bool downsampleAttempted = false;
+        ComPtr<ID3D11PixelShader> downsampleShader;
+        ComPtr<ID3D11Buffer> downsampleParameters;
+        QSize filterSource;
+        std::array<FilterTarget, D3D11_REQ_MIP_LEVELS> prefilters;
+        FilterTarget filteredAxis;
+        std::uint64_t filteredSequence = 0;
+        bool filteredHorizontal = false;
+        int filteredLength = 0;
         std::array<ComPtr<ID3D11Texture2D>, 3> textures;
         std::array<ComPtr<ID3D11ShaderResourceView>, 3> views;
         QSize inputTextureSize;
@@ -492,6 +748,66 @@ struct VideoSurface::State {
     QSize displayedSource;
     bool retryScheduled = false;
 };
+
+#ifdef EVP_VIDEO_SURFACE_READBACK_PROBE
+QImage VideoSurfaceReadback::render(VideoSurface& surface, QSize size, std::uint64_t* primitives) {
+    auto& state = *surface.state_;
+    auto& gpu = state.gpu;
+    if (state.pending) {
+        state.current = std::move(state.pending);
+        state.pending.reset();
+    }
+    if (!state.current || FAILED(gpu.initializeDevice()) || FAILED(gpu.initializePipeline())) return {};
+
+    ComPtr<ID3D11Query> query;
+    if (primitives) {
+        constexpr D3D11_QUERY_DESC queryDesc{D3D11_QUERY_PIPELINE_STATISTICS, 0};
+        if (FAILED(gpu.device->CreateQuery(&queryDesc, &query))) return {};
+    }
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = size.width();
+    desc.Height = size.height();
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> rendered;
+    if (FAILED(gpu.device->CreateTexture2D(&desc, nullptr, &rendered))
+        || FAILED(gpu.device->CreateRenderTargetView(rendered.Get(), nullptr, &gpu.target))) return {};
+
+    const ContextLock lock(gpu.multithread.Get());
+    if (query) gpu.context->Begin(query.Get());
+    const auto result = gpu.drawVideo(size, &*state.current);
+    if (query) gpu.context->End(query.Get());
+    gpu.context->OMSetRenderTargets(0, nullptr, nullptr);
+    gpu.target.Reset();
+    if (FAILED(result)) return {};
+
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;
+    if (FAILED(gpu.device->CreateTexture2D(&desc, nullptr, &staging))) return {};
+    gpu.context->CopyResource(staging.Get(), rendered.Get());
+    QImage image(size, QImage::Format_ARGB32);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (image.isNull() || FAILED(gpu.context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return {};
+    for (int y = 0; y < size.height(); ++y) {
+        std::memcpy(image.scanLine(y), static_cast<const std::uint8_t*>(mapped.pData) + y * mapped.RowPitch,
+                    size.width() * sizeof(QRgb));
+    }
+    gpu.context->Unmap(staging.Get(), 0);
+    if (query) {
+        D3D11_QUERY_DATA_PIPELINE_STATISTICS stats{};
+        if (gpu.context->GetData(query.Get(), &stats, sizeof(stats), 0) != S_OK) return {};
+        *primitives = stats.IAPrimitives;
+    }
+    return image;
+}
+#endif
 
 VideoSurface::VideoSurface(QWidget* parent)
     : QWidget(parent), state_(std::make_unique<State>()) {

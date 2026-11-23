@@ -80,6 +80,12 @@ if(EVP_BUILD_PROBES)
     target_compile_definitions(EvpAmfRateProbe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(EvpAmfRateProbe PRIVATE /utf-8 /EHsc)
     target_link_libraries(EvpAmfRateProbe PRIVATE evp_client)
+    add_executable(EvpVideoSurfaceProbe tests/video_surface_probe.cpp tests/video_surface_readback.h
+                   media/video_surface.cpp media/video_surface.h)
+    target_compile_definitions(EvpVideoSurfaceProbe PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX
+                               EVP_VIDEO_SURFACE_READBACK_PROBE)
+    target_compile_options(EvpVideoSurfaceProbe PRIVATE /utf-8 /EHsc)
+    target_link_libraries(EvpVideoSurfaceProbe PRIVATE Qt6::Widgets d3d11 dxgi d3dcompiler user32)
     add_executable(EvpVideoAdmissionProbe tests/video_admission_probe.cpp)
     target_include_directories(EvpVideoAdmissionProbe PRIVATE "${WEBRTC_INCLUDE}" "${FFMPEG_INCLUDE}")
     target_compile_definitions(EvpVideoAdmissionProbe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

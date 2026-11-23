@@ -65,6 +65,9 @@ protected:
     void showEvent(QShowEvent* event) override;
 
 private:
+#ifdef EVP_VIDEO_SURFACE_READBACK_PROBE
+    friend struct VideoSurfaceReadback;
+#endif
     struct Frame;
     struct State;
 
