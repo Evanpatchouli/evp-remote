@@ -55,7 +55,7 @@ public:
     void acceptAnswer(std::string sdp);
     void addRemoteCandidate(IceCandidate candidate);
     bool sendInput(std::string_view message);
-    bool setVideoLimits(int maxBitrateMbps, int maxFps);
+    bool setVideoSettings(VideoSettings settings);
     void pollStats();
     void close();
 

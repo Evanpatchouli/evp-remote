@@ -3,6 +3,7 @@
 #include "host_input.h"
 #include "rtc/rtc_host.h"
 #include "ui/home_window.h"
+#include "video_settings_wire.h"
 #include <QJsonDocument>
 #include <QStringList>
 #include <utility>
@@ -194,9 +195,14 @@ void DesktopController::applyHostInput(quint64 grant, const QByteArray& json) {
         return;
     if (obj.value("type") == "video-settings") {
         const auto serial = obj.value("serial").toInt();
-        const VideoSettings choice{obj.value("mbps").toInt(-1), obj.value("fps").toInt(-1)};
-        if (serial > 0 && choice.valid()) {
-            const bool applied = choice == videoSettings_ || host_->setVideoLimits(choice.maxBitrateMbps, choice.maxFps);
+        if (serial > 0) {
+            const auto requested = obj.value("adaptation");
+            const auto adaptation = parseVideoAdaptation(requested);
+            // Legacy viewers can change the ceilings without resetting the current policy.
+            const VideoSettings choice{obj.value("mbps").toInt(-1), obj.value("fps").toInt(-1),
+                                       adaptation.value_or(videoSettings_.adaptation)};
+            const bool applied = (requested.isUndefined() || adaptation) && choice.valid() &&
+                                 (choice == videoSettings_ || host_->setVideoSettings(choice));
             if (applied)
                 videoSettings_ = choice;
             sendVideoSettings(serial, applied);
@@ -210,7 +216,8 @@ void DesktopController::applyHostInput(quint64 grant, const QByteArray& json) {
 void DesktopController::sendVideoSettings(int serial, bool applied) {
     const auto state = QJsonDocument(QJsonObject{{"type", "video-settings"},
         {"epoch", static_cast<qint64>(epoch_)}, {"serial", serial}, {"applied", applied},
-        {"mbps", videoSettings_.maxBitrateMbps}, {"fps", videoSettings_.maxFps}});
+        {"mbps", videoSettings_.maxBitrateMbps}, {"fps", videoSettings_.maxFps},
+        {"adaptation", videoAdaptationName(videoSettings_.adaptation)}});
     host_->sendInput(state.toJson(QJsonDocument::Compact).toStdString());
 }
 void DesktopController::tickHost() {

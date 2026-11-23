@@ -80,7 +80,7 @@ class DesktopController final : public QObject {
     void stateChanged(const std::string& state);
     void updateStats();
     void updatePermit();
-    void requestVideoSettings(int maxBitrateMbps, int maxFps);
+    void requestVideoSettings(const VideoSettings& choice);
     void receiveVideoSettings(const QJsonObject& message);
     void sendVideoSettings(int serial, bool applied);
     bool sendSignal(QJsonObject message);
@@ -116,6 +116,7 @@ class DesktopController final : public QObject {
     QTimer videoSettingsReply_;
     int videoSettingsSerial_ = 0;
     bool remoteVideoSettings_ = false;
+    bool remoteVideoAdaptation_ = false;
     std::unique_ptr<DeviceConnection> devices_;
 };
 } // namespace evp

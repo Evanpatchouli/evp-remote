@@ -9,6 +9,7 @@
 #include "media/ffmpeg_decoder.h"
 #include "ui/home_window.h"
 #include "ui/session_window.h"
+#include "video_settings_wire.h"
 #include "viewer_input.h"
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -123,7 +124,7 @@ DesktopController::DesktopController(HomeWindow& home, HostAdapters adapters, QS
     connect(&sampler_, &QTimer::timeout, this, &DesktopController::updateStats);
     videoSettingsReply_.setSingleShot(true);
     connect(&videoSettingsReply_, &QTimer::timeout, this, [this] {
-        window_->setVideoSettings(videoSettings_.maxBitrateMbps, videoSettings_.maxFps, true,
+        window_->setVideoSettings(videoSettings_, true, remoteVideoAdaptation_,
                                   QStringLiteral("对端未及时确认，当前显示上次确认的设置。"));
     });
     releaseRetry_.setInterval(500);
@@ -393,7 +394,7 @@ void DesktopController::ready(const QJsonObject& m) {
     input_ = new ViewerInput(surface_, [this](QJsonObject e) { return sendInput(std::move(e)); }, this);
     connect(window_, &SessionWindow::endRequested, this, &DesktopController::endSession);
     connect(window_, &SessionWindow::videoSettingsRequested, this, &DesktopController::requestVideoSettings);
-    window_->setVideoSettings(videoSettings_.maxBitrateMbps, videoSettings_.maxFps, false,
+    window_->setVideoSettings(videoSettings_, false, false,
                               QStringLiteral("连接后可查看对端支持的画面设置。"));
     window_->setStatus(QStringLiteral("正在协商音视频连接…"));
     window_->show();
@@ -440,8 +441,9 @@ void DesktopController::ready(const QJsonObject& m) {
                 if (c.epoch_ != epoch) {
                     c.epoch_ = epoch;
                     c.remoteVideoSettings_ = false;
+                    c.remoteVideoAdaptation_ = false;
                     c.videoSettingsReply_.stop();
-                    c.window_->setVideoSettings(c.videoSettings_.maxBitrateMbps, c.videoSettings_.maxFps, false,
+                    c.window_->setVideoSettings(c.videoSettings_, false, false,
                                                 QStringLiteral("需要对端支持会话内画面设置。"));
                 }
                 c.updatePermit();
@@ -492,7 +494,7 @@ void DesktopController::stateChanged(const std::string& state) {
         input_->setAvailable(false);
         connected_ = false;
         videoSettingsReply_.stop();
-        window_->setVideoSettings(videoSettings_.maxBitrateMbps, videoSettings_.maxFps, false,
+        window_->setVideoSettings(videoSettings_, false, remoteVideoAdaptation_,
                                   QStringLiteral("网络中断，等待重新连接。"));
         route_.clear();
         window_->setConnected(false);
@@ -504,7 +506,7 @@ void DesktopController::stateChanged(const std::string& state) {
         connected_ = true;
         phase_ = Phase::Streaming;
         window_->setConnected(true);
-        window_->setVideoSettings(videoSettings_.maxBitrateMbps, videoSettings_.maxFps, remoteVideoSettings_,
+        window_->setVideoSettings(videoSettings_, remoteVideoSettings_, remoteVideoAdaptation_,
                                   remoteVideoSettings_ ? QString{} : QStringLiteral("需要对端支持会话内画面设置。"));
         window_->setStatus(QStringLiteral("已连接，等待远程画面…"));
         home_.setStatus(trustedSession_ ? QStringLiteral("可信设备会话进行中")
@@ -553,18 +555,20 @@ void DesktopController::updatePermit() {
     input_->setAvailable(allowed);
     window_->setInputAvailable(allowed);
 }
-void DesktopController::requestVideoSettings(int maxBitrateMbps, int maxFps) {
-    const VideoSettings choice{maxBitrateMbps, maxFps};
+void DesktopController::requestVideoSettings(const VideoSettings& choice) {
     if (!connected_ || !channel_ || !epoch_ || !remoteVideoSettings_ || !choice.valid() ||
+        (!remoteVideoAdaptation_ && choice.adaptation != videoSettings_.adaptation) ||
         videoSettingsReply_.isActive() || choice == videoSettings_)
         return;
-    const auto request = QJsonDocument(QJsonObject{{"type", "video-settings"},
+    QJsonObject request{{"type", "video-settings"},
         {"epoch", static_cast<qint64>(epoch_)}, {"serial", ++videoSettingsSerial_},
-        {"mbps", choice.maxBitrateMbps}, {"fps", choice.maxFps}}).toJson(QJsonDocument::Compact);
-    const bool sent = rtc_->sendInput(request.toStdString());
+        {"mbps", choice.maxBitrateMbps}, {"fps", choice.maxFps}};
+    if (remoteVideoAdaptation_)
+        request.insert("adaptation", videoAdaptationName(choice.adaptation));
+    const bool sent = rtc_->sendInput(QJsonDocument(request).toJson(QJsonDocument::Compact).toStdString());
     if (sent)
         videoSettingsReply_.start(3000);
-    window_->setVideoSettings(videoSettings_.maxBitrateMbps, videoSettings_.maxFps, !sent,
+    window_->setVideoSettings(videoSettings_, !sent, remoteVideoAdaptation_,
                               sent ? QStringLiteral("正在应用…") : QStringLiteral("发送失败，请重试。"));
 }
 void DesktopController::receiveVideoSettings(const QJsonObject& message) {
@@ -573,15 +577,18 @@ void DesktopController::receiveVideoSettings(const QJsonObject& message) {
         return;
     const auto serial = message.value("serial").toInt(-1);
     const auto applied = message.value("applied");
-    const VideoSettings confirmed{message.value("mbps").toInt(-1), message.value("fps").toInt(-1)};
+    const auto adaptation = parseVideoAdaptation(message.value("adaptation"));
+    const VideoSettings confirmed{message.value("mbps").toInt(-1), message.value("fps").toInt(-1),
+                                  adaptation.value_or(VideoAdaptation::PreserveResolution)};
     if (!confirmed.valid() || !applied.isBool() ||
         (serial == 0 ? (remoteVideoSettings_ || !applied.toBool())
                      : (!remoteVideoSettings_ || serial != videoSettingsSerial_)))
         return;
     remoteVideoSettings_ = true;
+    remoteVideoAdaptation_ = adaptation.has_value();
     videoSettings_ = confirmed;
     videoSettingsReply_.stop();
-    window_->setVideoSettings(confirmed.maxBitrateMbps, confirmed.maxFps, connected_,
+    window_->setVideoSettings(confirmed, connected_, remoteVideoAdaptation_,
                               applied.toBool() ? QString{} : QStringLiteral("对端未能应用，已保留原设置。"));
 }
 bool DesktopController::sendInput(QJsonObject e) {
@@ -679,6 +686,7 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
     captureSize_ = {};
     videoSettings_ = {};
     remoteVideoSettings_ = false;
+    remoteVideoAdaptation_ = false;
     videoSettingsSerial_ = 0;
     if (failure)
         home_.showFailure(message);

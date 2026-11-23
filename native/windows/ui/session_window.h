@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../video_settings.h"
 #include <QMainWindow>
 
 class QCloseEvent;
@@ -23,13 +24,14 @@ public slots:
     void setInputAvailable(bool available);
     void setRoute(const QString& route);
     void setVideoFormat(const QSize& resolution, double fps);
-    void setVideoSettings(int maxBitrateMbps, int maxFps, bool available, const QString& message = {});
+    void setVideoSettings(const evp::VideoSettings& settings, bool available, bool adaptationSupported,
+                          const QString& message = {});
     void showFailure(const QString& message);
     void finish();
 
 signals:
     void endRequested();
-    void videoSettingsRequested(int maxBitrateMbps, int maxFps);
+    void videoSettingsRequested(const evp::VideoSettings& settings);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -38,7 +40,7 @@ protected:
 private:
     void createVideoSettingsPanel();
     void positionVideoSettingsPanel();
-    void requestVideoSettings(int maxBitrateMbps, int maxFps);
+    void requestVideoSettings(const evp::VideoSettings& choice);
     void updateStatus();
 
     QLabel* statusIndicator_;
@@ -50,14 +52,15 @@ private:
     QDialog* videoSettingsPanel_;
     QButtonGroup* bitrateOptions_;
     QButtonGroup* frameRateOptions_;
+    QButtonGroup* adaptationOptions_;
     QSpinBox* customBitrate_;
     QPushButton* applyBitrate_;
     QLabel* customBitrateInfo_;
+    QLabel* adaptationNote_;
     QLabel* videoSettingsMessage_;
     QWidget* videoSettingsFocus_ = nullptr;
     QString statusMessage_;
-    int maxVideoBitrateMbps_ = 0;
-    int maxVideoFps_ = 0;
+    evp::VideoSettings videoSettings_;
     bool videoSettingsAvailable_ = false;
     bool connected_ = false;
     bool inputAvailable_ = false;

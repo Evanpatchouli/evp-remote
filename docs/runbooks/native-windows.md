@@ -37,7 +37,7 @@ Both invitation and pairing codes offer 5, 15 or 30 minutes and 1, 2, 5 or 12 ho
 
 The native sender captures desktop updates with DXGI Desktop Duplication, includes the pointer, and encodes H.264 using FFmpeg. It currently reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
 
-In a native-to-native session, click the resolution and frame-rate control with the down arrow to change the bitrate limit or target frame rate. The host applies changes automatically within the current session. The toolbar shows actual received dimensions and successful presentations. The changes apply to the current session.
+In a native-to-native session, click the resolution and frame-rate control with the down arrow to change the bitrate limit or target frame rate. A compatible host also offers **清晰优先** for text, **均衡** for mixed content, and **流畅优先** for motion. The viewer shows the selection confirmed by the host. The toolbar reports received dimensions and successful presentation submissions.
 
 In both connection modes, a host with no default audio output can still share its screen and accept keyboard and mouse input. If enabled system audio cannot start, the host reports **系统声音不可用** and the viewer reports **对方未共享声音**. The saved preference applies again at the next connection.
 
@@ -133,7 +133,7 @@ The probe encodes a static 1080p text pattern at the idle desktop cadence. It ra
 
 Run `EvpVideoSurfaceProbe` with Qt's Windows platform plugin and a D3D11 adapter. It checks small text strokes, high-frequency stripes, native-size pixels, cached redraws and color reconstruction on offscreen textures. When the adapter supports NV12 textures, it also checks rotated and padded hardware surfaces.
 
-Build the optional `EvpVideoAdmissionProbe` target and run it with the matching runtime DLLs. The admission probe uses real x264 output and synthetic outbound RTP counters to exercise frame pacing, recovery requests, packet QP and timestamps without a session.
+Build the optional `EvpVideoSettingsProbe` and `EvpVideoAdmissionProbe` targets and run them with the matching runtime DLLs. The settings probe checks legacy and confirmed selections. The admission probe uses real x264 output and synthetic outbound RTP counters to exercise frame pacing, recovery requests, packet QP and timestamps without a session.
 
 The host samples the change in total local packet-send delay per sent video packet. Two consecutive windows averaging at least 80 ms temporarily cap excess delta-frame inputs at approximately 30 FPS. A healthy window clears the cap and stale observations expire. The first frame and requested IDRs bypass this pacing limit. A full hardware encoder drains before accepting more input. A persistent full queue still triggers codec recovery.
 

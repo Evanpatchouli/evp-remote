@@ -3,7 +3,6 @@
 #include "action_button.h"
 #include "floating_surface.h"
 #include "visual_style.h"
-#include "../video_settings.h"
 
 #include <QButtonGroup>
 #include <QCloseEvent>
@@ -66,7 +65,7 @@ constexpr auto videoSettingsStyle = R"(
     }
     QFrame#videoSettingsDivider { background: #e0e8f3/#373c45@stroke; border: none; }
     QLabel { color: #182844/#e6e8ec@foreground; background: transparent; }
-    QLabel#videoBitrateRange, QLabel#videoColorNote { color: #526684/#b7c0cf@muted; }
+    QLabel#videoBitrateRange, QLabel#videoAdaptationNote, QLabel#videoColorNote { color: #526684/#b7c0cf@muted; }
     QLabel#videoSettingsMessage {
         background: #f1f5fd/#2b3037@raised; color: #435b81/#b7c0cf@muted; border-radius: 6px; padding: 6px 8px;
     }
@@ -120,8 +119,12 @@ protected:
     void nextCheckState() override {}
 };
 
-QPushButton* addVideoChoice(QHBoxLayout* row, const VideoOption& option) {
+QPushButton* addVideoChoice(QHBoxLayout* row, const VideoOption& option, const QString& description = {}) {
     auto* button = new VideoChoice(option);
+    if (!description.isEmpty()) {
+        button->setToolTip(description);
+        button->setAccessibleDescription(description);
+    }
     row->addWidget(button, 1);
     return button;
 }
@@ -210,7 +213,7 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
         positionVideoSettingsPanel();
         videoSettingsPanel_->show();
         if (videoSettingsAvailable_) {
-            auto* selected = bitrateOptions_->button(maxVideoBitrateMbps_);
+            auto* selected = bitrateOptions_->button(videoSettings_.maxBitrateMbps);
             QWidget* focus = selected ? static_cast<QWidget*>(selected) : customBitrate_;
             focus->setFocus(Qt::PopupFocusReason);
         } else {
@@ -256,8 +259,7 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
 
     setRoute({});
     setVideoFormat({}, 0);
-    const evp::VideoSettings defaults;
-    setVideoSettings(defaults.maxBitrateMbps, defaults.maxFps, false, QStringLiteral("等待远端画面设置可用"));
+    setVideoSettings({}, false, false, QStringLiteral("等待远端画面设置可用"));
     onThemeChanged(*this, [this] { updateStatus(); });
 }
 
@@ -282,23 +284,26 @@ void SessionWindow::createVideoSettingsPanel()
     layout->setSpacing(8);
     layout->addWidget(label(QStringLiteral("画面设置"), "videoSettingsTitle", 17, QFont::DemiBold));
 
-    layout->addWidget(label(QStringLiteral("画质"), "videoQualityHeading", 13, QFont::DemiBold));
+    layout->addWidget(label(QStringLiteral("码率上限"), "videoQualityHeading", 13, QFont::DemiBold));
 
     auto* quality = new QHBoxLayout;
     quality->setSpacing(6);
     bitrateOptions_ = new QButtonGroup(this);
     bitrateOptions_->setExclusive(false);
     const VideoOption qualityOptions[] = {
-        {0, "videoBitrateAuto", QStringLiteral("自动（原画）")},
-        {30, "videoBitrate30", QStringLiteral("原画 30M")},
-        {14, "videoBitrate14", QStringLiteral("超清 14M")},
-        {8, "videoBitrate8", QStringLiteral("高清 8M")},
+        {0, "videoBitrateAuto", QStringLiteral("自动")},
+        {30, "videoBitrate30", QStringLiteral("30 Mbps")},
+        {14, "videoBitrate14", QStringLiteral("14 Mbps")},
+        {8, "videoBitrate8", QStringLiteral("8 Mbps")},
     };
     for (const auto& option : qualityOptions)
         bitrateOptions_->addButton(addVideoChoice(quality, option), option.limit);
+    const auto automaticNote = QStringLiteral("由 WebRTC 自行调节码率，无手动上限。");
+    bitrateOptions_->button(0)->setToolTip(automaticNote);
+    bitrateOptions_->button(0)->setAccessibleDescription(automaticNote);
     layout->addLayout(quality);
     connect(bitrateOptions_, &QButtonGroup::idClicked, this, [this](int limit) {
-        requestVideoSettings(limit, maxVideoFps_);
+        requestVideoSettings({limit, videoSettings_.maxFps, videoSettings_.adaptation});
     });
 
     auto* custom = new QHBoxLayout;
@@ -328,7 +333,7 @@ void SessionWindow::createVideoSettingsPanel()
     custom->addWidget(applyBitrate_);
     connect(applyBitrate_, &QPushButton::clicked, this, [this] {
         customBitrate_->interpretText();
-        requestVideoSettings(customBitrate_->value(), maxVideoFps_);
+        requestVideoSettings({customBitrate_->value(), videoSettings_.maxFps, videoSettings_.adaptation});
     });
     layout->addLayout(custom);
 
@@ -348,7 +353,33 @@ void SessionWindow::createVideoSettingsPanel()
         frameRateOptions_->addButton(addVideoChoice(frameRate, option), option.limit);
     layout->addLayout(frameRate);
     connect(frameRateOptions_, &QButtonGroup::idClicked, this, [this](int limit) {
-        requestVideoSettings(maxVideoBitrateMbps_, limit);
+        requestVideoSettings({videoSettings_.maxBitrateMbps, limit, videoSettings_.adaptation});
+    });
+
+    addSettingsDivider(layout);
+    layout->addWidget(label(QStringLiteral("自适应策略"), "videoAdaptationHeading", 13, QFont::DemiBold));
+    auto* adaptation = new QHBoxLayout;
+    adaptation->setSpacing(6);
+    adaptationOptions_ = new QButtonGroup(this);
+    adaptationOptions_->setExclusive(false);
+    using evp::VideoAdaptation;
+    const auto addAdaptation = [&](VideoAdaptation mode, const char* name, const QString& text, const QString& note) {
+        const auto id = static_cast<int>(mode);
+        adaptationOptions_->addButton(addVideoChoice(adaptation, {id, name, text}, note), id);
+    };
+    addAdaptation(VideoAdaptation::PreserveResolution, "videoAdaptationResolution", QStringLiteral("清晰优先"),
+                  QStringLiteral("优先保留原始分辨率，编码负载过高时降低帧率。"));
+    addAdaptation(VideoAdaptation::Balanced, "videoAdaptationBalanced", QStringLiteral("均衡"),
+                  QStringLiteral("根据编码负载和可用带宽调整分辨率与帧率。"));
+    addAdaptation(VideoAdaptation::PreserveFramerate, "videoAdaptationFramerate", QStringLiteral("流畅优先"),
+                  QStringLiteral("优先保留帧率，编码或带宽受限时降低分辨率。"));
+    layout->addLayout(adaptation);
+    adaptationNote_ = label(QStringLiteral("对端版本不支持切换自适应策略。"), "videoAdaptationNote", 12);
+    layout->addWidget(adaptationNote_);
+    connect(adaptationOptions_, &QButtonGroup::idClicked, this, [this](int id) {
+        auto choice = videoSettings_;
+        choice.adaptation = static_cast<VideoAdaptation>(id);
+        requestVideoSettings(choice);
     });
 
     addSettingsDivider(layout);
@@ -396,10 +427,10 @@ void SessionWindow::positionVideoSettingsPanel()
                               qBound(available.top(), top, qMax(available.top(), available.bottom() + 1 - height)));
 }
 
-void SessionWindow::requestVideoSettings(int maxBitrateMbps, int maxFps)
+void SessionWindow::requestVideoSettings(const evp::VideoSettings& choice)
 {
-    if (videoSettingsAvailable_ && (maxBitrateMbps != maxVideoBitrateMbps_ || maxFps != maxVideoFps_))
-        emit videoSettingsRequested(maxBitrateMbps, maxFps);
+    if (videoSettingsAvailable_ && choice != videoSettings_)
+        emit videoSettingsRequested(choice);
 }
 
 void SessionWindow::setStatus(const QString& message)
@@ -454,26 +485,30 @@ void SessionWindow::setVideoFormat(const QSize& resolution, double fps)
     videoSettingsButton_->setAccessibleDescription(format + QStringLiteral("。打开画面设置"));
 }
 
-void SessionWindow::setVideoSettings(int maxBitrateMbps, int maxFps, bool available, const QString& message)
+void SessionWindow::setVideoSettings(const evp::VideoSettings& settings, bool available, bool adaptationSupported,
+                                     const QString& message)
 {
     if (videoSettingsAvailable_ && !available && videoSettingsPanel_->isVisible())
         videoSettingsFocus_ = videoSettingsPanel_->focusWidget();
+    const auto maxBitrateMbps = settings.maxBitrateMbps;
     const bool custom = maxBitrateMbps > 0 && !bitrateOptions_->button(maxBitrateMbps);
-    if (custom && maxVideoBitrateMbps_ != maxBitrateMbps)
+    if (custom && videoSettings_.maxBitrateMbps != maxBitrateMbps)
         customBitrate_->setValue(maxBitrateMbps);
 
-    maxVideoBitrateMbps_ = maxBitrateMbps;
-    maxVideoFps_ = maxFps;
+    videoSettings_ = settings;
     videoSettingsAvailable_ = available;
 
-    const auto updateOptions = [available](const QButtonGroup& group, int limit) {
+    const auto updateOptions = [](const QButtonGroup& group, int selected, bool enabled) {
         for (auto* button : group.buttons()) {
-            button->setChecked(group.id(button) == limit);
-            button->setEnabled(available);
+            button->setChecked(group.id(button) == selected);
+            button->setEnabled(enabled);
         }
     };
-    updateOptions(*bitrateOptions_, maxBitrateMbps);
-    updateOptions(*frameRateOptions_, maxFps);
+    updateOptions(*bitrateOptions_, maxBitrateMbps, available);
+    updateOptions(*frameRateOptions_, settings.maxFps, available);
+    updateOptions(*adaptationOptions_, adaptationSupported ? static_cast<int>(settings.adaptation) : -1,
+                  available && adaptationSupported);
+    adaptationNote_->setVisible(available && !adaptationSupported);
     customBitrate_->setEnabled(available);
     applyBitrate_->setEnabled(available);
     customBitrateInfo_->setText(custom ? QStringLiteral("当前 %1 Mbps").arg(maxBitrateMbps)

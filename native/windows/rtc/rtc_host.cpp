@@ -536,27 +536,33 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         const auto detail = errorDetail(error);
         videoSender.reset(webrtc_RtpSenderInterface_refcounted_get(result));
         if (!videoSender) return "Could not publish the desktop video track." + detail;
-        return setVideoParameters(settings.maxBitrateMbps, settings.maxFps);
+        return setVideoParameters(settings);
     }
 
-    std::string setVideoParameters(int maxBitrateMbps, int maxFps) {
+    std::string setVideoParameters(VideoSettings settings) {
         const auto parameters = own<webrtc_RtpParameters_delete>(webrtc_RtpSenderInterface_GetParameters(videoSender.get()));
         auto* encodings = webrtc_RtpParameters_get_encodings(parameters.get());
         if (webrtc_RtpEncodingParameters_vector_size(encodings) != 1) {
             return "The desktop video sender did not expose its single encoding.";
         }
         auto* encoding = webrtc_RtpEncodingParameters_vector_get(encodings, 0);
-        const int bitrateBps = maxBitrateMbps * 1'000'000;
-        const double framerate = maxFps;
+        const int bitrateBps = settings.maxBitrateMbps * 1'000'000;
+        const double framerate = settings.maxFps;
         webrtc_RtpEncodingParameters_set_max_bitrate_bps(encoding, bitrateBps != 0, &bitrateBps);
         webrtc_RtpEncodingParameters_set_max_framerate(encoding, true, &framerate);
-        // Keep desktop text readable when WebRTC needs to reduce the encoding load.
-        const int preference = webrtc_DegradationPreference_MAINTAIN_RESOLUTION;
+        // WebRTC tracks encoder overuse and video quality separately, then applies the
+        // selected preference to the sink's frame-rate and resolution restrictions.
+        int preference = webrtc_DegradationPreference_MAINTAIN_RESOLUTION;
+        switch (settings.adaptation) {
+        case VideoAdaptation::PreserveResolution: break;
+        case VideoAdaptation::Balanced: preference = webrtc_DegradationPreference_BALANCED; break;
+        case VideoAdaptation::PreserveFramerate: preference = webrtc_DegradationPreference_MAINTAIN_FRAMERATE; break;
+        }
         webrtc_RtpParameters_set_degradation_preference(parameters.get(), true, &preference);
         webrtc_RTCError_unique* error = nullptr;
         webrtc_RtpSenderInterface_SetParameters(videoSender.get(), parameters.get(), &error);
         const auto detail = errorDetail(error);
-        return detail.empty() ? std::string{} : "Could not set the desktop video limits." + detail;
+        return detail.empty() ? std::string{} : "Could not set the desktop video parameters." + detail;
     }
 
     std::string addAudioTrack(const std_string* sharedStream) {
@@ -649,8 +655,8 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
                                              message.size(), false);
     }
 
-    bool setVideoLimits(int maxBitrateMbps, int maxFps) {
-        return !failed && connected && setVideoParameters(maxBitrateMbps, maxFps).empty();
+    bool setVideoSettings(VideoSettings settings) {
+        return !failed && connected && setVideoParameters(settings).empty();
     }
 
     void createOffer() {
@@ -841,6 +847,10 @@ RtcHost::~RtcHost() {
 
 bool RtcHost::start(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, VideoSettings settings) {
     close();
+    if (!settings.valid()) {
+        if (callbacks_.error) callbacks_.error("The desktop video parameters are invalid.");
+        return false;
+    }
     if (!callbacks_.post) {
         if (callbacks_.error) callbacks_.error("The WebRTC owner thread dispatcher is missing.");
         return false;
@@ -874,11 +884,11 @@ bool RtcHost::sendInput(std::string_view message) {
     return sent;
 }
 
-bool RtcHost::setVideoLimits(int maxBitrateMbps, int maxFps) {
-    if (!session_ || !VideoSettings{maxBitrateMbps, maxFps}.valid()) return false;
+bool RtcHost::setVideoSettings(VideoSettings settings) {
+    if (!session_ || !settings.valid()) return false;
     bool applied = false;
-    session_->onSignalingThread([&] { applied = session_->setVideoLimits(maxBitrateMbps, maxFps); });
-    if (applied) media_->setVideoMaxFps(maxFps);
+    session_->onSignalingThread([&] { applied = session_->setVideoSettings(settings); });
+    if (applied) media_->setVideoMaxFps(settings.maxFps);
     return applied;
 }
 
