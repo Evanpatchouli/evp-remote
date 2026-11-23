@@ -15,6 +15,7 @@ extern "C" {
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -54,33 +55,90 @@ struct Pointer {
     void update(IDXGIOutputDuplication* output, const DXGI_OUTDUPL_FRAME_INFO& frame) {
         if (frame.LastMouseUpdateTime.QuadPart) position = frame.PointerPosition;
         if (!frame.PointerShapeBufferSize) return;
-        if (frame.PointerShapeBufferSize > 1024 * 1024) throw std::runtime_error("DXGI pointer shape is too large");
+        image = {};
+        imageChecked = false;
+        if (frame.PointerShapeBufferSize > 1024 * 1024) {
+            pixels.clear();
+            return;
+        }
         pixels.resize(frame.PointerShapeBufferSize);
         UINT required = 0;
-        require(output->GetFramePointerShape(static_cast<UINT>(pixels.size()), pixels.data(), &required, &shape),
-                "DXGI GetFramePointerShape");
+        if (FAILED(output->GetFramePointerShape(static_cast<UINT>(pixels.size()), pixels.data(), &required, &shape)) ||
+            required > pixels.size()) {
+            pixels.clear();
+            return;
+        }
+        pixels.resize(required);
     }
 
-    bool visible() const { return position.Visible && !pixels.empty(); }
-
-    void draw(std::uint8_t* output, int width, int height, int pitch) const {
+    bool valid() const {
         const bool monochrome = shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
-        const int shapeWidth = static_cast<int>(shape.Width);
-        const int shapeHeight = static_cast<int>(monochrome ? shape.Height / 2 : shape.Height);
-        if (shapeWidth <= 0 || shapeHeight <= 0 || !shape.Pitch ||
-            shape.Height > pixels.size() / shape.Pitch ||
-            (monochrome ? (shape.Width + 7u) / 8u > shape.Pitch : shape.Width > shape.Pitch / 4u)) return;
+        const bool color = shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_COLOR ||
+            shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR;
+        return (color || monochrome) && shape.Width && shape.Height && shape.Pitch &&
+            shape.Height <= pixels.size() / shape.Pitch &&
+            (monochrome ? !(shape.Height & 1) && (shape.Width - 1) / 8u < shape.Pitch
+                        : shape.Width <= shape.Pitch / 4u);
+    }
 
-        const int left = position.Position.x;
-        const int top = position.Position.y;
-        for (int row = std::max(0, -top); row < std::min(shapeHeight, height - top); ++row) {
-            for (int column = std::max(0, -left); column < std::min(shapeWidth, width - left); ++column) {
-                auto* dst = output + static_cast<size_t>(top + row) * pitch + (left + column) * 4;
+    int height() const {
+        return static_cast<int>(shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME ? shape.Height / 2 : shape.Height);
+    }
+    QPoint topLeft() const { return {position.Position.x, position.Position.y}; }
+    QRect bounds(QSize desktop) const {
+        if (!valid()) return {};
+        return QRect(topLeft(), QSize(static_cast<int>(shape.Width), height())).intersected(QRect(QPoint(), desktop));
+    }
+
+    bool visible() const { return position.Visible && valid(); }
+
+    const QImage& separateImage() {
+        if (imageChecked) return image;
+        imageChecked = true;
+        if (!valid() || shape.Width > maxCursorEdge || height() > maxCursorEdge ||
+            cursorHeaderBytes + 4 * shape.Width * height() > maxCursorPacket ||
+            shape.HotSpot.x < 0 || unsigned(shape.HotSpot.x) >= shape.Width ||
+            shape.HotSpot.y < 0 || shape.HotSpot.y >= height()) return image;
+        QImage candidate(static_cast<int>(shape.Width), height(), QImage::Format_ARGB32_Premultiplied);
+        if (candidate.isNull()) return image;
+        for (int row = 0; row < candidate.height(); ++row) {
+            auto* dst = reinterpret_cast<QRgb*>(candidate.scanLine(row));
+            const auto* src = pixels.data() + static_cast<size_t>(row) * shape.Pitch;
+            for (int column = 0; column < candidate.width(); ++column) {
+                if (shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME) {
+                    const auto bit = 0x80 >> (column & 7);
+                    const bool andMask = src[column / 8] & bit;
+                    const bool xorMask = src[static_cast<size_t>(height()) * shape.Pitch + column / 8] & bit;
+                    if (andMask && xorMask) return image;
+                    const int level = xorMask ? 255 : 0;
+                    dst[column] = qRgba(level, level, level, andMask ? 0 : 255);
+                } else {
+                    const auto* pixel = src + column * 4;
+                    if (shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MASKED_COLOR) {
+                        if (pixel[3] && (pixel[0] || pixel[1] || pixel[2])) return image;
+                        dst[column] = pixel[3] ? 0 : qRgb(pixel[2], pixel[1], pixel[0]);
+                    } else {
+                        dst[column] = qPremultiply(qRgba(pixel[2], pixel[1], pixel[0], pixel[3]));
+                    }
+                }
+            }
+        }
+        image = std::move(candidate);
+        return image;
+    }
+
+    void draw(std::uint8_t* output, int pitch, const QRect& clipped) const {
+        const bool monochrome = shape.Type == DXGI_OUTDUPL_POINTER_SHAPE_TYPE_MONOCHROME;
+        for (int y = clipped.top(); y <= clipped.bottom(); ++y) {
+            for (int x = clipped.left(); x <= clipped.right(); ++x) {
+                const int row = y - position.Position.y;
+                const int column = x - position.Position.x;
+                auto* dst = output + static_cast<size_t>(y) * pitch + x * 4;
                 const auto* src = pixels.data() + static_cast<size_t>(row) * shape.Pitch;
                 if (monochrome) {
                     const auto bit = 0x80 >> (column & 7);
                     const auto andMask = src[column / 8] & bit ? 255 : 0;
-                    const auto xorMask = src[static_cast<size_t>(shapeHeight) * shape.Pitch + column / 8] & bit ? 255 : 0;
+                    const auto xorMask = src[static_cast<size_t>(height()) * shape.Pitch + column / 8] & bit ? 255 : 0;
                     for (int c = 0; c < 3; ++c) dst[c] = static_cast<std::uint8_t>((dst[c] & andMask) ^ xorMask);
                 } else {
                     src += column * 4;
@@ -99,6 +157,8 @@ struct Pointer {
     DXGI_OUTDUPL_POINTER_POSITION position{};
     DXGI_OUTDUPL_POINTER_SHAPE_INFO shape{};
     std::vector<std::uint8_t> pixels;
+    QImage image;
+    bool imageChecked = false;
 };
 
 struct Duplication {
@@ -127,6 +187,8 @@ struct Duplication {
                 require(output.As(&selected), "DXGI IDXGIOutput1");
                 require(selected->DuplicateOutput(device.Get(), &output_), "DXGI DuplicateOutput");
                 output_->GetDesc(&mode);
+                desktop = QSize(description.DesktopCoordinates.right - description.DesktopCoordinates.left,
+                                description.DesktopCoordinates.bottom - description.DesktopCoordinates.top);
                 return;
             }
         }
@@ -137,9 +199,37 @@ struct Duplication {
         return mode.Rotation == DXGI_MODE_ROTATION_ROTATE90 || mode.Rotation == DXGI_MODE_ROTATION_ROTATE270;
     }
 
-    FrameBuffer read(ID3D11Texture2D* texture, const std::function<void(int, int)>& onSize) {
-        D3D11_TEXTURE2D_DESC description{};
-        texture->GetDesc(&description);
+    CursorSnapshot cursor() {
+        CursorSnapshot state;
+        state.desktop = width && height ? QSize(width, height) : desktop;
+        CURSORINFO info{sizeof(CURSORINFO)};
+        if (GetCursorInfo(&info) && (!(info.flags & CURSOR_SHOWING) || (info.flags & CURSOR_SUPPRESSED))) {
+            state.mode = CursorMode::Hidden;
+            return state;
+        }
+        if (!pointer.position.Visible) return state;
+        state.mode = CursorMode::Composited;
+        const auto& image = pointer.separateImage();
+        const QPoint hotSpot(pointer.shape.HotSpot.x, pointer.shape.HotSpot.y);
+        if (!image.isNull() && QRect(QPoint(), state.desktop).contains(pointer.topLeft() + hotSpot)) {
+            state.mode = CursorMode::Separate;
+            state.topLeft = pointer.topLeft();
+            state.hotSpot = hotSpot;
+            state.image = image;
+        }
+        return state;
+    }
+
+    FrameBuffer read(ID3D11Texture2D* texture, const std::function<void(int, int)>& onSize, bool composite) {
+        if (texture) {
+            D3D11_TEXTURE2D_DESC description{};
+            texture->GetDesc(&description);
+            prepare(description, onSize);
+        }
+        return convert(texture, composite);
+    }
+
+    void prepare(D3D11_TEXTURE2D_DESC description, const std::function<void(int, int)>& onSize) {
         if (!staging) {
             sourceWidth = static_cast<int>(description.Width);
             sourceHeight = static_cast<int>(description.Height);
@@ -168,10 +258,12 @@ struct Duplication {
                    description.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
             throw std::runtime_error("DXGI source mode changed");
         }
+    }
 
+    FrameBuffer convert(ID3D11Texture2D* texture, bool composite) {
         D3D11_MAPPED_SUBRESOURCE mapped{};
         require(readbackTime.measure([&] {
-            context->CopyResource(staging.Get(), texture);
+            if (texture) context->CopyResource(staging.Get(), texture);
             return context->Map(staging.Get(), 0, D3D11_MAP_READ_WRITE, 0, &mapped);
         }), "D3D11 Map");
         const MappedTexture unmap{context.Get(), staging.Get()};
@@ -182,8 +274,6 @@ struct Duplication {
             pixels = oriented.data();
             pitch = width * 4;
         }
-        if (pointer.visible()) pointer.draw(pixels, width, height, pitch);
-
         auto* retained = webrtc_I420Buffer_CreateWithStrides(width & ~1, height & ~1,
             (width + 31) & ~31, (width / 2 + 31) & ~31, (width / 2 + 31) & ~31);
         if (!retained) throw std::runtime_error("WebRTC frame allocation failed");
@@ -196,12 +286,31 @@ struct Duplication {
                                 webrtc_I420Buffer_StrideV(i420), 0};
         const std::uint8_t* src[] = {pixels, nullptr, nullptr, nullptr};
         const int srcPitch[] = {pitch, 0, 0, 0};
-        if (conversionTime.measure([&] {
+        // Preserve the clean staging image for a cursor mode change on a static desktop.
+        const auto bounds = composite ? pointer.bounds(QSize(width, height)) : QRect{};
+        if (!bounds.isEmpty()) {
+            if (pixels == mapped.pData) saveCursorArea(pixels, pitch, bounds, false);
+            pointer.draw(pixels, pitch, bounds);
+        }
+        const auto converted = conversionTime.measure([&] {
             return sws_scale(conversion.get(), src, srcPitch, 0, height, dst, dstPitch);
-        }) != (height & ~1)) {
+        });
+        if (!bounds.isEmpty() && pixels == mapped.pData) saveCursorArea(pixels, pitch, bounds, true);
+        if (converted != (height & ~1)) {
             throw std::runtime_error("FFmpeg BGRA conversion failed");
         }
         return buffer;
+    }
+
+    void saveCursorArea(std::uint8_t* pixels, int pitch, const QRect& bounds, bool restore) {
+        const auto rowBytes = static_cast<size_t>(bounds.width()) * 4;
+        if (!restore) cursorArea.resize(rowBytes * bounds.height());
+        for (int row = 0; row < bounds.height(); ++row) {
+            auto* screen = pixels + static_cast<size_t>(bounds.top() + row) * pitch + bounds.left() * 4;
+            auto* saved = cursorArea.data() + row * rowBytes;
+            if (restore) std::memcpy(screen, saved, rowBytes);
+            else std::memcpy(saved, screen, rowBytes);
+        }
     }
 
     void orient(const std::uint8_t* pixels, int pitch) {
@@ -230,9 +339,11 @@ struct Duplication {
     VideoStageTiming readbackTime{"desktop-readback"};
     VideoStageTiming conversionTime{"bgra-to-i420"};
     DXGI_OUTDUPL_DESC mode{};
+    QSize desktop;
     Pointer pointer;
     std::unique_ptr<SwsContext, decltype(&sws_freeContext)> conversion{nullptr, sws_freeContext};
     std::vector<std::uint8_t> oriented;
+    std::vector<std::uint8_t> cursorArea;
     int sourceWidth = 0;
     int sourceHeight = 0;
     int width = 0;
@@ -277,9 +388,13 @@ void submit(webrtc_AdaptedVideoTrackSource* source, webrtc_VideoFrameBuffer_refc
 }  // namespace
 
 void DesktopCapture::run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* source,
-                         const std::function<void(int, int)>& onSize) {
+                         const std::function<void(int, int)>& onSize,
+                         const std::function<void(quint64, CursorSnapshot)>& onCursor) {
     Duplication duplication;
     FrameBuffer last;
+    bool lastComposite = false;
+    quint64 lastCursorEpoch = 0;
+    CursorSnapshot lastCursor;
     using Clock = std::chrono::steady_clock;
     const auto start = Clock::now();
     const auto startMicros = webrtc_TimeMillis() * 1'000;
@@ -309,24 +424,44 @@ void DesktopCapture::run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* s
         ComPtr<IDXGIResource> resource;
         const auto result = duplication.output_->AcquireNextFrame(12, &info, &resource);
         const auto timestamp = nowMicros();
-        if (result == DXGI_ERROR_WAIT_TIMEOUT) {
-            if (last && timestamp - lastSubmit >= 250'000 && !stop.stop_requested()) {
-                submit(source, last.get(), timestamp, true);
-                lastSubmit = timestamp;
+        if (result != DXGI_ERROR_WAIT_TIMEOUT) require(result, "DXGI AcquireNextFrame");
+        bool updated = false;
+        const auto epoch = onCursor ? cursorEpoch_.load() : 0;
+        CursorSnapshot cursor;
+        const auto capture = [&](ID3D11Texture2D* texture, bool desktopUpdated) {
+            if (epoch) {
+                cursor = duplication.cursor();
+                cursor.appliedMove = appliedCursorMove(epoch, cursor);
             }
-            continue;
-        }
-        require(result, "DXGI AcquireNextFrame");
-        {
+            const bool composite = (!epoch || cursor.mode == CursorMode::Composited) && duplication.pointer.visible();
+            if ((texture && (!last || desktopUpdated || composite)) || (last && composite != lastComposite)) {
+                last = duplication.read(texture, onSize, composite);
+                lastComposite = composite;
+                updated = true;
+            }
+        };
+        if (result == DXGI_ERROR_WAIT_TIMEOUT) {
+            if (last) capture(nullptr, false);
+        } else {
             const AcquiredFrame release{duplication.output_.Get()};
             if (stop.stop_requested()) break;
             duplication.pointer.update(duplication.output_.Get(), info);
             ComPtr<ID3D11Texture2D> texture;
             require(resource.As(&texture), "DXGI desktop texture");
-            last = duplication.read(texture.Get(), onSize);
+            capture(texture.Get(), !epoch || info.LastPresentTime.QuadPart != 0);
         }
         if (stop.stop_requested()) break;
-        submit(source, last.get(), timestamp, false);
+        if (epoch && last && (lastCursorEpoch != epoch || lastCursor != cursor)) {
+            lastCursor = cursor;
+            onCursor(epoch, std::move(cursor));
+        }
+        lastCursorEpoch = epoch;
+        if (!updated && (!last || timestamp - lastSubmit < 250'000)) {
+            if (epoch && result != DXGI_ERROR_WAIT_TIMEOUT)
+                nextCapture = timestamp + 8'333;
+            continue;
+        }
+        submit(source, last.get(), timestamp, !updated);
         lastSubmit = timestamp;
         nextCapture = std::max(nextCapture + interval, timestamp + interval - 750);
     }
@@ -335,13 +470,15 @@ void DesktopCapture::run(std::stop_token stop, webrtc_AdaptedVideoTrackSource* s
 DesktopCapture::~DesktopCapture() { stop(); }
 
 bool DesktopCapture::start(webrtc_AdaptedVideoTrackSource* source, int maxFps,
-                           std::function<void(QString)> onError, std::function<void(int, int)> onSize) {
+                           std::function<void(QString)> onError, std::function<void(int, int)> onSize,
+                           std::function<void(quint64, CursorSnapshot)> onCursor) {
     if (worker_.joinable() || !source || maxFps < 1 || maxFps > 240) return false;
     setMaxFps(maxFps);
     try {
-        worker_ = std::jthread([this, source, onError = std::move(onError), onSize = std::move(onSize)](std::stop_token stop) {
+        worker_ = std::jthread([this, source, onError = std::move(onError), onSize = std::move(onSize),
+                                onCursor = std::move(onCursor)](std::stop_token stop) {
             try {
-                run(stop, source, onSize);
+                run(stop, source, onSize, onCursor);
             } catch (const std::exception& error) {
                 if (!stop.stop_requested() && onError) onError(QString::fromUtf8(error.what()));
             }
@@ -361,10 +498,37 @@ void DesktopCapture::setMaxFps(int maxFps) {
     cadenceChanged_.notify_one();
 }
 
+void DesktopCapture::setCursorEpoch(quint64 epoch) {
+    cursorEpoch_ = epoch;
+}
+
+void DesktopCapture::noteCursorMove(quint64 epoch, quint32 serial, QPointF position) {
+    const std::lock_guard lock(cursorMoveMutex_);
+    cursorMove_ = {epoch, serial, position, false};
+}
+
+quint32 DesktopCapture::appliedCursorMove(quint64 epoch, const CursorSnapshot& state) {
+    if (state.mode != CursorMode::Separate) return 0;
+    const std::lock_guard lock(cursorMoveMutex_);
+    if (cursorMove_.epoch != epoch || !cursorMove_.serial) return 0;
+    const auto hot = state.topLeft + state.hotSpot;
+    const auto& point = cursorMove_.position;
+    if (std::abs(hot.x() - point.x() * (state.desktop.width() - 1)) <= 2 &&
+        std::abs(hot.y() - point.y() * (state.desktop.height() - 1)) <= 2) {
+        cursorMove_.matched = true;
+        return cursorMove_.serial;
+    }
+    if (cursorMove_.matched) cursorMove_.serial = 0;
+    return 0;
+}
+
 void DesktopCapture::stop() {
     if (!worker_.joinable()) return;
     worker_.request_stop();
     worker_.join();
+    cursorEpoch_ = 0;
+    const std::lock_guard lock(cursorMoveMutex_);
+    cursorMove_ = {};
 }
 
 }  // namespace evp

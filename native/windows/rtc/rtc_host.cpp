@@ -1,4 +1,5 @@
 #include "rtc_host.h"
+#include "cursor_outbox.h"
 #include "rtc_runtime.h"
 
 #include "../capture/desktop_capture.h"
@@ -14,7 +15,9 @@
 #include <QString>
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
+#include <mutex>
 #include <utility>
 
 namespace evp {
@@ -88,10 +91,16 @@ constexpr std::string_view streamId = "desktop";
 class WindowsHostMedia final : public HostMediaSource {
 public:
     bool startVideo(webrtc_AdaptedVideoTrackSource* source, int maxFps, Error error, VideoSize size) override {
-        return desktop_.start(source, maxFps, asQtCallback(std::move(error)), std::move(size));
+        return desktop_.start(source, maxFps, asQtCallback(std::move(error)), std::move(size), std::move(cursor_));
     }
 
     void setVideoMaxFps(int maxFps) override { desktop_.setMaxFps(maxFps); }
+    bool supportsSeparateCursor() const override { return true; }
+    void setCursorCallback(Cursor cursor) override { cursor_ = std::move(cursor); }
+    void setCursorEpoch(quint64 epoch) override { desktop_.setCursorEpoch(epoch); }
+    void noteCursorMove(quint64 epoch, quint32 serial, QPointF point) override {
+        desktop_.noteCursorMove(epoch, serial, point);
+    }
 
     bool startAudio(Pcm pcm, Error startupResult, Error runtimeError) override {
         return audio_.start(std::move(pcm), asQtCallback(std::move(startupResult)), asQtCallback(std::move(runtimeError)));
@@ -109,6 +118,7 @@ private:
 
     DesktopCapture desktop_;
     LoopbackAudio audio_;
+    Cursor cursor_;
 };
 
 bool isOpus(const webrtc_SdpAudioFormat* format) {
@@ -338,6 +348,15 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
     Owned<webrtc_RtpSenderInterface, webrtc_RtpSenderInterface_Release> videoSender;
     Owned<webrtc_DataChannelInterface, webrtc_DataChannelInterface_Release> input;
     Owned<webrtc_DataChannelObserver, webrtc_DataChannelObserver_delete> inputObserver;
+    Owned<webrtc_DataChannelInterface, webrtc_DataChannelInterface_Release> cursorChannel;
+    Owned<webrtc_DataChannelObserver, webrtc_DataChannelObserver_delete> cursorObserver;
+    quint64 cursorRequested = 0;
+    bool cursorChannelAttempted = false;
+    std::atomic<quint64> cursorTracked = 0;
+    quint32 observedCursorAck = 0;
+    std::chrono::steady_clock::time_point cursorProgress{};
+    std::mutex cursorMutex;
+    CursorOutbox cursorOutbox;
 
     template<class Function>
     void onSignalingThread(Function task) {
@@ -382,6 +401,11 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         const auto captureError = [weak = weak_from_this()](std::string message) {
             if (const auto self = weak.lock()) self->reportError(std::move(message));
         };
+        if (media.supportsSeparateCursor()) {
+            media.setCursorCallback([weak = weak_from_this()](quint64 epoch, CursorSnapshot state) {
+                if (const auto self = weak.lock()) self->queueCursor(epoch, std::move(state));
+            });
+        }
         if (!media.startVideo(videoSource.get(), settings.maxFps, captureError, [weak = weak_from_this()](int width, int height) {
                 if (const auto self = weak.lock()) self->notify(&Callbacks::videoSize, width, height);
             })) {
@@ -655,6 +679,121 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
                                              message.size(), false);
     }
 
+    void setSeparateCursor(quint64 epoch) {
+        if (epoch && (failed || !connected || !inputOpen || !media.supportsSeparateCursor())) return;
+        if (cursorRequested == epoch) return;
+        cursorRequested = epoch;
+        {
+            const std::lock_guard lock(cursorMutex);
+            cursorOutbox.reset();
+        }
+        cursorProgress = std::chrono::steady_clock::now();
+        if (epoch && !cursorChannelAttempted) {
+            cursorChannelAttempted = true;
+            createCursorChannel();
+        }
+        updateCursorTracking();
+    }
+
+    void createCursorChannel() {
+        const auto init = own<webrtc_DataChannelInit_delete>(webrtc_DataChannelInit_new());
+        if (!init) return;
+        webrtc_DataChannelInit_set_ordered(init.get(), true);
+        webrtc_DataChannelInterface_refcounted* result = nullptr;
+        webrtc_RTCError_unique* error = nullptr;
+        webrtc_PeerConnectionInterface_CreateDataChannelOrError(
+            peer.get(), cursorChannelLabel, sizeof(cursorChannelLabel) - 1, init.get(), &result, &error);
+        const auto ignored = own<webrtc_RTCError_unique_delete>(error);
+        cursorChannel.reset(webrtc_DataChannelInterface_refcounted_get(result));
+        if (!cursorChannel) return;
+        static const webrtc_DataChannelObserver_cbs handlers{
+            .OnStateChange = [](void* data) { static_cast<Session*>(data)->updateCursorTracking(); },
+            .OnMessage = [](const std::uint8_t* bytes, std::size_t size, int binary, void* data) {
+                if (binary && bytes && size == sizeof(quint32)) {
+                    auto& self = *static_cast<Session*>(data);
+                    const auto seq = decodeCursorAck(QByteArray::fromRawData(reinterpret_cast<const char*>(bytes), size));
+                    bool advanced = false;
+                    {
+                        const std::lock_guard lock(self.cursorMutex);
+                        advanced = self.cursorOutbox.acknowledge(seq);
+                    }
+                    if (advanced) self.scheduleCursorFlush();
+                }
+            },
+            .OnDestroy = [](void*) {},
+        };
+        cursorObserver.reset(webrtc_DataChannelObserver_new(&handlers, this));
+        webrtc_DataChannelInterface_RegisterObserver(cursorChannel.get(), cursorObserver.get());
+    }
+
+    void updateCursorTracking() {
+        const bool open = cursorChannel &&
+            webrtc_DataChannelInterface_state(cursorChannel.get()) == webrtc_DataChannelInterface_DataState_kOpen;
+        const auto epoch = active && !failed && connected && inputOpen && open ? cursorRequested : 0;
+        if (cursorTracked.exchange(epoch) == epoch) return;
+        post([epoch](Session& self) {
+            if (self.cursorTracked == epoch) self.media.setCursorEpoch(epoch);
+        });
+    }
+
+    void queueCursor(quint64 epoch, CursorSnapshot state) {
+        if (!active || failed || cursorTracked != epoch) return;
+        {
+            const std::lock_guard lock(cursorMutex);
+            if (cursorTracked != epoch) return;
+            cursorOutbox.observe(epoch, std::move(state));
+        }
+        scheduleCursorFlush();
+    }
+
+    void scheduleCursorFlush() {
+        {
+            const std::lock_guard lock(cursorMutex);
+            if (!cursorOutbox.schedule()) return;
+        }
+        post([](Session& self) {
+            self.onSignalingThread([&] { self.flushCursor(); });
+        });
+    }
+
+    void flushCursor() {
+        const auto update = [&] {
+            const std::lock_guard lock(cursorMutex);
+            if (!cursorOutbox.inFlight()) cursorProgress = std::chrono::steady_clock::now();
+            return cursorOutbox.take(connected && inputOpen && !failed ? cursorTracked.load() : 0);
+        }();
+        if (!update || !cursorChannel) return;
+        if (!update->sequence) {
+            closeCursorChannel();
+            return;
+        }
+        const auto packet = encodeCursor(update->state, update->epoch, update->sequence, update->includeShape);
+        if (!webrtc_DataChannelInterface_Send(cursorChannel.get(),
+                reinterpret_cast<const std::uint8_t*>(packet.constData()), packet.size(), true)) {
+            closeCursorChannel();
+        }
+    }
+
+    void closeCursorChannel() {
+        cursorRequested = 0;
+        updateCursorTracking();
+        if (cursorChannel) webrtc_DataChannelInterface_Close(cursorChannel.get());
+    }
+
+    void checkCursorProgress() {
+        if (!cursorTracked) return;
+        const auto [ack, inFlight] = [&] {
+            const std::lock_guard lock(cursorMutex);
+            return std::pair{cursorOutbox.acknowledged(), cursorOutbox.inFlight()};
+        }();
+        if (ack != observedCursorAck) {
+            observedCursorAck = ack;
+            cursorProgress = std::chrono::steady_clock::now();
+        } else if (inFlight && std::chrono::steady_clock::now() - cursorProgress > std::chrono::seconds(3)) {
+            closeCursorChannel();
+        }
+    }
+
     bool setVideoSettings(VideoSettings settings) {
         return !failed && connected && setVideoParameters(settings).empty();
     }
@@ -778,6 +917,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
     }
 
     void pollStats() {
+        checkCursorProgress();
         if (!callbacks.routeStats || failed || std::exchange(statsPending, true)) return;
         static webrtc_RTCStatsCollectorCallback_cbs handlers{
             .OnStatsDelivered = [](const webrtc_RTCStatsReport_refcounted* report, void* data) {
@@ -816,6 +956,12 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         media.stop();
         if (signalingStarted) {
             onSignalingThread([this] {
+                if (cursorChannel) {
+                    if (cursorObserver) webrtc_DataChannelInterface_UnregisterObserver(cursorChannel.get());
+                    webrtc_DataChannelInterface_Close(cursorChannel.get());
+                    cursorChannel.reset();
+                    cursorObserver.reset();
+                }
                 if (input) {
                     if (inputObserver) webrtc_DataChannelInterface_UnregisterObserver(input.get());
                     webrtc_DataChannelInterface_Close(input.get());
@@ -882,6 +1028,18 @@ bool RtcHost::sendInput(std::string_view message) {
     bool sent = false;
     if (session_) session_->onSignalingThread([&] { sent = session_->sendInput(message); });
     return sent;
+}
+
+void RtcHost::offerSeparateCursor(quint64 epoch) {
+    if (media_->supportsSeparateCursor()) sendInput("cursor-offer:" + std::to_string(epoch));
+}
+
+void RtcHost::setSeparateCursor(quint64 epoch) {
+    if (session_) session_->onSignalingThread([&] { session_->setSeparateCursor(epoch); });
+}
+
+void RtcHost::noteCursorMove(quint64 epoch, quint32 serial, QPointF position) {
+    if (session_ && session_->cursorTracked == epoch) media_->noteCursorMove(epoch, serial, position);
 }
 
 bool RtcHost::setVideoSettings(VideoSettings settings) {

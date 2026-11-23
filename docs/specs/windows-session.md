@@ -10,6 +10,8 @@ For a preapproved invitation the native host generates a high-entropy bearer cod
 
 The viewer receives video and can send keyboard and mouse events during the accepted session. System audio is optional. If the native host cannot start system audio capture, it starts the session with video and input and reports that system sound is unavailable. Input coordinates follow the captured display, including letterboxing. On blur, disconnect, screen capture end, or revocation, release held input. The host can stop sharing locally. Old invites and stale peers must not regain control after teardown.
 
+Compatible native peers can display the host pointer on a separate layer after the active input grant. The viewer predicts the position of a locally sent move while waiting for host feedback. It restores the local system pointer when the video loses focus. Embedded cursors, shapes requiring destination-dependent XOR, and peers without the extension use the host video path. Losing the optional cursor channel returns the session to the video cursor.
+
 Validate an actual cross-network direct connection, automatic relay when the direct route is blocked, and a relay-only control run. Record selected candidate types and both media tracks, visible frames, audible test tone, and observed input in a harmless test window. Unknown path stays unknown. LAN is an optional diagnostic. Elevated applications, secure desktops, unattended control, and multi-monitor switching are outside this milestone.
 
 ## Native client's high-refresh target

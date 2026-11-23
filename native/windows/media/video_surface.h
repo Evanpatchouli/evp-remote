@@ -1,10 +1,12 @@
 #pragma once
 
+#include <QImage>
 #include <QRectF>
 #include <QSize>
 #include <QWidget>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 struct ID3D11Device;
@@ -56,6 +58,9 @@ public:
     QRectF contentRect() const;
     QSize sourceSize() const;
     ID3D11Device* acquireD3D11Device();
+    bool supportsRemoteCursor();
+    void setRemoteCursor(QImage image, QRectF normalized);
+    void setCursorFailureHandler(std::function<void()> handler);
     Stats stats() const;
 
 protected:

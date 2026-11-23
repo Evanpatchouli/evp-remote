@@ -1,4 +1,5 @@
 #include "video_surface.h"
+#include "cursor_renderer.h"
 
 #ifdef EVP_VIDEO_SURFACE_READBACK_PROBE
 #include "../tests/video_surface_readback.h"
@@ -18,6 +19,7 @@
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace evp {
@@ -603,7 +605,7 @@ struct VideoSurface::State {
             const int sourceLength = horizontalFirst ? source.width() : source.height();
             if (outputLength >= sourceLength || !initializeDownsampler()) return false;
 
-            // Paint requests and Present retries can redraw the same upload.
+            // Cursor updates and Present retries can redraw the same upload.
             // Only the final pass depends on the full fitted viewport.
             const bool reuse = uploaded == filteredSequence && horizontalFirst == filteredHorizontal
                 && outputLength == filteredLength;
@@ -698,9 +700,14 @@ struct VideoSurface::State {
             return frameResult;
         }
 
-        HRESULT draw(QSize size, const Frame* frame, HRESULT& frameResult) {
+        HRESULT draw(QSize size, const Frame* frame, HRESULT& frameResult, const QImage& cursorImage,
+                     const QRectF& cursorRect) {
             ContextLock lock(multithread.Get());
             frameResult = drawVideo(size, frame);
+            if (frame && SUCCEEDED(frameResult) && !cursorImage.isNull()) {
+                cursorRenderer.draw(device.Get(), context.Get(), sampler.Get(), cursorImage, cursorRect,
+                                    fit(size, frame->orientedSize()));
+            }
             const auto result = swapChain->Present(syncInterval, presentFlags);
             if (result == S_OK) renderCredit = false;
             return result;
@@ -720,6 +727,7 @@ struct VideoSurface::State {
         ComPtr<ID3D11PixelShader> pixelShader;
         ComPtr<ID3D11Buffer> parameters;
         ComPtr<ID3D11SamplerState> sampler;
+        CursorRenderer cursorRenderer;
         bool downsampleAttempted = false;
         ComPtr<ID3D11PixelShader> downsampleShader;
         ComPtr<ID3D11Buffer> downsampleParameters;
@@ -746,6 +754,10 @@ struct VideoSurface::State {
     std::optional<Frame> current;
     std::uint64_t lastPresented = 0;
     QSize displayedSource;
+    QImage cursorImage;
+    QRectF cursorRect;
+    bool cursorPrepared = false;
+    std::function<void()> cursorFailure;
     bool retryScheduled = false;
 };
 
@@ -928,13 +940,15 @@ void VideoSurface::renderLatest() {
             incoming.swap(state_->pending);
         }
         if (incoming) state_->current = std::move(incoming);
-        result = state_->gpu.draw(size, state_->current ? &*state_->current : nullptr, frameResult);
+        result = state_->gpu.draw(size, state_->current ? &*state_->current : nullptr, frameResult,
+                                  state_->cursorImage, state_->cursorRect);
         if (FAILED(frameResult)) state_->current.reset();
     }
 
     if ((FAILED(frameResult) || FAILED(result)) && state_->gpu.device
         && FAILED(state_->gpu.device->GetDeviceRemovedReason())) {
         state_->gpu = {};
+        if (std::exchange(state_->cursorPrepared, false) && state_->cursorFailure) state_->cursorFailure();
         if (state_->current && state_->current->format == Frame::Format::Nv12) state_->current.reset();
         requestRender();
         const std::lock_guard lock(state_->mutex);
@@ -974,6 +988,23 @@ QRectF VideoSurface::contentRect() const {
 
 QSize VideoSurface::sourceSize() const {
     return state_->displayedSource;
+}
+
+bool VideoSurface::supportsRemoteCursor() {
+    state_->cursorPrepared = SUCCEEDED(state_->gpu.initializeDevice()) &&
+        state_->gpu.cursorRenderer.initialize(state_->gpu.device.Get());
+    return state_->cursorPrepared;
+}
+
+void VideoSurface::setRemoteCursor(QImage image, QRectF normalized) {
+    if (state_->cursorImage.cacheKey() == image.cacheKey() && state_->cursorRect == normalized) return;
+    state_->cursorImage = std::move(image);
+    state_->cursorRect = normalized;
+    requestRender();
+}
+
+void VideoSurface::setCursorFailureHandler(std::function<void()> handler) {
+    state_->cursorFailure = std::move(handler);
 }
 
 ID3D11Device* VideoSurface::acquireD3D11Device() {

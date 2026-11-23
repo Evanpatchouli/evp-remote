@@ -12,6 +12,7 @@ struct ID3D11Device;
 namespace evp {
 
 class DecodedVideoFrame;
+struct CursorPacket;
 
 struct IceServer {
     std::vector<std::string> urls;
@@ -53,6 +54,8 @@ public:
         std::function<void(std::string)> connectionState;
         std::function<void(bool)> inputOpen;
         std::function<void(std::string)> inputMessage;
+        std::function<void(const CursorPacket&)> cursorPacket;
+        std::function<void()> cursorClosed;
         std::function<void(const I420Frame&)> videoFrame;
         std::function<void(RouteStats)> routeStats;
         std::function<void(std::string)> error;
@@ -78,6 +81,8 @@ public:
     void acceptOffer(std::string sdp);
     void addRemoteCandidate(IceCandidate candidate);
     bool sendInput(std::string_view message);
+    bool acceptSeparateCursor(std::uint64_t epoch);
+    void closeSeparateCursor();
     void pollStats();
     void close();
 

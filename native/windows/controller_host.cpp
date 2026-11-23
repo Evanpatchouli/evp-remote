@@ -171,12 +171,15 @@ void DesktopController::grantHostInput() {
         return;
     }
     sendVideoSettings(0, true);
+    host_->offerSeparateCursor(epoch_);
     deadline_.stop();
     updateHostStatus();
 }
 bool DesktopController::revokeHostInput() {
     if (dispatch_)
         dispatch_->inputGrant = 0;
+    if (host_)
+        host_->setSeparateCursor(0);
     hostArmed_ = false;
     return !localInput_ || localInput_->disarm();
 }
@@ -193,6 +196,10 @@ void DesktopController::applyHostInput(quint64 grant, const QByteArray& json) {
     const auto obj = QJsonDocument::fromJson(json).object();
     if (!obj.value("epoch").isDouble() || obj.value("epoch").toDouble() != static_cast<double>(grant))
         return;
+    if (obj.value("type") == "cursor-ready") {
+        host_->setSeparateCursor(grant);
+        return;
+    }
     if (obj.value("type") == "video-settings") {
         const auto serial = obj.value("serial").toInt();
         if (serial > 0) {
@@ -209,7 +216,14 @@ void DesktopController::applyHostInput(quint64 grant, const QByteArray& json) {
         }
         return;
     }
-    if (localInput_->apply(obj) == HostInput::Result::Failed)
+    const auto result = localInput_->apply(obj);
+    if (result == HostInput::Result::Applied && obj.value("type") == "move") {
+        const auto serial = obj.value("cursorMove").toInteger();
+        if (serial > 0 && std::in_range<quint32>(serial))
+            host_->noteCursorMove(grant, static_cast<quint32>(serial),
+                                  QPointF(obj.value("x").toDouble(), obj.value("y").toDouble()));
+    }
+    if (result == HostInput::Result::Failed)
         finish(QStringLiteral("本机无法执行键鼠输入，已停止共享并释放按键。"), true, true,
                "input-unavailable");
 }

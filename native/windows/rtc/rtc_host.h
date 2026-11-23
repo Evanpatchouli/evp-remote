@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rtc_viewer.h"
+#include "cursor_protocol.h"
 #include "../video_settings.h"
 
 #include <cstddef>
@@ -18,6 +19,11 @@ public:
     virtual ~HostMediaSource() = default;
     virtual bool startVideo(webrtc_AdaptedVideoTrackSource* source, int maxFps, Error error, VideoSize size) = 0;
     virtual void setVideoMaxFps(int) {}
+    using Cursor = std::function<void(quint64, CursorSnapshot)>;
+    virtual bool supportsSeparateCursor() const { return false; }
+    virtual void setCursorCallback(Cursor) {}
+    virtual void setCursorEpoch(quint64) {}
+    virtual void noteCursorMove(quint64, quint32, QPointF) {}
     // Submit 10 ms of 48 kHz interleaved signed 16-bit stereo at a time.
     // The second argument of Pcm counts frames per channel.
     // After returning true, report startup once with an empty message on success, unless stopped.
@@ -55,6 +61,9 @@ public:
     void acceptAnswer(std::string sdp);
     void addRemoteCandidate(IceCandidate candidate);
     bool sendInput(std::string_view message);
+    void offerSeparateCursor(quint64 epoch);
+    void setSeparateCursor(quint64 epoch);
+    void noteCursorMove(quint64 epoch, quint32 serial, QPointF position);
     bool setVideoSettings(VideoSettings settings);
     void pollStats();
     void close();

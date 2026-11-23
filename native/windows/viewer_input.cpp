@@ -1,6 +1,7 @@
 #include "viewer_input.h"
 #include "media/video_surface.h"
 #include <QApplication>
+#include <QCursor>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -187,21 +188,62 @@ ViewerInput::ViewerInput(VideoSurface* surface, Sender sender, QObject* parent)
     : QObject(parent), surface_(surface), send_(std::move(sender)) {
     surface_->setFocusPolicy(Qt::StrongFocus);
     surface_->setMouseTracking(true);
+    optimisticCursor_.setSingleShot(true);
+    optimisticCursor_.setTimerType(Qt::PreciseTimer);
+    optimisticCursor_.setInterval(150);
+    connect(&optimisticCursor_, &QTimer::timeout, this, [this] {
+        cursor_.expirePrediction();
+        updateCursor();
+    });
     qApp->installEventFilter(this);
 }
 ViewerInput::~ViewerInput() {
     qApp->removeEventFilter(this);
+    resetCursor();
 }
 void ViewerInput::setAvailable(bool available) {
-    if (!available)
-        release();
+    const bool previouslyAvailable = available_;
     available_ = available;
+    if (!available && previouslyAvailable)
+        release();
+    updateCursor();
 }
 void ViewerInput::release() {
     if (!keys_.isEmpty() || !buttons_.isEmpty())
         send_({{"type", "release"}});
     keys_.clear();
     buttons_.clear();
+    optimisticCursor_.stop();
+    cursor_.expirePrediction();
+    updateCursor();
+}
+
+void ViewerInput::receiveCursor(const CursorPacket& packet) {
+    if (cursor_.receive(packet)) updateCursor();
+}
+
+void ViewerInput::resetCursor() {
+    optimisticCursor_.stop();
+    cursor_ = {};
+    updateCursor();
+}
+
+void ViewerInput::updateCursor() {
+    const auto content = surface_->contentRect();
+    const bool inside = surface_->underMouse() && content.contains(surface_->mapFromGlobal(QCursor::pos()));
+    const bool focused = surface_->hasFocus() && surface_->window()->isActiveWindow();
+    const bool hideLocal = cursor_.hidesLocalPointer(available_, focused, inside);
+    if (hideLocal != localCursorHidden_) {
+        localCursorHidden_ = hideLocal;
+        if (hideLocal) surface_->setCursor(Qt::BlankCursor);
+        else surface_->unsetCursor();
+    }
+    if (!cursor_.separate()) {
+        surface_->setRemoteCursor({}, {});
+        return;
+    }
+
+    surface_->setRemoteCursor(cursor_.image(), cursor_.rectangle(hideLocal));
 }
 bool ViewerInput::eventFilter(QObject* object, QEvent* event) {
     if (!available_)
@@ -216,6 +258,13 @@ bool ViewerInput::eventFilter(QObject* object, QEvent* event) {
     }
     if (object != surface_)
         return false;
+    if (type == QEvent::Enter || type == QEvent::Leave || type == QEvent::FocusIn) {
+        if (type == QEvent::Leave) {
+            optimisticCursor_.stop();
+            cursor_.expirePrediction();
+        }
+        updateCursor();
+    }
     if (type == QEvent::ShortcutOverride || type == QEvent::KeyPress || type == QEvent::KeyRelease) {
         auto* e = static_cast<QKeyEvent*>(event);
         if (e->key() == Qt::Key_F11 && e->modifiers() == (Qt::ControlModifier | Qt::AltModifier)) {
@@ -250,9 +299,18 @@ bool ViewerInput::eventFilter(QObject* object, QEvent* event) {
         const QRectF r = surface_->contentRect();
         if (r.isEmpty() || !r.contains(position))
             return false;
-        return send_({{"type", "move"},
-                      {"x", (position.x() - r.x()) / r.width()},
-                      {"y", (position.y() - r.y()) / r.height()}});
+        const QPointF normalized((position.x() - r.x()) / r.width(), (position.y() - r.y()) / r.height());
+        QJsonObject message{{"type", "move"}, {"x", normalized.x()}, {"y", normalized.y()}};
+        const bool predict = cursor_.separate();
+        const auto serial = cursor_.nextMoveSerial();
+        if (predict) message.insert("cursorMove", static_cast<qint64>(serial));
+        const bool sent = send_(std::move(message));
+        if (sent && predict) {
+            cursor_.predict(serial, normalized);
+            optimisticCursor_.start();
+            updateCursor();
+        }
+        return sent;
     };
     if (type == QEvent::Wheel) {
         auto* e = static_cast<QWheelEvent*>(event);
@@ -269,6 +327,7 @@ bool ViewerInput::eventFilter(QObject* object, QEvent* event) {
         if (type == QEvent::MouseMove) {
             if (surface_->hasFocus())
                 at(e->position());
+            updateCursor();
             return false;
         }
         const auto button = mouseButton(e->button());

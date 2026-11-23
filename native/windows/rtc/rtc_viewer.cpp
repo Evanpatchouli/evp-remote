@@ -1,4 +1,5 @@
 #include "rtc_viewer.h"
+#include "cursor_protocol.h"
 #include "rtc_runtime.h"
 #include "../media/webrtc_ffmpeg_decoder.h"
 
@@ -88,6 +89,9 @@ struct RtcViewer::Session final : std::enable_shared_from_this<Session> {
     bool remoteDescriptionSet = false;
     bool statsPending = false;
     bool inputOpen = false;
+    std::atomic<quint64> cursorRequested = 0;
+    bool cursorOpen = false;
+    std::atomic_uint queuedCursorPackets = 0;
     std::vector<IceCandidate> pendingCandidates;
     std::string localAnswer;
 
@@ -98,6 +102,8 @@ struct RtcViewer::Session final : std::enable_shared_from_this<Session> {
     std::unique_ptr<webrtc_PeerConnectionObserver, Deleter<webrtc_PeerConnectionObserver_delete>> observer;
     std::unique_ptr<webrtc_DataChannelInterface, Deleter<webrtc_DataChannelInterface_Release>> input;
     std::unique_ptr<webrtc_DataChannelObserver, Deleter<webrtc_DataChannelObserver_delete>> inputObserver;
+    std::unique_ptr<webrtc_DataChannelInterface, Deleter<webrtc_DataChannelInterface_Release>> cursorChannel;
+    std::unique_ptr<webrtc_DataChannelObserver, Deleter<webrtc_DataChannelObserver_delete>> cursorObserver;
     std::unique_ptr<webrtc_VideoTrackInterface, Deleter<webrtc_VideoTrackInterface_Release>> video;
     std::unique_ptr<webrtc_VideoSinkInterface, Deleter<webrtc_VideoSinkInterface_delete>> videoSink;
     std::unique_ptr<webrtc_AudioTrackInterface, Deleter<webrtc_AudioTrackInterface_Release>> audio;
@@ -315,9 +321,14 @@ struct RtcViewer::Session final : std::enable_shared_from_this<Session> {
         auto channel = own<webrtc_DataChannelInterface_Release>(
             webrtc_DataChannelInterface_refcounted_get(ref));
         if (!channel || !active) return;
+        const auto label = takeString(webrtc_DataChannelInterface_label(channel.get()));
+        if (label == cursorChannelLabel && cursorRequested && !cursorChannel && callbacks.cursorPacket) {
+            attachCursor(std::move(channel));
+            return;
+        }
         // The project host opens "input" ordered with unlimited retransmission. This
         // SDK exposes its label and state but no DCEP reliability query for the receiver.
-        if (input || takeString(webrtc_DataChannelInterface_label(channel.get())) != "input") {
+        if (input || label != "input") {
             webrtc_DataChannelInterface_Close(channel.get());
             return;
         }
@@ -335,6 +346,53 @@ struct RtcViewer::Session final : std::enable_shared_from_this<Session> {
         inputObserver.reset(webrtc_DataChannelObserver_new(&handlers, this));
         webrtc_DataChannelInterface_RegisterObserver(input.get(), inputObserver.get());
         updateInputState();
+    }
+
+    void attachCursor(decltype(cursorChannel) channel) {
+        static const webrtc_DataChannelObserver_cbs handlers{
+            .OnStateChange = [](void* data) { static_cast<Session*>(data)->updateCursorState(); },
+            .OnMessage = [](const std::uint8_t* bytes, std::size_t size, int binary, void* data) {
+                if (binary && bytes && size >= cursorHeaderBytes && size <= maxCursorPacket) {
+                    static_cast<Session*>(data)->receiveCursor(
+                        QByteArray::fromRawData(reinterpret_cast<const char*>(bytes), size));
+                }
+            },
+            .OnDestroy = [](void*) {},
+        };
+        cursorChannel = std::move(channel);
+        cursorObserver.reset(webrtc_DataChannelObserver_new(&handlers, this));
+        webrtc_DataChannelInterface_RegisterObserver(cursorChannel.get(), cursorObserver.get());
+        updateCursorState();
+    }
+
+    void updateCursorState() {
+        if (!active || !cursorChannel) return;
+        const bool open = webrtc_DataChannelInterface_state(cursorChannel.get()) == webrtc_DataChannelInterface_DataState_kOpen;
+        if (std::exchange(cursorOpen, open) && !open && callbacks.cursorClosed)
+            post([](Session& self) { self.callbacks.cursorClosed(); });
+    }
+
+    void receiveCursor(const QByteArray& bytes) {
+        if (!active) return;
+        if (queuedCursorPackets.fetch_add(1) >= cursorWindow) {
+            --queuedCursorPackets;
+            return;
+        }
+        CursorPacket packet;
+        if (!decodeCursor(bytes, packet)) {
+            --queuedCursorPackets;
+            return;
+        }
+        post([packet = std::move(packet)](Session& self) {
+            --self.queuedCursorPackets;
+            if (packet.epoch == self.cursorRequested) self.callbacks.cursorPacket(packet);
+            self.onSignalingThread([&] {
+                if (!self.cursorOpen) return;
+                const auto ack = encodeCursorAck(packet.sequence);
+                webrtc_DataChannelInterface_Send(self.cursorChannel.get(),
+                    reinterpret_cast<const std::uint8_t*>(ack.constData()), ack.size(), true);
+            });
+        });
     }
 
     void updateInputState() {
@@ -450,6 +508,12 @@ struct RtcViewer::Session final : std::enable_shared_from_this<Session> {
     void close() {
         active = false;
         onSignalingThread([&] {
+            if (cursorChannel) {
+                if (cursorObserver) webrtc_DataChannelInterface_UnregisterObserver(cursorChannel.get());
+                webrtc_DataChannelInterface_Close(cursorChannel.get());
+                cursorChannel.reset();
+                cursorObserver.reset();
+            }
             if (input) {
                 webrtc_DataChannelInterface_UnregisterObserver(input.get());
                 webrtc_DataChannelInterface_Close(input.get());
@@ -517,6 +581,26 @@ bool RtcViewer::sendInput(std::string_view message) {
     bool sent = false;
     if (session_) session_->onSignalingThread([&] { sent = session_->sendInput(message); });
     return sent;
+}
+
+bool RtcViewer::acceptSeparateCursor(std::uint64_t epoch) {
+    bool sent = false;
+    if (session_) session_->onSignalingThread([&] {
+        if (session_->cursorRequested == epoch) return;
+        session_->cursorRequested = epoch;
+        if (epoch) sent = session_->sendInput(
+            QJsonDocument(QJsonObject{{"type", "cursor-ready"}, {"epoch", static_cast<qint64>(epoch)}})
+                .toJson(QJsonDocument::Compact).toStdString());
+        if (!sent) session_->cursorRequested = 0;
+    });
+    return sent;
+}
+
+void RtcViewer::closeSeparateCursor() {
+    if (session_) session_->onSignalingThread([&] {
+        session_->cursorRequested = 0;
+        if (session_->cursorChannel) webrtc_DataChannelInterface_Close(session_->cursorChannel.get());
+    });
 }
 
 void RtcViewer::pollStats() {

@@ -35,7 +35,7 @@ Publish the ZIP, portable EXE and setup EXE under the stable release tag matchin
 
 Both invitation and pairing codes offer 5, 15 or 30 minutes and 1, 2, 5 or 12 hours. The initial choice is five minutes with manual confirmation. Custom invitation lifetimes and preapproved invitations require the updated signaling build. A legacy deployment can still issue a five-minute manual invitation. [Signaling upgrade](windows-session.md#enable-my-devices-on-the-same-server)
 
-The native sender captures desktop updates with DXGI Desktop Duplication, includes the pointer, and encodes H.264 using FFmpeg. It currently reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
+The native sender captures desktop updates with DXGI Desktop Duplication and encodes H.264 using FFmpeg. Compatible native controllers draw supported pointer shapes separately and follow local mouse motion inside the focused picture. Other peers and unsupported shapes retain the video cursor. The sender reads the capture texture into CPU staging memory, converts the image to I420, then uploads NV12 for a supported hardware encoder. Software encoding is available as a fallback. The target cadence depends on the source, adapter, network and viewer hardware.
 
 In a native-to-native session, click the resolution and frame-rate control with the down arrow to change the bitrate limit or target frame rate. A compatible host also offers **清晰优先** for text, **均衡** for mixed content, and **流畅优先** for motion. The viewer shows the selection confirmed by the host. The toolbar reports received dimensions and successful presentation submissions.
 
@@ -134,6 +134,8 @@ The probe encodes a static 1080p text pattern at the idle desktop cadence. It ra
 Run `EvpVideoSurfaceProbe` with Qt's Windows platform plugin and a D3D11 adapter. It checks small text strokes, high-frequency stripes, native-size pixels, cached redraws and color reconstruction on offscreen textures. When the adapter supports NV12 textures, it also checks rotated and padded hardware surfaces.
 
 Build the optional `EvpVideoSettingsProbe` and `EvpVideoAdmissionProbe` targets and run them with the matching runtime DLLs. The settings probe checks legacy and confirmed selections. The admission probe uses real x264 output and synthetic outbound RTP counters to exercise frame pacing, recovery requests, packet QP and timestamps without a session.
+
+`EvpCursorProbe` checks cursor packet bounds, coalescing, acknowledgments, prediction, focus changes and fallback. Its D3D11 WARP fixture reads back a composited cursor and checks blending and clipping at the video boundary.
 
 The host samples the change in total local packet-send delay per sent video packet. Two consecutive windows averaging at least 80 ms temporarily cap excess delta-frame inputs at approximately 30 FPS. A healthy window clears the cap and stale observations expire. The first frame and requested IDRs bypass this pacing limit. A full hardware encoder drains before accepting more input. A persistent full queue still triggers codec recovery.
 

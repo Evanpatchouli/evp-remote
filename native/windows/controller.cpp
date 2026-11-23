@@ -392,6 +392,10 @@ void DesktopController::ready(const QJsonObject& m) {
     surface_->setObjectName("remoteSurface");
     window_ = new SessionWindow(surface_);
     input_ = new ViewerInput(surface_, [this](QJsonObject e) { return sendInput(std::move(e)); }, this);
+    surface_->setCursorFailureHandler([this] {
+        if (input_) input_->resetCursor();
+        if (rtc_) rtc_->closeSeparateCursor();
+    });
     connect(window_, &SessionWindow::endRequested, this, &DesktopController::endSession);
     connect(window_, &SessionWindow::videoSettingsRequested, this, &DesktopController::requestVideoSettings);
     window_->setVideoSettings(videoSettings_, false, false,
@@ -439,6 +443,8 @@ void DesktopController::ready(const QJsonObject& m) {
                 const auto epoch = match.captured(1).toULongLong();
                 c.input_->release();
                 if (c.epoch_ != epoch) {
+                    c.rtc_->acceptSeparateCursor(0);
+                    c.input_->resetCursor();
                     c.epoch_ = epoch;
                     c.remoteVideoSettings_ = false;
                     c.remoteVideoAdaptation_ = false;
@@ -447,10 +453,17 @@ void DesktopController::ready(const QJsonObject& m) {
                                                 QStringLiteral("需要对端支持会话内画面设置。"));
                 }
                 c.updatePermit();
-            } else
+            } else if (c.epoch_ && raw == "cursor-offer:" + std::to_string(c.epoch_)) {
+                if (c.surface_->supportsRemoteCursor()) c.rtc_->acceptSeparateCursor(c.epoch_);
+            } else {
                 c.receiveVideoSettings(QJsonDocument::fromJson(QByteArray::fromStdString(raw)).object());
+            }
         });
     };
+    cb.cursorPacket = [this](const CursorPacket& packet) {
+        if (packet.epoch == epoch_) input_->receiveCursor(packet);
+    };
+    cb.cursorClosed = [this] { input_->resetCursor(); };
     cb.videoFrame = [gate](const I420Frame& frame) { gate->frame(frame); };
     cb.decodedFrame = [gate](const DecodedVideoFrame& frame, int rotation) {
         gate->decoded(frame, rotation);
@@ -491,6 +504,8 @@ void DesktopController::stateChanged(const std::string& state) {
         return;
     }
     if (state == "disconnected") {
+        rtc_->acceptSeparateCursor(0);
+        input_->resetCursor();
         input_->setAvailable(false);
         connected_ = false;
         videoSettingsReply_.stop();
@@ -664,6 +679,8 @@ void DesktopController::finish(const QString& message, bool failure, bool notify
     }
     localInput_.reset();
     dispatch_.reset();
+    // The deferred window deletion can outlive this session and its controller.
+    if (surface_) surface_->setCursorFailureHandler({});
     delete input_;
     input_ = nullptr;
     if (window_) {

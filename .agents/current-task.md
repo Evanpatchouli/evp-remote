@@ -1,5 +1,15 @@
 # Current task
 
+## Native Windows picture quality and frame delivery
+
+- **Execute / S2.** Filter shrinking viewer images in physical pixels while preserving source colors, orientation and the inexpensive 1:1 path.
+- **Execute / S2.** Negotiate text, balanced and motion preferences, using libwebrtc adaptation and H.264 quality information.
+- **Execute / S2.** Reject excess raw encoder inputs under observed sender or encoder pressure, preserve recovery frames and expose useful stage measurements.
+- **Execute / S2.** Negotiate separate cursor updates with native peers, handling pointer-only movement and retaining embedded output for legacy peers.
+- **Verify / independent review.** Build the shipping client and exercise offline fixtures. Physical and network sessions are outside this run.
+
+The Release build and offline settings, encoder admission, AMD AMF rate, D3D11 downsampling and cursor probes passed. The sender preserved IDR requests under pressure. Offscreen readback checked text strokes, color and padded NV12, and verified that unchanged-frame redraws reuse the filtered first axis. Cursor review added focus restoration and preallocated upload resources, with fallback on device loss. Real transport timing, the handoff between embedded and separate pointers, and physical 90/144 Hz delivery remain field checks.
+
 ## AMD AMF desktop bitrate changes
 
 - **Execute / S2.** Apply substantial WebRTC bitrate changes to the active AMF hardware encoder at a frame boundary. Coalesce jitter, keep congestion-driven reductions responsive and start the new stream segment with an IDR.
