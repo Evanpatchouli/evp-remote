@@ -5,6 +5,7 @@
 #include "host_input.h"
 #include "rtc/rtc_host.h"
 #include "media/video_surface.h"
+#include "media/video_timing.h"
 #include "media/ffmpeg_decoder.h"
 #include "ui/home_window.h"
 #include "ui/session_window.h"
@@ -522,6 +523,10 @@ void DesktopController::updateStats() {
         return;
     const auto stats = surface_->stats();
     const auto ms = interval_.restart();
+    qCDebug(videoTiming) << "viewer" << "decoded-gpu" << dispatch_->gpuDecoded.load()
+                         << "decoded-cpu" << dispatch_->cpuDecoded.load() << "submitted" << stats.submitted
+                         << "replaced" << stats.replaced << "presented" << stats.presented
+                         << "present-busy" << stats.presentBusy << "last-delivery-to-present-us" << stats.lastPresentDelayUs;
     const auto fps = ms > 0 ? (stats.presented - presented_) * 1000.0 / ms : 0.0;
     presented_ = stats.presented;
     if (presented_) {

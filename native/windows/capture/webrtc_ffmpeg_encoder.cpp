@@ -1,4 +1,6 @@
 #include "webrtc_ffmpeg_encoder.h"
+#include "send_queue_pressure.h"
+#include "../media/video_timing.h"
 
 #include <webrtc_c/api/video/encoded_image.h>
 #include <webrtc_c/api/video/i420_buffer.h>
@@ -10,6 +12,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavcodec/bsf.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/intreadwrite.h>
 }
 
 #include <algorithm>
@@ -18,6 +21,7 @@ extern "C" {
 #include <deque>
 #include <memory>
 #include <string_view>
+#include <utility>
 
 namespace evp {
 namespace {
@@ -39,6 +43,7 @@ constexpr std::size_t maxPendingFrames = 8;
 struct Callbacks {
     std::function<void(QString)> onError;
     std::function<void(QString)> onBackend;
+    std::shared_ptr<SendQueuePressure> sendPressure;
 };
 
 struct FreeCodec { void operator()(AVCodecContext* context) const { avcodec_free_context(&context); } };
@@ -46,6 +51,17 @@ struct FreeFilter { void operator()(AVBSFContext* filter) const { av_bsf_free(&f
 struct FreeFrame { void operator()(AVFrame* frame) const { av_frame_free(&frame); } };
 struct FreePacket { void operator()(AVPacket* packet) const { av_packet_free(&packet); } };
 struct FreeBuffer { void operator()(AVBufferRef* buffer) const { av_buffer_unref(&buffer); } };
+
+int packetQp(const AVPacket* packet) {
+    // H.264 encoders that export packet quality use QP * FF_QP2LAMBDA.
+    // Some backend rate controllers report out-of-range values under VBV
+    // pressure. Leave those unknown for libwebrtc's bitstream parser.
+    size_t size = 0;
+    const auto* quality = av_packet_get_side_data(packet, AV_PKT_DATA_QUALITY_STATS, &size);
+    if (!quality || size < 8) return -1;
+    const auto lambda = AV_RL32(quality);
+    return lambda <= 51 * FF_QP2LAMBDA ? static_cast<int>(lambda / FF_QP2LAMBDA) : -1;
+}
 
 bool configureHardware(AVCodecContext& codec, const Backend& backend) {
     AVDictionary* options = nullptr;
@@ -112,7 +128,8 @@ void setOptions(AVDictionary** options, const Backend& backend) {
 }
 
 struct Encoder {
-    struct Stamp { std::int64_t pts; std::uint32_t rtpTimestamp; };
+    using Clock = std::chrono::steady_clock;
+    struct Stamp { std::int64_t pts; std::uint32_t rtpTimestamp; Clock::time_point submitted; };
 
     bool open(const Backend& backend, AVBufferRef* reuseFrames = nullptr) {
         const auto* implementation = avcodec_find_encoder_by_name(backend.codec);
@@ -175,6 +192,8 @@ struct Encoder {
         software = std::move(input);
         active = &backend;
         pending.clear();
+        skipNextDelta = false;
+        lastAcceptedUs = -1;
         firstFrame = true;
         if (!reuseFrames && callbacks.onBackend) callbacks.onBackend(QString::fromLatin1(backend.name));
         return true;
@@ -240,7 +259,23 @@ struct Encoder {
         if (!drain(emitted)) return false;
         const auto timestamp = webrtc_VideoFrame_timestamp_us(input);
         if (active == &amf && !applyAmfBitrate(timestamp)) return false;
-        if (pending.size() >= maxPendingFrames) return false;
+        const auto now = Clock::now();
+        if (pending.size() >= maxPendingFrames) {
+            // A full asynchronous hardware queue is not itself a codec error.
+            // Keep draining on new inputs, with a bounded recovery time for a wedged driver.
+            firstFrame = firstFrame || keyframe;
+            return now - pending.front().submitted < std::chrono::milliseconds(500);
+        }
+        const bool skip = std::exchange(skipNextDelta, false);
+        // Under sustained packet-send delay, cap excess inputs at 30 fps. Use capture
+        // intervals so an already slow or idle desktop does not lose its next update.
+        const bool tooSoon = lastAcceptedUs >= 0 && timestamp >= lastAcceptedUs &&
+                             timestamp - lastAcceptedUs < 33'000;
+        if (!firstFrame && !keyframe && (skip || (tooSoon && callbacks.sendPressure &&
+                                                  callbacks.sendPressure->active(now)))) {
+            if (callbacks.sendPressure) callbacks.sendPressure->recordPacingDrop();
+            return true;
+        }
         auto* buffer = webrtc_VideoFrame_video_frame_buffer(input);
         if (!buffer) return false;
         const std::unique_ptr<webrtc_VideoFrameBuffer, decltype(&webrtc_VideoFrameBuffer_Release)> source(
@@ -260,10 +295,12 @@ struct Encoder {
         const auto vStride = webrtc_I420Buffer_StrideV(i420.get());
         AVFrame* frame = software.get();
         if (codec->hw_frames_ctx) {
-            if (libyuv_I420ToNV12(y, yStride, u, uStride, v, vStride,
-                                  frame->data[0], frame->linesize[0], frame->data[1], frame->linesize[1], width, height) != 0 ||
-                av_hwframe_get_buffer(codec->hw_frames_ctx, uploaded.get(), 0) < 0 ||
-                av_hwframe_transfer_data(uploaded.get(), frame, 0) < 0 || av_frame_copy_props(uploaded.get(), frame) < 0) {
+            if (!uploadTime.measure([&] {
+                return libyuv_I420ToNV12(y, yStride, u, uStride, v, vStride,
+                                         frame->data[0], frame->linesize[0], frame->data[1], frame->linesize[1], width, height) == 0 &&
+                       av_hwframe_get_buffer(codec->hw_frames_ctx, uploaded.get(), 0) >= 0 &&
+                       av_hwframe_transfer_data(uploaded.get(), frame, 0) >= 0;
+            }) || av_frame_copy_props(uploaded.get(), frame) < 0) {
                 av_frame_unref(uploaded.get());
                 return false;
             }
@@ -278,10 +315,11 @@ struct Encoder {
         lastPts = frame->pts;
         frame->pict_type = firstFrame || keyframe ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
         firstFrame = false;
-        const auto sent = avcodec_send_frame(codec.get(), frame);
+        const auto sent = submitTime.measure([&] { return avcodec_send_frame(codec.get(), frame); });
         av_frame_unref(uploaded.get());
         if (sent < 0) return false;
-        pending.push_back({lastPts, webrtc_VideoFrame_timestamp_rtp(input)});
+        lastAcceptedUs = timestamp;
+        pending.push_back({lastPts, webrtc_VideoFrame_timestamp_rtp(input), now});
         return drain(emitted);
     }
 
@@ -310,7 +348,7 @@ struct Encoder {
         }
     }
 
-    bool publish(std::uint32_t timestamp) const {
+    bool publish(std::uint32_t timestamp) {
         const auto* bytes = packet->data;
         if (packet->size < 5 || bytes[0] != 0 || bytes[1] != 0 ||
             (bytes[2] != 1 && (bytes[2] != 0 || bytes[3] != 1))) return false;
@@ -330,7 +368,7 @@ struct Encoder {
         webrtc_EncodedImage_set_encoded_height(output, height);
         webrtc_EncodedImage_set_rtp_timestamp(output, timestamp);
         webrtc_EncodedImage_set_frame_type(output, keyframe ? webrtc_VideoFrameType_Key : webrtc_VideoFrameType_Delta);
-        webrtc_EncodedImage_set_qp(output, -1);
+        webrtc_EncodedImage_set_qp(output, packetQp(packet.get()));
         auto* details = webrtc_CodecSpecificInfo_unique_get(info.get());
         webrtc_CodecSpecificInfo_set_codec_type(details, webrtc_VideoCodecType_H264);
         webrtc_CodecSpecificInfo_set_end_of_picture(details, true);
@@ -341,7 +379,10 @@ struct Encoder {
                               decltype(&webrtc_VideoEncoder_EncodedImageCallback_Result_unique_delete)> result(
             webrtc_VideoEncoder_EncodedImageCallback_OnEncodedImage(callback, output, details),
             webrtc_VideoEncoder_EncodedImageCallback_Result_unique_delete);
-        // A transport-side rejection does not make the codec unusable.
+        if (result && webrtc_VideoEncoder_EncodedImageCallback_Result_drop_next_frame(
+                          webrtc_VideoEncoder_EncodedImageCallback_Result_unique_get(result.get()))) {
+            skipNextDelta = true;
+        }
         return true;
     }
 
@@ -354,6 +395,10 @@ struct Encoder {
     std::unique_ptr<AVPacket, FreePacket> packet{av_packet_alloc()};
     webrtc_VideoEncoder_EncodedImageCallback* callback = nullptr;
     std::deque<Stamp> pending;
+    VideoStageTiming uploadTime{"i420-to-nv12-and-upload"};
+    VideoStageTiming submitTime{"codec-submit"};
+    std::int64_t lastAcceptedUs = -1;
+    bool skipNextDelta = false;
     std::int64_t lastPts = -1;
     std::int64_t lastAmfChangeUs = -1;
     int width = 0;
@@ -435,6 +480,14 @@ const webrtc_VideoEncoder_cbs encoderCallbacks{
         webrtc_VideoEncoder_EncoderInfo_set_implementation_name(info, std_string_unique_get(name.get()));
         webrtc_VideoEncoder_EncoderInfo_set_requested_resolution_alignment(info, 2);
         webrtc_VideoEncoder_EncoderInfo_set_is_hardware_accelerated(info, backend && backend->vendor);
+        // Match libwebrtc's H.264 quality scaler. The sender's degradation preference
+        // decides whether spatial adaptation is permitted.
+        const std::unique_ptr<webrtc_VideoEncoder_QpThresholds, decltype(&webrtc_VideoEncoder_QpThresholds_delete)>
+            thresholds(webrtc_VideoEncoder_QpThresholds_new(), webrtc_VideoEncoder_QpThresholds_delete);
+        webrtc_VideoEncoder_QpThresholds_set_low(thresholds.get(), 24);
+        webrtc_VideoEncoder_QpThresholds_set_high(thresholds.get(), 37);
+        webrtc_VideoEncoder_ScalingSettings_set_thresholds(
+            webrtc_VideoEncoder_EncoderInfo_get_scaling_settings(info), true, thresholds.get());
         return result;
     },
     [](void* data) { delete static_cast<Encoder*>(data); },
@@ -468,8 +521,10 @@ const webrtc_VideoEncoderFactory_cbs factoryCallbacks{
 }  // namespace
 
 webrtc_VideoEncoderFactory_unique* createFfmpegEncoderFactory(
-    std::function<void(QString)> onError, std::function<void(QString)> onBackend) {
-    auto callbacks = std::make_unique<Callbacks>(Callbacks{std::move(onError), std::move(onBackend)});
+    std::function<void(QString)> onError, std::function<void(QString)> onBackend,
+    std::shared_ptr<SendQueuePressure> sendPressure) {
+    auto callbacks = std::make_unique<Callbacks>(Callbacks{std::move(onError), std::move(onBackend),
+                                                          std::move(sendPressure)});
     auto* factory = webrtc_VideoEncoderFactory_new(&factoryCallbacks, callbacks.get());
     if (factory) callbacks.release();
     return factory;

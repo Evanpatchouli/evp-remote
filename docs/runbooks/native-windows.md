@@ -129,6 +129,14 @@ Copy-Item "$build/Release/EvpAmfRateProbe.exe" -Destination $testRuntime
 
 The probe encodes a static 1080p text pattern at the idle desktop cadence. It raises the WebRTC rate target from 300 kbps to 8 Mbps and lowers it again, checks decoded luma detail, and checks keyframes and RTP timestamps across transitions. Small fluctuations should keep the current AMF encoder. Substantial changes reopen it on a frame boundary using the existing D3D11 device and frame pool. Exit code 77 indicates that AMF could not be opened on this machine.
 
+### Diagnose picture quality and frame delivery offline
+
+Build the optional `EvpVideoAdmissionProbe` target and run it with the matching runtime DLLs. The admission probe uses real x264 output and synthetic outbound RTP counters to exercise frame pacing, recovery requests, packet QP and timestamps without a session.
+
+The host samples the change in total local packet-send delay per sent video packet. Two consecutive windows averaging at least 80 ms temporarily cap excess delta-frame inputs at approximately 30 FPS. A healthy window clears the cap and stale observations expire. The first frame and requested IDRs bypass this pacing limit. A full hardware encoder drains before accepting more input. A persistent full queue still triggers codec recovery.
+
+For a later performance run, enable the Qt logging rule `evp.video.timing.debug=true` through `QT_LOGGING_RULES` and capture the Qt debug output. The host reports readback, BGRA conversion, NV12 preparation and upload, and codec submission wall times. Outbound RTP counters identify actual encoding and packet-send pressure. The viewer reports frames delivered to the renderer, frames replaced before presentation, successful Present calls and the last delivery-to-Present interval. Driver submission time and physical display latency require different measurements.
+
 ## Qualify 144 FPS and input latency
 
 Use the [high-refresh contract](../specs/windows-session.md#native-clients-high-refresh-target). For each target resolution, record the host and viewer GPUs, display refresh modes, original numbered source, stream dimensions, codec, direct/relay route, and duration of continuous motion. A protocol trace or a virtual display reporting 144 Hz is insufficient to certify the physical screen.

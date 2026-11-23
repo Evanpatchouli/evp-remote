@@ -1,4 +1,5 @@
 #include "desktop_capture.h"
+#include "../media/video_timing.h"
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -168,9 +169,11 @@ struct Duplication {
             throw std::runtime_error("DXGI source mode changed");
         }
 
-        context->CopyResource(staging.Get(), texture);
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        require(context->Map(staging.Get(), 0, D3D11_MAP_READ_WRITE, 0, &mapped), "D3D11 Map");
+        require(readbackTime.measure([&] {
+            context->CopyResource(staging.Get(), texture);
+            return context->Map(staging.Get(), 0, D3D11_MAP_READ_WRITE, 0, &mapped);
+        }), "D3D11 Map");
         const MappedTexture unmap{context.Get(), staging.Get()};
         auto* pixels = static_cast<std::uint8_t*>(mapped.pData);
         int pitch = static_cast<int>(mapped.RowPitch);
@@ -193,7 +196,9 @@ struct Duplication {
                                 webrtc_I420Buffer_StrideV(i420), 0};
         const std::uint8_t* src[] = {pixels, nullptr, nullptr, nullptr};
         const int srcPitch[] = {pitch, 0, 0, 0};
-        if (sws_scale(conversion.get(), src, srcPitch, 0, height, dst, dstPitch) != (height & ~1)) {
+        if (conversionTime.measure([&] {
+            return sws_scale(conversion.get(), src, srcPitch, 0, height, dst, dstPitch);
+        }) != (height & ~1)) {
             throw std::runtime_error("FFmpeg BGRA conversion failed");
         }
         return buffer;
@@ -222,6 +227,8 @@ struct Duplication {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     ComPtr<ID3D11Texture2D> staging;
+    VideoStageTiming readbackTime{"desktop-readback"};
+    VideoStageTiming conversionTime{"bgra-to-i420"};
     DXGI_OUTDUPL_DESC mode{};
     Pointer pointer;
     std::unique_ptr<SwsContext, decltype(&sws_freeContext)> conversion{nullptr, sws_freeContext};

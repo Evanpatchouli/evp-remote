@@ -3,7 +3,9 @@
 
 #include "../capture/desktop_capture.h"
 #include "../capture/loopback_audio.h"
+#include "../capture/send_queue_pressure.h"
 #include "../capture/webrtc_ffmpeg_encoder.h"
+#include "../media/video_timing.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -323,6 +325,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
     bool answerReceived = false;
     bool remoteDescriptionSet = false;
     bool statsPending = false;
+    std::shared_ptr<SendQueuePressure> sendPressure = std::make_shared<SendQueuePressure>();
     std::vector<IceCandidate> pendingCandidates;
     std::string localOffer;
 
@@ -443,7 +446,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
             },
             [weak = weak_from_this()](const QString& backend) {
                 if (const auto self = weak.lock()) self->notify(&Callbacks::encoder, backend.toStdString());
-            });
+            }, sendPressure);
         if (!videoEncoder) return "Could not create the FFmpeg video encoder factory.";
         webrtc_PeerConnectionFactoryDependencies_set_video_encoder_factory(dependencies.get(), videoEncoder);
         webrtc_EnableMedia(dependencies.get());
@@ -777,6 +780,23 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
                     self->statsPending = false;
                     const auto text = takeString(webrtc_RTCStatsReport_ToJson(owned.get()));
                     const auto reports = QJsonDocument::fromJson(QByteArray::fromStdString(text)).array();
+                    self->sendPressure->observe(reports, SendQueuePressure::Clock::now());
+                    if (videoTiming().isDebugEnabled()) {
+                        for (const auto& entry : reports) {
+                            const auto stats = entry.toObject();
+                            if (stats.value("kind") != "video") continue;
+                            if (stats.value("type") == "outbound-rtp")
+                                qCDebug(videoTiming) << "sender" << "encoded" << stats.value("framesEncoded")
+                                    << "sent" << stats.value("framesSent") << "qp-sum" << stats.value("qpSum")
+                                    << "limitation" << stats.value("qualityLimitationReason")
+                                    << "packet-send-delay-sum-s" << stats.value("totalPacketSendDelay")
+                                    << "packets" << stats.value("packetsSent")
+                                    << "pacing-drops" << self->sendPressure->pacingDrops();
+                            if (stats.value("type") == "media-source")
+                                qCDebug(videoTiming) << "source" << "frames" << stats.value("frames")
+                                                     << "fps" << stats.value("framesPerSecond");
+                        }
+                    }
                     self->notify(&Callbacks::routeStats, findRoute(reports));
                 }
             },

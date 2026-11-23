@@ -37,6 +37,7 @@ add_library(evp_client STATIC
     ui/floating_surface.cpp ui/floating_surface.h ui/focus_style.cpp ui/focus_style.h ui/theme.cpp ui/theme.h
     media/video_surface.cpp media/video_surface.h media/ffmpeg_decoder.cpp media/ffmpeg_decoder.h
     media/webrtc_ffmpeg_decoder.cpp media/webrtc_ffmpeg_decoder.h
+    media/video_timing.cpp media/video_timing.h
     rtc/rtc_viewer.cpp rtc/rtc_viewer.h rtc/rtc_host.cpp rtc/rtc_host.h
     capture/desktop_capture.cpp capture/desktop_capture.h capture/loopback_audio.cpp capture/loopback_audio.h
     capture/webrtc_ffmpeg_encoder.cpp capture/webrtc_ffmpeg_encoder.h)
@@ -79,4 +80,9 @@ if(EVP_BUILD_PROBES)
     target_compile_definitions(EvpAmfRateProbe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(EvpAmfRateProbe PRIVATE /utf-8 /EHsc)
     target_link_libraries(EvpAmfRateProbe PRIVATE evp_client)
+    add_executable(EvpVideoAdmissionProbe tests/video_admission_probe.cpp)
+    target_include_directories(EvpVideoAdmissionProbe PRIVATE "${WEBRTC_INCLUDE}" "${FFMPEG_INCLUDE}")
+    target_compile_definitions(EvpVideoAdmissionProbe PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_options(EvpVideoAdmissionProbe PRIVATE /utf-8 /EHsc)
+    target_link_libraries(EvpVideoAdmissionProbe PRIVATE evp_client)
 endif()
