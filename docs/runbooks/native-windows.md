@@ -10,7 +10,7 @@ Open **设置** at the bottom of the main sidebar. In **设置中心 → 连接�
 
 In **设置中心 → 外观 → 主题**, the **模式** row offers **跟随系统** (Follow system), **浅色模式** (Light), and **深色模式** (Dark). Follow system is the default and responds to changes in the Windows app color mode. Set **强调色**, **背景**, and **前景** to customize the active mode's accent, background, and text colors. The light and dark palettes are saved separately. **字体** chooses an installed font family and applies to both modes. Changes take effect immediately and persist for the current Windows user. **恢复默认** restores the active palette and the shared font.
 
-The client uses solid focus borders for keyboard navigation. Buttons with a styled border show focus on that border. Hovering over an enabled checkbox or its label displays a pointing hand. Disabled checkboxes use the arrow cursor.
+The client uses solid focus borders for keyboard navigation. Buttons with a styled border show focus on that border. Enabled checkboxes and theme radio buttons display a pointing hand over the indicator, label and any preview icon. Disabled choices use the arrow cursor.
 
 An upgrade reuses the protected address and key previously saved in My Devices. If there is no saved endpoint, the client uses a valid previous Remote Assistance address, then the `EVP_SIGNAL_URL` or packaged default address. Existing device IDs and pairings carry over. For the same address, a blank key field retains its saved key. To rotate it, type the new key and save. To remove it, use the forget-key option. Changing to a different address with a blank key saves an address-only configuration. End the current invitation, pairing request or session before applying new settings.
 

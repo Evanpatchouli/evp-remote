@@ -581,6 +581,25 @@ void DeviceSecurityProbe::appearanceFollowsAndPersistsTheme() {
     QVERIFY(themeTitle->mapTo(&window, themeTitle->rect().bottomLeft()).y() <
             modeTitle->mapTo(&window, modeTitle->rect().topLeft()).y());
     QVERIFY(!system->icon().isNull() && !light->icon().isNull() && !dark->icon().isNull());
+    for (auto* option : {system, light, dark}) {
+        QCOMPARE(option->cursor().shape(), Qt::PointingHandCursor);
+        option->setEnabled(false);
+        QCOMPARE(option->cursor().shape(), Qt::ArrowCursor);
+        option->setEnabled(true);
+        QCOMPARE(option->cursor().shape(), Qt::PointingHandCursor);
+    }
+
+    // Click each part of a theme choice through the actual widget hit test.
+    const int centerY = system->height() / 2;
+    const int indicatorWidth = system->style()->pixelMetric(QStyle::PM_ExclusiveIndicatorWidth, nullptr, system);
+    const int textWidth = system->fontMetrics().horizontalAdvance(system->text());
+    QSignalSpy systemClicks(system, &QRadioButton::clicked);
+    for (const int x : {indicatorWidth / 2, indicatorWidth + system->iconSize().width() / 2,
+                        system->width() - textWidth / 2}) {
+        QTest::mouseClick(system, Qt::LeftButton, Qt::NoModifier, QPoint(x, centerY));
+        QCOMPARE(systemClicks.count(), 1);
+        systemClicks.clear();
+    }
 
     // Simulate a platform scheme notification while the setting is still Follow system.
     QApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);

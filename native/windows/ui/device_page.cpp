@@ -1,6 +1,6 @@
 #include "device_page.h"
 #include "action_button.h"
-#include "check_box.h"
+#include "selection_buttons.h"
 #include "select_field.h"
 #include "theme.h"
 #include "visual_style.h"

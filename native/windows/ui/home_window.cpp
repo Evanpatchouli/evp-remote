@@ -1,7 +1,7 @@
 #include "home_window.h"
 
 #include "action_button.h"
-#include "check_box.h"
+#include "selection_buttons.h"
 #include "device_page.h"
 #include "devices/device_identity.h"
 #include "floating_surface.h"
@@ -23,7 +23,6 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainterPath>
-#include <QRadioButton>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -776,7 +775,7 @@ QWidget* HomeWindow::createSettingsPage()
     theme->addLayout(themeRow);
     auto* themeOptions = new QButtonGroup(themeCard);
     const auto addTheme = [&](Theme choice, const QString& text, const char* name) {
-        auto* button = new QRadioButton(text);
+        auto* button = new native_ui::RadioButton(text);
         button->setObjectName(QString::fromLatin1(name));
         button->setFont(uiFont(14));
         button->setIcon(themePreview(choice));
