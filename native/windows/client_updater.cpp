@@ -15,8 +15,13 @@
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QProgressBar>
+#include <QScrollBar>
+#include <QScreen>
+#include <QStyle>
 #include <QTemporaryDir>
+#include <QTextBlock>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QtMath>
 #include <QVBoxLayout>
@@ -32,6 +37,12 @@ constexpr int downloadIdleTimeoutMs = 60 * 1000;
 const auto releasesApi = QUrl("https://api.github.com/repos/Evanpatchouli/evp-remote/releases/latest");
 const auto helperName = QStringLiteral("EvpRemoteUpdate.exe");
 constexpr int dialogWidth = 428;
+constexpr int releaseDialogWidth = 500;
+constexpr int dialogSideMargin = 20;
+constexpr int notesHorizontalInset = 13; // Padding plus border on each side.
+constexpr int notesVerticalInset = 10;
+constexpr int minimumNotesHeight = 64;
+constexpr int maximumNotesHeight = 246;
 
 class NotesImageHandler final : public QObject, public QTextObjectInterface {
     Q_OBJECT
@@ -42,6 +53,46 @@ public:
     QSizeF intrinsicSize(QTextDocument*, int, const QTextFormat&) override { return {0, 0}; }
     void drawObject(QPainter*, const QRectF&, QTextDocument*, int, const QTextFormat&) override {}
 };
+
+void formatReleaseNotes(QTextDocument& document, const QString& markdown) {
+    document.setMarkdown(markdown, {QTextDocument::MarkdownDialectGitHub, QTextDocument::MarkdownNoHTML});
+    QTextCursor cursor(&document);
+    cursor.beginEditBlock();
+    for (auto block = document.begin(); block.isValid(); block = block.next()) {
+        auto format = block.blockFormat();
+        if (format.hasProperty(QTextFormat::BlockCodeLanguage))
+            continue;
+        cursor.setPosition(block.position());
+        const int heading = format.headingLevel();
+        format.setLineHeight(128, QTextBlockFormat::ProportionalHeight);
+        format.setTopMargin(heading && block != document.begin() ? 14 : 0);
+        format.setBottomMargin(heading || block.textList() ? 7 : 10);
+        cursor.setBlockFormat(format);
+        if (heading && block.length() > 1) {
+            QTextCharFormat title;
+            title.setFontWeight(QFont::DemiBold);
+            title.setProperty(QTextFormat::FontSizeAdjustment, heading <= 2 ? 1 : 0);
+            cursor.setPosition(block.position() + block.length() - 1, QTextCursor::KeepAnchor);
+            cursor.mergeCharFormat(title);
+        }
+    }
+    cursor.endEditBlock();
+}
+
+int dialogHeightForWidth(QDialog& dialog, int width) {
+    const int wrapped = dialog.layout()->totalHeightForWidth(width);
+    return wrapped >= 0 ? wrapped : dialog.layout()->sizeHint().height();
+}
+
+void keepDialogOnScreen(QDialog& dialog) {
+    const auto available = dialog.screen()->availableGeometry();
+    const auto frame = dialog.frameGeometry();
+    const QPoint topLeft(
+        qBound(available.left(), frame.left(), qMax(available.left(), available.right() - frame.width() + 1)),
+        qBound(available.top(), frame.top(), qMax(available.top(), available.bottom() - frame.height() + 1)));
+    if (topLeft != frame.topLeft())
+        dialog.move(dialog.pos() + topLeft - frame.topLeft());
+}
 
 int statusCode(const QNetworkReply& reply) {
     return reply.attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -71,8 +122,8 @@ ClientUpdater::ClientUpdater(HomeWindow& home, const QUrl& releaseEndpoint)
         "QLabel#updateDetail, QLabel#updateVersionCaption { color: #526684/#b7c0cf@muted; }"
         "QLabel#updateLatestVersion { color: #2356b3/#b7d0ff@accentText; }"
         "QFrame#updateVersions { background: #f5f8fd/#222427@surface; border: 1px solid #e0e8f3/#343942@stroke; border-radius: 8px; }"
-        "QTextBrowser { background: #ffffff/#25272b@surface; color: #263955/#e6e8ec@foreground; border: 1px solid #e0e8f3/#343942@stroke;"
-        " border-radius: 8px; padding: 5px 8px; }"
+        "QTextBrowser { background: #f8faff/#202226@raised; color: #263955/#e6e8ec@foreground; border: 1px solid #e0e8f3/#343942@stroke;"
+        " border-radius: 8px; padding: %1px %2px; }"
         "QProgressBar { min-height: 6px; max-height: 6px; border: none; border-radius: 3px; background: #e7eef9/#292c31@raised; }"
         "QProgressBar::chunk { border-radius: 3px; background: #3475e4/#739ff1@accent; }"
         "QPushButton { background: #edf4ff/#303844@raised; color: #214c98/#b7d0ff@accentText; border: 1px solid #b2c8eb/#536783@stroke; padding: 0 12px; outline: none; }"
@@ -82,9 +133,10 @@ ClientUpdater::ClientUpdater(HomeWindow& home, const QUrl& releaseEndpoint)
         "QPushButton#installUpdate:hover { background: #2058c2/#2a60bc@accentHover; }"
         "QPushButton#installUpdate:focus { border: 2px solid #d3e2ff/#b7d0ff@onAccent; }"
         "QPushButton:disabled, QPushButton#installUpdate:disabled {"
-        " background: #f4f7fc/#24262a@surface; color: #667893/#9da7b8@muted; border-color: #d9e3f1/#3d434d@stroke; }"));
+        " background: #f4f7fc/#24262a@surface; color: #667893/#9da7b8@muted; border-color: #d9e3f1/#3d434d@stroke; }")
+        .arg(notesVerticalInset - 1).arg(notesHorizontalInset - 1));
     auto* layout = new QVBoxLayout(dialog_);
-    layout->setContentsMargins(20, 18, 20, 16);
+    layout->setContentsMargins(dialogSideMargin, 18, dialogSideMargin, 16);
     layout->setSpacing(14);
     auto* header = new QHBoxLayout;
     header->setSpacing(12);
@@ -122,11 +174,12 @@ ClientUpdater::ClientUpdater(HomeWindow& home, const QUrl& releaseEndpoint)
 
     notes_ = new QTextBrowser;
     notes_->setObjectName("updateReleaseNotes");
+    notes_->document()->setIndentWidth(20);
     notes_->document()->documentLayout()->registerHandler(QTextFormat::ImageObject, new NotesImageHandler(notes_));
     notes_->setOpenLinks(false);
     notes_->setOpenExternalLinks(false);
     notes_->setAccessibleName(QStringLiteral("更新说明"));
-    notes_->setFont(native_ui::uiFont(13));
+    notes_->setFont(native_ui::uiFont(14));
     layout->addWidget(notes_);
     progress_ = new QProgressBar;
     progress_->setAccessibleName(QStringLiteral("更新下载进度"));
@@ -258,8 +311,8 @@ void ClientUpdater::finishMetadata() {
         return;
     }
     release_ = latest;
-    notes_->document()->setMarkdown(latest->notes,
-        {QTextDocument::MarkdownDialectGitHub, QTextDocument::MarkdownNoHTML});
+    formatReleaseNotes(*notes_->document(), latest->notes);
+    notes_->moveCursor(QTextCursor::Start);
     const bool usable = canInstall();
     const auto message = usable
         ? QStringLiteral("更新会结束当前会话并重启客户端。")
@@ -269,6 +322,8 @@ void ClientUpdater::finishMetadata() {
         lastOffered_ = latest->tag;
         dialog_->setAttribute(Qt::WA_ShowWithoutActivating, !manual_);
         dialog_->show();
+        keepDialogOnScreen(*dialog_);
+        notes_->verticalScrollBar()->setValue(0);
     }
 }
 
@@ -412,11 +467,10 @@ void ClientUpdater::setStatus(Appearance appearance, const QString& heading, con
         latestVersion_->setText(release_->version);
     }
     const bool showNotes = showRelease && !notes_->document()->isEmpty();
+    const auto available = dialog_->screen()->availableGeometry();
+    const int width = qMin(showNotes ? releaseDialogWidth : dialogWidth, available.width() - 16);
+    dialog_->setFixedWidth(width);
     notes_->setVisible(showNotes);
-    if (showNotes) {
-        notes_->document()->setTextWidth(dialogWidth - 70);
-        notes_->setFixedHeight(qBound(58, qCeil(notes_->document()->size().height()) + 14, 156));
-    }
     const bool checking = state_ == State::Checking || state_ == State::Rechecking;
     const bool downloading = state_ == State::Downloading;
     progress_->setVisible(checking || downloading);
@@ -433,9 +487,24 @@ void ClientUpdater::setStatus(Appearance appearance, const QString& heading, con
     close_->setText(downloading ? QStringLiteral("取消下载")
                                : ready ? QStringLiteral("稍后再说") : QStringLiteral("关闭"));
     close_->setEnabled(state_ != State::Restarting);
+    if (showNotes) {
+        notes_->setFixedHeight(minimumNotesHeight);
+        const int chromeHeight = dialogHeightForWidth(*dialog_, width) - minimumNotesHeight;
+        const int titleBar = dialog_->style()->pixelMetric(QStyle::PM_TitleBarHeight, nullptr, dialog_);
+        const int limit = qBound(minimumNotesHeight, available.height() - chromeHeight - titleBar - 16, maximumNotesHeight);
+        const int textWidth = width - 2 * (dialogSideMargin + notesHorizontalInset);
+        auto* document = notes_->document();
+        document->setTextWidth(textWidth);
+        const auto contentHeight = [&] { return qCeil(document->size().height()) + 2 * notesVerticalInset; };
+        if (contentHeight() > limit) {
+            // Keep wrapped lines clear of the vertical scrollbar in a capped viewport.
+            const int scrollWidth = notes_->style()->pixelMetric(QStyle::PM_ScrollBarExtent, nullptr, notes_);
+            document->setTextWidth(textWidth - scrollWidth);
+        }
+        notes_->setFixedHeight(qBound(minimumNotesHeight, contentHeight(), limit));
+    }
     dialog_->layout()->activate();
-    const int wrappedHeight = dialog_->layout()->totalHeightForWidth(dialogWidth);
-    dialog_->resize(dialogWidth, wrappedHeight >= 0 ? wrappedHeight : dialog_->layout()->sizeHint().height());
+    dialog_->resize(width, dialogHeightForWidth(*dialog_, width));
 }
 
 void ClientUpdater::abortTransfer(const QString& error) {

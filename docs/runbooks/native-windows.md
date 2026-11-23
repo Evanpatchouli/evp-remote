@@ -18,6 +18,8 @@ An upgrade reuses the protected address and key previously saved in My Devices. 
 
 The app checks the latest stable GitHub release shortly after launch and every 15 minutes. To check immediately, open **设置中心 → 关于** and select **检查更新**. Selecting **下载并更新** downloads the appropriate release asset and verifies its size and SHA-256 against the release metadata. Applying an update ends current sessions and restarts the client.
 
+The update offer displays the release notes from the beginning. Longer notes scroll within the dialog.
+
 The portable launcher replaces its original EXE at the same location. The ZIP and installed clients download the setup EXE and start the new per-user installed copy. Silent updates use the registered installation directory. The ZIP directory remains available for manual cleanup. All modes use the same local settings and device pairings for the current Windows user.
 
 Installed updates keep the previous runtime until the new client passes a version and startup check. If an update was interrupted and setup reports a pending update, close the client and run the setup EXE with `/S /UPDATEROLLBACK` to restore the previous installation. If the updated client already starts normally, run that version's setup EXE with `/S /UPDATECOMMIT` to finish retiring its backup.

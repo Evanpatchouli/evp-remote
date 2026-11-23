@@ -35,6 +35,8 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBlock>
+#include <QTextBrowser>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWebSocket>
@@ -224,12 +226,15 @@ void DeviceSecurityProbe::selectsVerifiedUpdateAssets() {
 
 void DeviceSecurityProbe::rendersUpdateDialog_data() {
     QTest::addColumn<bool>("hasUpdate");
-    QTest::newRow("current") << false;
-    QTest::newRow("available") << true;
+    QTest::addColumn<bool>("longNotes");
+    QTest::newRow("current") << false << false;
+    QTest::newRow("available") << true << false;
+    QTest::newRow("scrollable-notes") << true << true;
 }
 
 void DeviceSecurityProbe::rendersUpdateDialog() {
     QFETCH(bool, hasUpdate);
+    QFETCH(bool, longNotes);
     QTcpServer releases;
     QVERIFY(releases.listen(QHostAddress::LocalHost));
     const QString tag = "0.2.1";
@@ -238,8 +243,13 @@ void DeviceSecurityProbe::rendersUpdateDialog() {
         {"digest", QStringLiteral("sha256:") + QString(64, 'a')},
         {"browser_download_url", QStringLiteral("https://github.com/Evanpatchouli/evp-remote/releases/download/%1/%2")
              .arg(tag, assetName)}};
+    auto notesText = QStringLiteral("## Windows 客户端\n\n- 安装向导支持选择目录。\n- 检查更新界面更紧凑。");
+    if (longNotes) {
+        notesText += QStringLiteral("\n- 这是一条较长的说明，用于验证说明窗口的空间和滚动位置。").repeated(25);
+        notesText += QStringLiteral("\n\n```powershell\nGet-Date\nGet-Location\n```");
+    }
     const auto body = QJsonDocument(QJsonObject{{"tag_name", tag}, {"draft", false}, {"prerelease", false},
-        {"body", QStringLiteral("## Windows 客户端\n\n- 安装向导支持选择目录。\n- 检查更新界面更紧凑。")},
+        {"body", notesText},
         {"assets", QJsonArray{asset}}}).toJson(QJsonDocument::Compact);
     const auto response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: " +
                           QByteArray::number(body.size()) + "\r\n\r\n" + body;
@@ -277,7 +287,23 @@ void DeviceSecurityProbe::rendersUpdateDialog() {
     QCOMPARE(window.findChild<QWidget*>("updateVersions")->isVisible(), hasUpdate);
     if (hasUpdate) {
         QCOMPARE(window.findChild<QLabel*>("updateLatestVersion")->text(), tag);
-        QVERIFY(dialog->height() <= 380);
+        QVERIFY(dialog->height() <= (longNotes ? 480 : 380));
+        auto* notes = dialog->findChild<QTextBrowser*>("updateReleaseNotes");
+        QVERIFY(notes && notes->isVisible());
+        const auto title = notes->document()->firstBlock();
+        QCOMPARE(title.blockFormat().headingLevel(), 2);
+        QCOMPARE(title.next().blockFormat().lineHeightType(), int(QTextBlockFormat::ProportionalHeight));
+        QVERIFY(title.next().blockFormat().bottomMargin() > 0);
+        if (longNotes) {
+            QTRY_VERIFY(notes->verticalScrollBar()->maximum() > 0);
+            QCOMPARE(notes->verticalScrollBar()->value(), notes->verticalScrollBar()->minimum());
+            QCOMPARE(notes->horizontalScrollBar()->maximum(), 0);
+            QVERIFY(dialog->frameGeometry().height() <= dialog->screen()->availableGeometry().height());
+            const auto command = notes->document()->find("Get-Date").block();
+            QVERIFY(command.isValid());
+            QCOMPARE(command.blockFormat().bottomMargin(), 0.0);
+            QCOMPARE(command.next().text(), QStringLiteral("Get-Location"));
+        }
         auto* install = dialog->findChild<QPushButton*>("installUpdate");
         QVERIFY(install);
         if (install->isVisible()) {
@@ -293,8 +319,10 @@ void DeviceSecurityProbe::rendersUpdateDialog() {
         QVERIFY(dialog->height() <= 170);
     }
     const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
-    if (!preview.isEmpty())
-        QVERIFY(dialog->grab().save(QDir(preview).filePath(hasUpdate ? "update-available.png" : "update-current.png")));
+    if (!preview.isEmpty()) {
+        const auto file = longNotes ? "update-long.png" : hasUpdate ? "update-available.png" : "update-current.png";
+        QVERIFY(dialog->grab().save(QDir(preview).filePath(file)));
+    }
 }
 
 void DeviceSecurityProbe::bindsProofToPeerAttemptNonceAndPayload() {
