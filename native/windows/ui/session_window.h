@@ -45,6 +45,7 @@ private:
 
     QLabel* statusIndicator_;
     QWidget* toolbar_ = nullptr;
+    QWidget* fullscreenBanner_ = nullptr;
     QLabel* statusLabel_;
     QLabel* routeLabel_;
     QLabel* inputLabel_;

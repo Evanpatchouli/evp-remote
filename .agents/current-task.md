@@ -1,5 +1,13 @@
 # Current task
 
+## Fullscreen guidance
+
+- **Decide / S1.** Keep the toolbar action compact and show its exit shortcut on hover.
+- **Execute / S2.** Build a reusable themed tooltip and a prominent timed banner above the native viewer.
+- **Verify / S1.** Exercise hover, fullscreen entry, dismissal and both themes. Capture the running widgets and obtain an independent review.
+
+The Release viewer built and the settings probe passed. A Windows GUI check captured both themes over a native sample surface and verified banner centering, timeout, repeated entry and keyboard exit. Independent review confirmed the activation-change fix. End-to-end remote streaming was not exercised.
+
 ## Windows 0.4.0 release
 
 - **Execute / S1.** Bump the release manifest and lockfile, record the ongoing Windows client GPL grant and apply the existing GPL/x264 packaging checks to future Windows releases.

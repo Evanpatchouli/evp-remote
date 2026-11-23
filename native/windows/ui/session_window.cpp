@@ -14,7 +14,7 @@
 #include <QSize>
 #include <QSpinBox>
 #include <QStringList>
-#include <QToolTip>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -137,6 +137,47 @@ void addSettingsDivider(QVBoxLayout* layout) {
     layout->addWidget(divider);
 }
 
+QWidget* createFullscreenBanner(QWidget& owner, const QStringList& keys)
+{
+    // The video renderer has its own HWND. An owned, click-through window stays above it.
+    auto* window = new QWidget(&owner, Qt::Tool | Qt::WindowTransparentForInput | Qt::WindowDoesNotAcceptFocus);
+    window->setObjectName(QStringLiteral("fullscreenBanner"));
+    window->setAttribute(Qt::WA_ShowWithoutActivating);
+    auto* outer = new QHBoxLayout(window);
+    outer->setContentsMargins(0, 0, 0, 0);
+    auto* pill = new QFrame;
+    pill->setObjectName(QStringLiteral("bannerPill"));
+    outer->addWidget(pill);
+    native_ui::styleFloatingSurface(*window, *pill);
+    setThemedStyle(*pill, QStringLiteral(
+        "QFrame#bannerPill { background: #17232e/#202932; border: 1px solid #536270/#65727e; border-radius: 26px; }"
+        "QLabel { color: #ffffff; background: transparent; }"
+        "QLabel#bannerIcon { background: #a8efd6; border-radius: 15px; }"
+        "QFrame#bannerDivider { background: #566571; }"
+        "QLabel#bannerKey { background: #34424f; border: 1px solid #677480; border-radius: 6px; padding: 3px 8px; }"));
+    auto* row = new QHBoxLayout(pill);
+    row->setContentsMargins(13, 10, 20, 10);
+    row->setSpacing(6);
+    auto* icon = label({}, "bannerIcon", 16);
+    icon->setAlignment(Qt::AlignCenter);
+    icon->setFixedSize(30, 30);
+    icon->setPixmap(symbolPixmap(Symbol::Display, QColor("#174d40"), 19));
+    row->addWidget(icon);
+    row->addSpacing(4);
+    row->addWidget(label(QStringLiteral("已进入全屏"), "bannerTitle", 17, QFont::DemiBold));
+    row->addSpacing(7);
+    auto* divider = new QFrame;
+    divider->setObjectName(QStringLiteral("bannerDivider"));
+    divider->setFixedSize(1, 20);
+    row->addWidget(divider, 0, Qt::AlignVCenter);
+    row->addSpacing(7);
+    row->addWidget(label(QStringLiteral("按"), "bannerText", 15));
+    for (const auto& key : keys)
+        row->addWidget(label(key, "bannerKey", 15, QFont::DemiBold));
+    row->addWidget(label(QStringLiteral("退出全屏"), "bannerText", 15));
+    return window;
+}
+
 } // namespace
 
 SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
@@ -225,21 +266,29 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     inputLabel_ = label({}, "sessionInput", 12, QFont::DemiBold);
     tools->addWidget(inputLabel_, 0, Qt::AlignVCenter);
     const QKeySequence fullscreenKey(QStringLiteral("Ctrl+Alt+F11"));
-    const auto keyText = fullscreenKey.toString(QKeySequence::NativeText);
-    const auto exitHint = QStringLiteral("按 %1 退出全屏").arg(keyText);
-    auto* fullscreen = new ActionButton(QStringLiteral("全屏 (%1)").arg(keyText));
+    const auto keys = fullscreenKey.toString(QKeySequence::NativeText).split(u'+');
+    const auto exitHint = QStringLiteral("按 %1 退出全屏").arg(keys.join(QStringLiteral(" + ")));
+    auto* fullscreen = new ActionButton(QStringLiteral("全屏"));
     fullscreen->setObjectName(QStringLiteral("fullscreen"));
-    fullscreen->setToolTip(exitHint);
-    fullscreen->setAccessibleDescription(fullscreen->toolTip());
+    native_ui::attachThemedToolTip(*fullscreen, exitHint);
+    fullscreen->setAccessibleDescription(exitHint);
     tools->addWidget(fullscreen);
-    const auto toggle = [this, exitHint] {
+    fullscreenBanner_ = createFullscreenBanner(*this, keys);
+    auto* bannerTimer = new QTimer(fullscreenBanner_);
+    bannerTimer->setSingleShot(true);
+    connect(bannerTimer, &QTimer::timeout, fullscreenBanner_, &QWidget::hide);
+    const auto toggle = [this, bannerTimer] {
         videoSettingsPanel_->hide();
         if (isFullScreen()) {
-            QToolTip::hideText();
             showNormal();
         } else {
             showFullScreen();
-            QToolTip::showText(mapToGlobal(QPoint(width() / 2, 24)), exitHint, this, {}, 5000);
+            fullscreenBanner_->adjustSize();
+            const QRect bounds = screen()->geometry();
+            fullscreenBanner_->move(bounds.left() + (bounds.width() - fullscreenBanner_->width()) / 2,
+                                    bounds.top() + 12);
+            fullscreenBanner_->show();
+            bannerTimer->start(5000);
         }
     };
     connect(fullscreen, &QPushButton::clicked, this, toggle);
@@ -587,6 +636,9 @@ void SessionWindow::updateStatus()
 void SessionWindow::changeEvent(QEvent* event)
 {
     QMainWindow::changeEvent(event);
+    if (fullscreenBanner_ && ((event->type() == QEvent::ActivationChange && !isActiveWindow()) ||
+        (event->type() == QEvent::WindowStateChange && (!isFullScreen() || isMinimized()))))
+        fullscreenBanner_->hide();
     if (event->type() == QEvent::WindowStateChange && toolbar_) {
         if (isFullScreen() || isMinimized())
             videoSettingsPanel_->hide();
