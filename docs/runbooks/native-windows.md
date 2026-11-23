@@ -4,7 +4,7 @@ On each Windows PC, run **`evp-remote-windows-x64-setup.exe`**, double-click **`
 
 ## Shared settings
 
-Closing the main window keeps the client online in the Windows notification area. Click its tray icon or choose **打开 EVP 远程** to reopen the window. Choose **退出 EVP 远程** from the tray menu to end the current session and exit. Closing the separate remote-control window still ends that control session. The floating stop control remains available while the host shares in the background. Assisted connections and pairing requests that need approval can show a tray notification while the main window is hidden.
+Closing the main window keeps the client online in the Windows notification area. Click its tray icon or choose **打开** to reopen the window. Choose **退出** from the tray menu to end the current session and exit. Closing the separate remote-control window still ends that control session. The floating stop control remains available while the host shares in the background. Assisted connections and pairing requests that need approval can show a tray notification while the main window is hidden.
 
 Open **设置** at the bottom of the main sidebar. In **设置中心 → 连接设置**, enter the deployment's `wss://` address. Add the deployment key if this PC will create invitations or use My Devices, then save. An invitation guest can save just the address. Both modes use these settings for the current Windows user, including after restarting the portable EXE. The back button returns to the previous page.
 

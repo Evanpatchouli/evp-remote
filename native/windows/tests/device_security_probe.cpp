@@ -171,7 +171,10 @@ void DeviceSecurityProbe::trayKeepsSharingControlsAvailable() {
     native_ui::installSystemTray(window);
     auto* tray = window.findChild<QSystemTrayIcon*>();
     auto* open = window.findChild<QAction*>("trayOpen");
-    QVERIFY(tray && tray->isVisible() && open && window.findChild<QAction*>("trayQuit"));
+    auto* quit = window.findChild<QAction*>("trayQuit");
+    QVERIFY(tray && tray->isVisible() && open && quit);
+    QCOMPARE(open->text(), QStringLiteral("打开"));
+    QCOMPARE(quit->text(), QStringLiteral("退出"));
     const auto icon = tray->icon().pixmap(16, 16).toImage();
     QVERIFY(!icon.isNull() && icon.pixelColor(0, 0).alpha() == 0);
     QVERIFY(!QApplication::quitOnLastWindowClosed());

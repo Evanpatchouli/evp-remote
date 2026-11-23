@@ -13,10 +13,10 @@ void installSystemTray(HomeWindow& home) {
     tray->setToolTip(QApplication::applicationDisplayName());
 
     auto* menu = new QMenu(&home);
-    auto* open = menu->addAction(QStringLiteral("打开 EVP 远程"));
+    auto* open = menu->addAction(QStringLiteral("打开"));
     open->setObjectName("trayOpen");
     menu->setDefaultAction(open);
-    auto* quit = menu->addAction(QStringLiteral("退出 EVP 远程"));
+    auto* quit = menu->addAction(QStringLiteral("退出"));
     quit->setObjectName("trayQuit");
     tray->setContextMenu(menu);
 
