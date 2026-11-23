@@ -14,6 +14,7 @@
 #include <QSize>
 #include <QSpinBox>
 #include <QStringList>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include <cmath>
@@ -223,18 +224,26 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
 
     inputLabel_ = label({}, "sessionInput", 12, QFont::DemiBold);
     tools->addWidget(inputLabel_, 0, Qt::AlignVCenter);
-    auto* fullscreen = new ActionButton(QStringLiteral("全屏"));
+    const QKeySequence fullscreenKey(QStringLiteral("Ctrl+Alt+F11"));
+    const auto keyText = fullscreenKey.toString(QKeySequence::NativeText);
+    const auto exitHint = QStringLiteral("按 %1 退出全屏").arg(keyText);
+    auto* fullscreen = new ActionButton(QStringLiteral("全屏 (%1)").arg(keyText));
     fullscreen->setObjectName(QStringLiteral("fullscreen"));
-    fullscreen->setToolTip(QStringLiteral("全屏显示画面，按 Ctrl+Alt+F11 返回"));
+    fullscreen->setToolTip(exitHint);
     fullscreen->setAccessibleDescription(fullscreen->toolTip());
     tools->addWidget(fullscreen);
-    const auto toggle = [this] {
+    const auto toggle = [this, exitHint] {
         videoSettingsPanel_->hide();
-        if (isFullScreen()) showNormal();
-        else showFullScreen();
+        if (isFullScreen()) {
+            QToolTip::hideText();
+            showNormal();
+        } else {
+            showFullScreen();
+            QToolTip::showText(mapToGlobal(QPoint(width() / 2, 24)), exitHint, this, {}, 5000);
+        }
     };
     connect(fullscreen, &QPushButton::clicked, this, toggle);
-    auto* shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F11")), this);
+    auto* shortcut = new QShortcut(fullscreenKey, this);
     connect(shortcut, &QShortcut::activated, this, toggle);
     auto* popupShortcut = new QShortcut(shortcut->key(), videoSettingsPanel_);
     connect(popupShortcut, &QShortcut::activated, this, toggle);
