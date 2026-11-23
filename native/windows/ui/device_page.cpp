@@ -5,18 +5,86 @@
 #include "theme.h"
 #include "visual_style.h"
 
+#include <QAbstractItemModel>
+#include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
+#include <QDialogButtonBox>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QInputDialog>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QScrollBar>
 #include <QSignalBlocker>
+#include <QStyledItemDelegate>
+#include <QStyleOptionViewItem>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 namespace {
 
 using native_ui::label;
+
+constexpr int DeviceNameRole = Qt::UserRole + 1;
+constexpr int DevicePinnedRole = Qt::UserRole + 2;
+
+QString itemId(const QListWidgetItem* item) {
+    return item ? item->data(Qt::UserRole).toString() : QString{};
+}
+
+QString pinActionText(bool pinned) {
+    return pinned ? QStringLiteral("取消置顶") : QStringLiteral("置顶");
+}
+
+QRect pinArea(const QRect& row) {
+    constexpr int extent = 28;
+    constexpr int rightInset = 8;
+    const int height = qMin(row.height(), extent);
+    return {row.right() - rightInset - extent + 1, row.top() + (row.height() - height) / 2, extent, height};
+}
+
+class DeviceItemDelegate final : public QStyledItemDelegate {
+public:
+    DeviceItemDelegate(const std::optional<QPoint>& hoverPosition, QObject* parent)
+        : QStyledItemDelegate(parent), hoverPosition_(hoverPosition) {}
+
+    QSize sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+        // The list view expands vertical rows to the viewport width.
+        return {1, QStyledItemDelegate::sizeHint(option, index).height()};
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
+        const bool hovered = hoverPosition_ && option.rect.contains(*hoverPosition_);
+        auto row = option;
+        row.state.setFlag(QStyle::State_MouseOver, hovered);
+        QStyledItemDelegate::paint(painter, row, index);
+        const bool pinned = index.data(DevicePinnedRole).toBool();
+        if (!pinned && !hovered)
+            return;
+
+        const auto ink = pinned ? native_ui::themeColor("#2459ab", "#a9c7ff", "accentText")
+                                : native_ui::themeColor("#4a6288", "#aebdce", "muted");
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        painter->translate(QRectF(pinArea(option.rect)).center());
+        painter->rotate(32);
+        painter->setPen(QPen(ink, 1.45, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->drawLine(QPointF(0, 3), QPointF(0, 8));
+        painter->setBrush(pinned ? QBrush(ink) : QBrush(Qt::NoBrush));
+        painter->drawPolygon(QPolygonF{{-3.1, -7}, {3.1, -7}, {2.4, -2.5}, {4.7, 0.3},
+                                       {4.7, 3}, {-4.7, 3}, {-4.7, 0.3}, {-2.4, -2.5}});
+        painter->restore();
+    }
+
+private:
+    const std::optional<QPoint>& hoverPosition_;
+};
 
 QVBoxLayout* addCard(QVBoxLayout* page) {
     auto* card = new QFrame;
@@ -72,7 +140,7 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
         QListWidget#trustedDeviceList { background: white/#25272b@surface; border: 2px solid #e0e8f3/#343942@stroke; border-radius: 9px; }
         QListWidget#trustedDeviceList:focus { border-color: #3475e4/#739ff1@accentMark; }
         QListWidget#trustedDeviceList::item {
-            padding: 8px 12px; border: 1px solid transparent; border-radius: 7px;
+            padding: 8px 42px 8px 12px; border: 1px solid transparent; border-radius: 7px;
             background: #f4f6fa/#222427@surface; color: #263955/#e6e8ec@foreground;
         }
         QListWidget#trustedDeviceList::item:hover { background: #e8effa/#303844@raised; border-color: #b8cbed/#536783@stroke; }
@@ -113,6 +181,8 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     list_->setMouseTracking(true);
     list_->viewport()->setAttribute(Qt::WA_Hover);
     list_->setUniformItemSizes(true);
+    list_->setItemDelegate(new DeviceItemDelegate(pinHoverPosition_, list_));
+    list_->setResizeMode(QListView::Adjust);
     list_->setTextElideMode(Qt::ElideMiddle);
     list_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -123,6 +193,59 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     emptyList_->setAttribute(Qt::WA_TransparentForMouseEvents);
     emptyLayout->addWidget(emptyList_);
     devices->addWidget(list_);
+
+    deviceMenu_ = new QMenu(this);
+    deviceMenu_->setObjectName("trustedDeviceMenu");
+    auto* rename = deviceMenu_->addAction(QStringLiteral("重命名"));
+    rename->setObjectName("renameDeviceAction");
+    moveUp_ = deviceMenu_->addAction(QStringLiteral("上移"));
+    moveUp_->setObjectName("moveDeviceUpAction");
+    moveDown_ = deviceMenu_->addAction(QStringLiteral("下移"));
+    moveDown_->setObjectName("moveDeviceDownAction");
+    pin_ = deviceMenu_->addAction(pinActionText(false));
+    pin_->setObjectName("moveDeviceTopAction");
+    deviceMenu_->addSeparator();
+    auto* removeDevice = deviceMenu_->addAction(QStringLiteral("移除"));
+    removeDevice->setObjectName("removeDeviceAction");
+    connect(rename, &QAction::triggered, this, &DevicePage::renameContextDevice);
+    connect(moveUp_, &QAction::triggered, this, [this] { moveContextDevice(evp::DeviceMove::Up); });
+    connect(moveDown_, &QAction::triggered, this, [this] { moveContextDevice(evp::DeviceMove::Down); });
+    connect(pin_, &QAction::triggered, this, [this] { toggleDevicePin(takeContextDeviceId()); });
+    connect(removeDevice, &QAction::triggered, this, [this] {
+        const auto id = takeContextDeviceId();
+        if (deviceItem(id))
+            emit removeRequested(id);
+    });
+    list_->installEventFilter(this);
+    list_->viewport()->installEventFilter(this);
+    connect(list_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this] {
+        if (pinHoverPosition_)
+            refreshPinHover();
+    }, Qt::QueuedConnection);
+
+    renameDialog_ = new QInputDialog(this);
+    renameDialog_->setObjectName("renameDeviceDialog");
+    renameDialog_->setWindowTitle(QStringLiteral("重命名设备"));
+    renameDialog_->setInputMode(QInputDialog::TextInput);
+    renameDialog_->setLabelText(QStringLiteral("设备名称"));
+    renameDialog_->setOkButtonText(QStringLiteral("确定"));
+    renameDialog_->setCancelButtonText(QStringLiteral("取消"));
+    auto* nameEdit = renameDialog_->findChild<QLineEdit*>();
+    nameEdit->setMaxLength(evp::maxDeviceNameLength);
+    auto* confirmName = renameDialog_->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Ok);
+    confirmName->setEnabled(false);
+    connect(nameEdit, &QLineEdit::textChanged, confirmName, [confirmName](const QString& text) {
+        confirmName->setEnabled(!evp::normalizedDeviceName(text).isEmpty());
+    });
+    connect(renameDialog_, &QDialog::accepted, this, [this] {
+        const auto id = renameId_;
+        renameId_.clear();
+        const auto name = evp::normalizedDeviceName(renameDialog_->textValue());
+        if (deviceItem(id) && !name.isEmpty())
+            emit renameRequested(id, name);
+    });
+    connect(renameDialog_, &QDialog::rejected, this, [this] { renameId_.clear(); });
+
     connect_ = button(QStringLiteral("连接选中设备"), "connectDevice", true);
     remove_ = button(QStringLiteral("移除配对"), "removeDevice");
     auto* actions = row(devices, connect_, remove_, false);
@@ -252,27 +375,54 @@ void DevicePage::setPreferences(const evp::DevicePreferences& options, bool edit
 
 void DevicePage::setDevices(const QMap<QString, evp::DevicePeer>& peers, const QSet<QString>& online) {
     const QSignalBlocker selection(list_);
+    const auto selected = selectedId();
+    const bool removedSelection = !selected.isEmpty() && !peers.contains(selected);
+    auto* scrollBar = list_->verticalScrollBar();
+    const int scrollPosition = scrollBar->value();
     online_ = online;
+    QMap<QString, QListWidgetItem*> existingItems;
     for (int index = list_->count() - 1; index >= 0; --index) {
-        if (!peers.contains(list_->item(index)->data(Qt::UserRole).toString()))
+        auto* item = list_->item(index);
+        const auto id = itemId(item);
+        if (peers.contains(id))
+            existingItems.insert(id, item);
+        else
             delete list_->takeItem(index);
     }
     int index = 0;
-    for (auto it = peers.cbegin(); it != peers.cend(); ++it) {
-        auto* item = list_->item(index);
-        if (!item || item->data(Qt::UserRole).toString() != it.key()) {
+    for (const auto& id : evp::orderedDeviceIds(peers)) {
+        auto* item = existingItems.value(id);
+        if (!item) {
             item = new QListWidgetItem;
-            item->setData(Qt::UserRole, it.key());
-            item->setToolTip(it.key());
+            item->setData(Qt::UserRole, id);
+            item->setToolTip(id);
             list_->insertItem(index, item);
+        } else if (list_->item(index) != item) {
+            list_->model()->moveRow({}, list_->row(item), {}, index);
         }
-        const auto status = online_.contains(it.key()) ? QStringLiteral("在线") : QStringLiteral("离线");
-        item->setText(QStringLiteral("%1   ·   %2").arg(it->name, status));
+        const auto peer = peers.constFind(id);
+        const auto name = peer->displayName();
+        const auto status = online_.contains(id) ? QStringLiteral("在线") : QStringLiteral("离线");
+        item->setData(DeviceNameRole, name);
+        item->setData(DevicePinnedRole, peer->pinned);
+        item->setText(QStringLiteral("%1   ·   %2").arg(name, status));
         ++index;
     }
     emptyList_->setVisible(peers.isEmpty());
-    if (!peers.isEmpty() && !list_->currentItem())
-        list_->setCurrentRow(0);
+    if (!peers.isEmpty() && (!list_->currentItem() || (removedSelection && selectedId().isEmpty())))
+        list_->setCurrentRow(qMax(0, list_->currentRow()));
+    if (scrollBar->value() != scrollPosition) {
+        list_->doItemsLayout();
+        scrollBar->setValue(scrollPosition);
+    }
+    if (!contextId_.isEmpty())
+        updateDeviceMenu();
+    if (!renameId_.isEmpty() && !peers.contains(renameId_))
+        renameDialog_->reject();
+    if (!pressedPinId_.isEmpty() && !peers.contains(pressedPinId_))
+        pressedPinId_.clear();
+    if (pinHoverPosition_)
+        refreshPinHover();
     updateActions();
 }
 
@@ -307,13 +457,212 @@ void DevicePage::setMessage(const QString& text) {
     message_->setVisible(!text.isEmpty());
 }
 
+void DevicePage::clearMessageIf(const QString& text) {
+    if (message_->text() == text)
+        setMessage({});
+}
+
 void DevicePage::setReturnVisible(bool visible) {
     return_->setVisible(visible);
 }
 
+bool DevicePage::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == list_->viewport() && handlePinEvent(event))
+        return true;
+    if (event->type() == QEvent::ContextMenu) {
+        const auto* menu = static_cast<QContextMenuEvent*>(event);
+        if (menu->reason() == QContextMenuEvent::Keyboard) {
+            showCurrentDeviceMenu();
+        } else {
+            auto* viewport = list_->viewport();
+            const auto position = watched == list_ ? viewport->mapFrom(list_, menu->pos()) : menu->pos();
+            if (viewport->rect().contains(position)) {
+                if (auto* item = list_->itemAt(position))
+                    showDeviceMenu(item, menu->globalPos());
+            }
+        }
+        return true;
+    }
+    if (watched == list_ && event->type() == QEvent::KeyPress) {
+        const auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Menu || (key->key() == Qt::Key_F10 && key->modifiers() == Qt::ShiftModifier)) {
+            showCurrentDeviceMenu();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 QString DevicePage::selectedId() const {
     const auto selected = list_->selectedItems();
-    return selected.isEmpty() ? QString{} : selected.first()->data(Qt::UserRole).toString();
+    return selected.isEmpty() ? QString{} : itemId(selected.first());
+}
+
+QListWidgetItem* DevicePage::deviceItem(const QString& id) const {
+    if (id.isEmpty())
+        return nullptr;
+    for (int row = 0; row < list_->count(); ++row) {
+        auto* item = list_->item(row);
+        if (itemId(item) == id)
+            return item;
+    }
+    return nullptr;
+}
+
+QListWidgetItem* DevicePage::pinItemAt(const QPoint& position) const {
+    if (!list_->viewport()->rect().contains(position))
+        return nullptr;
+    auto* item = list_->itemAt(position);
+    return item && pinArea(list_->visualItemRect(item)).contains(position) ? item : nullptr;
+}
+
+bool DevicePage::handlePinEvent(QEvent* event) {
+    switch (event->type()) {
+    case QEvent::Enter:
+        setPinHoverPosition(static_cast<QEnterEvent*>(event)->position().toPoint());
+        break;
+    case QEvent::HoverEnter:
+    case QEvent::HoverMove:
+        setPinHoverPosition(static_cast<QHoverEvent*>(event)->position().toPoint());
+        break;
+    case QEvent::MouseMove:
+        setPinHoverPosition(static_cast<QMouseEvent*>(event)->position().toPoint());
+        break;
+    case QEvent::Leave:
+    case QEvent::HoverLeave:
+        setPinHoverPosition(std::nullopt);
+        break;
+    case QEvent::ToolTip: {
+        const auto* help = static_cast<QHelpEvent*>(event);
+        if (const auto* item = pinItemAt(help->pos())) {
+            QToolTip::showText(help->globalPos(), pinActionText(item->data(DevicePinnedRole).toBool()),
+                               list_->viewport(), pinArea(list_->visualItemRect(item)));
+            return true;
+        }
+        break;
+    }
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonDblClick: {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() != Qt::LeftButton)
+            break;
+        const auto id = itemId(pinItemAt(mouse->position().toPoint()));
+        if (event->type() == QEvent::MouseButtonDblClick) {
+            pinMouseGesture_ = previousPressWasPin_ || !id.isEmpty();
+            previousPressWasPin_ = false;
+            pressedPinId_.clear();
+        } else {
+            pinMouseGesture_ = !id.isEmpty();
+            previousPressWasPin_ = pinMouseGesture_;
+            pressedPinId_ = id;
+        }
+        return pinMouseGesture_;
+    }
+    case QEvent::MouseButtonRelease: {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        if (mouse->button() != Qt::LeftButton || !pinMouseGesture_)
+            break;
+        const auto id = pressedPinId_;
+        pressedPinId_.clear();
+        pinMouseGesture_ = false;
+        if (!id.isEmpty() && itemId(pinItemAt(mouse->position().toPoint())) == id)
+            toggleDevicePin(id);
+        return true;
+    }
+    default:
+        break;
+    }
+    return false;
+}
+
+void DevicePage::setPinHoverPosition(std::optional<QPoint> position) {
+    if (position && !list_->viewport()->rect().contains(*position))
+        position.reset();
+    if (pinHoverPosition_ != position) {
+        pinHoverPosition_ = position;
+        refreshPinHover();
+    }
+}
+
+void DevicePage::refreshPinHover() {
+    auto* viewport = list_->viewport();
+    viewport->update();
+    if (pinHoverPosition_ && pinItemAt(*pinHoverPosition_)) {
+        if (viewport->cursor().shape() != Qt::PointingHandCursor)
+            viewport->setCursor(Qt::PointingHandCursor);
+    } else if (viewport->testAttribute(Qt::WA_SetCursor)) {
+        viewport->unsetCursor();
+    }
+}
+
+void DevicePage::toggleDevicePin(const QString& id) {
+    const auto* item = deviceItem(id);
+    if (!item)
+        return;
+    const bool pinned = !item->data(DevicePinnedRole).toBool();
+    emit pinRequested(id, pinned);
+    if (auto* moved = deviceItem(id); moved && moved->data(DevicePinnedRole).toBool() == pinned) {
+        list_->setCurrentItem(moved);
+        list_->scrollToItem(moved);
+    }
+}
+
+void DevicePage::showCurrentDeviceMenu() {
+    if (auto* item = list_->currentItem()) {
+        list_->scrollToItem(item);
+        const auto position = list_->visualItemRect(item).center();
+        showDeviceMenu(item, list_->viewport()->mapToGlobal(position));
+    }
+}
+
+void DevicePage::showDeviceMenu(QListWidgetItem* item, const QPoint& globalPosition) {
+    contextId_ = itemId(item);
+    list_->setCurrentItem(item);
+    updateDeviceMenu();
+    if (!contextId_.isEmpty())
+        deviceMenu_->popup(globalPosition);
+}
+
+void DevicePage::updateDeviceMenu() {
+    const auto* item = deviceItem(contextId_);
+    if (!item) {
+        contextId_.clear();
+        deviceMenu_->close();
+        return;
+    }
+    moveUp_->setEnabled(canMoveDevice(item, evp::DeviceMove::Up));
+    moveDown_->setEnabled(canMoveDevice(item, evp::DeviceMove::Down));
+    pin_->setText(pinActionText(item->data(DevicePinnedRole).toBool()));
+}
+
+QString DevicePage::takeContextDeviceId() {
+    const auto id = contextId_;
+    contextId_.clear();
+    deviceMenu_->close();
+    return id;
+}
+
+bool DevicePage::canMoveDevice(const QListWidgetItem* item, evp::DeviceMove move) const {
+    if (!item)
+        return false;
+    const int adjacentRow = list_->row(item) + (move == evp::DeviceMove::Up ? -1 : 1);
+    const auto* adjacentItem = list_->item(adjacentRow);
+    return adjacentItem && adjacentItem->data(DevicePinnedRole) == item->data(DevicePinnedRole);
+}
+
+void DevicePage::renameContextDevice() {
+    const auto id = takeContextDeviceId();
+    if (const auto* item = deviceItem(id)) {
+        renameId_ = id;
+        renameDialog_->setTextValue(item->data(DeviceNameRole).toString());
+        renameDialog_->open();
+    }
+}
+
+void DevicePage::moveContextDevice(evp::DeviceMove move) {
+    const auto id = takeContextDeviceId();
+    if (canMoveDevice(deviceItem(id), move))
+        emit moveRequested(id, move);
 }
 
 void DevicePage::updateActions() {

@@ -13,13 +13,17 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QContextMenuEvent>
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QHostAddress>
+#include <QHoverEvent>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QScopeGuard>
 #include <QPainter>
@@ -95,6 +99,13 @@ bool writeLegacyProfile(const QString& path, const evp::DeviceIdentity& owner, c
            file.write(reinterpret_cast<const char*>(encrypted.pbData), encrypted.cbData) == encrypted.cbData;
 }
 
+QStringList trustedDeviceIds(const QListWidget& list) {
+    QStringList ids;
+    for (int row = 0; row < list.count(); ++row)
+        ids.append(list.item(row)->data(Qt::UserRole).toString());
+    return ids;
+}
+
 void verifyElevation(const QPixmap& layer, const QRect& panel) {
     const auto pixels = layer.toImage().convertToFormat(QImage::Format_ARGB32);
     const auto ratio = layer.devicePixelRatio();
@@ -118,6 +129,9 @@ class DeviceSecurityProbe : public QObject {
 private slots:
     void bindsProofToPeerAttemptNonceAndPayload();
     void pausesOnUnwritableSettingsAcrossRestarts();
+    void persistsLocalDeviceNamesAndOrder();
+    void rejectsUnwritableDeviceMetadata_data();
+    void rejectsUnwritableDeviceMetadata();
     void lockedProfileRejectsFallbackJoin();
     void retriesFailedForgetWithoutEditing();
     void committedAddressSurvivesHeldMarker();
@@ -133,6 +147,8 @@ private slots:
     void cleanSidebarFocus_data();
     void cleanSidebarFocus();
     void cleanDeviceListFocus();
+    void trustedDeviceMenuActions();
+    void trustedDevicePinHover();
     void cleanCheckBoxFocus();
     void checkBoxCursorFollowsEnabledState();
     void themedLifetimeSelectors_data();
@@ -403,6 +419,190 @@ void DeviceSecurityProbe::pausesOnUnwritableSettingsAcrossRestarts() {
     QCOMPARE(evp::deviceId(recovered.identity.publicKey()), id);
     QVERIFY(!recovered.preferences.allowIncoming);
     QVERIFY(!recovered.preferences.audio);
+}
+
+void DeviceSecurityProbe::persistsLocalDeviceNamesAndOrder() {
+    QTemporaryDir profile;
+    QVERIFY(profile.isValid());
+    evp::DeviceIdentity owner, peer;
+    QVERIFY(owner.load({}));
+    QMap<QString, QByteArray> peerKeys;
+    for (int index = 0; index < 4; ++index) {
+        QVERIFY(peer.load({}));
+        const auto key = peer.publicKey();
+        const auto id = evp::deviceId(key);
+        QVERIFY(!id.isEmpty());
+        peerKeys.insert(id, key);
+    }
+    QCOMPARE(peerKeys.size(), 4);
+    const auto keys = peerKeys.keys();
+    const auto first = keys[3];
+    const auto second = keys[2];
+    const auto third = keys[1];
+    const auto fourth = keys[0];
+    const QStringList legacyOrder{first, second, third, fourth};
+    const QString originalName = "Original device";
+    const QString alias = "Studio Laptop";
+    QJsonArray peers;
+    for (const auto& id : legacyOrder)
+        peers.append(QJsonObject{{"publicKey", evp::encodeDeviceBytes(peerKeys.value(id))}, {"name", originalName}});
+    const auto path = profile.filePath("v1.dat");
+    QVERIFY(writeLegacyProfile(path, owner, {{"version", 1}, {"peers", peers}, {"url", "ws://127.0.0.1/"}}));
+
+    {
+        evp::DeviceStore legacy(path);
+        QVERIFY(legacy.open());
+        QCOMPARE(evp::orderedDeviceIds(legacy.peers), legacyOrder);
+        for (const auto& id : legacyOrder)
+            QVERIFY(!legacy.peers.value(id).pinned);
+    }
+
+    const QStringList pinInsertionOrder{fourth, second, third, first};
+    const QStringList pinnedOrder{second, fourth, third, first};
+    {
+        HomeWindow window;
+        evp::DesktopController controller(window, {}, path);
+        const device_probe::Ui ui(window);
+        QCOMPARE(ui.id(), evp::deviceId(owner.publicKey()));
+        QVERIFY(!ui.online());
+        auto* list = window.findChild<QListWidget*>("trustedDeviceList");
+        QVERIFY(list);
+        QCOMPARE(trustedDeviceIds(*list), legacyOrder);
+        window.devices().renameRequested(third, QStringLiteral("  Studio\t  Laptop "));
+        window.devices().moveRequested(third, evp::DeviceMove::Up);
+        QCOMPARE(trustedDeviceIds(*list), (QStringList{first, third, second, fourth}));
+        window.devices().moveRequested(first, evp::DeviceMove::Down);
+        QCOMPARE(trustedDeviceIds(*list), (QStringList{third, first, second, fourth}));
+        window.devices().pinRequested(second, true);
+        QCOMPARE(trustedDeviceIds(*list), (QStringList{second, third, first, fourth}));
+        window.devices().pinRequested(fourth, true);
+        QCOMPARE(trustedDeviceIds(*list), pinInsertionOrder);
+
+        {
+            const auto heldFile = lockAgainstReplacement(path);
+            QVERIFY(heldFile);
+            const auto message = ui.message();
+            window.devices().pinRequested(second, true);
+            window.devices().pinRequested(first, false);
+            window.devices().moveRequested(second, evp::DeviceMove::Down);
+            window.devices().moveRequested(third, evp::DeviceMove::Up);
+            QCOMPARE(trustedDeviceIds(*list), pinInsertionOrder);
+            QCOMPARE(ui.message(), message);
+        }
+
+        window.devices().moveRequested(second, evp::DeviceMove::Up);
+        QCOMPARE(trustedDeviceIds(*list), pinnedOrder);
+    }
+    {
+        evp::DeviceStore reopened(path);
+        QVERIFY(reopened.open());
+        QCOMPARE(evp::orderedDeviceIds(reopened.peers), pinnedOrder);
+        QVERIFY(reopened.peers.value(fourth).pinned);
+        QVERIFY(reopened.peers.value(second).pinned);
+        QVERIFY(!reopened.peers.value(third).pinned);
+        QVERIFY(!reopened.peers.value(first).pinned);
+    }
+
+    const QStringList unpinnedOrder{fourth, second, third, first};
+    {
+        HomeWindow window;
+        evp::DesktopController controller(window, {}, path);
+        auto* list = window.findChild<QListWidget*>("trustedDeviceList");
+        QVERIFY(list);
+        QCOMPARE(trustedDeviceIds(*list), pinnedOrder);
+        QCOMPARE(list->item(2)->text(), QStringLiteral("%1   ·   离线").arg(alias));
+        window.devices().pinRequested(second, false);
+        QCOMPARE(trustedDeviceIds(*list), unpinnedOrder);
+    }
+
+    evp::DeviceStore reopened(path);
+    QVERIFY(reopened.open());
+    QCOMPARE(evp::orderedDeviceIds(reopened.peers), unpinnedOrder);
+    QVERIFY(reopened.peers.value(fourth).pinned);
+    QVERIFY(!reopened.peers.value(second).pinned);
+    QCOMPARE(reopened.peers.value(third).name, originalName);
+    QCOMPARE(reopened.peers.value(third).displayName(), alias);
+    for (const auto& id : legacyOrder)
+        QCOMPARE(reopened.peers.value(id).publicKey, peerKeys.value(id));
+}
+
+void DeviceSecurityProbe::rejectsUnwritableDeviceMetadata_data() {
+    QTest::addColumn<bool>("holdAtStartup");
+    QTest::newRow("write-failure") << false;
+    QTest::newRow("existing-storage-hold") << true;
+}
+
+void DeviceSecurityProbe::rejectsUnwritableDeviceMetadata() {
+    QFETCH(bool, holdAtStartup);
+    QTemporaryDir profile;
+    QVERIFY(profile.isValid());
+    const auto path = profile.filePath("devices.dat");
+    const QString originalName = "Original device";
+    QStringList order;
+    {
+        evp::DeviceStore seed(path);
+        QVERIFY(seed.open());
+        seed.url = QUrl("ws://127.0.0.1/");
+        seed.preferences.allowIncoming = true;
+        evp::DeviceIdentity peer;
+        for (int index = 0; index < 4; ++index) {
+            QVERIFY(peer.load({}));
+            const auto key = peer.publicKey();
+            const auto id = evp::deviceId(key);
+            QVERIFY(!id.isEmpty());
+            seed.peers.insert(id, {key, originalName});
+        }
+        order = evp::orderedDeviceIds(seed.peers);
+        QCOMPARE(order.size(), 4);
+        seed.peers[order.at(0)].pinned = true;
+        seed.peers[order.at(1)].pinned = true;
+        QVERIFY(seed.save());
+        if (holdAtStartup)
+            QVERIFY(seed.markStorageHold());
+    }
+    {
+        HomeWindow window;
+        evp::DesktopController controller(window, {}, path);
+        auto* list = window.findChild<QListWidget*>("trustedDeviceList");
+        auto* incoming = window.findChild<QCheckBox*>("allowTrustedControl");
+        auto* audio = window.findChild<QCheckBox*>("deviceShareAudio");
+        QVERIFY(list && incoming && audio);
+        QCOMPARE(trustedDeviceIds(*list), order);
+        const auto firstRow = list->item(0)->text();
+        auto heldFile = lockAgainstReplacement(path);
+        QVERIFY(heldFile);
+        if (holdAtStartup)
+            heldFile.reset();
+
+        window.devices().renameRequested(order.first(), QStringLiteral("Unsaved alias"));
+        QCOMPARE(list->item(0)->text(), firstRow);
+        window.devices().moveRequested(order.last(), evp::DeviceMove::Up);
+        QCOMPARE(trustedDeviceIds(*list), order);
+        window.devices().pinRequested(order.last(), true);
+        QCOMPARE(trustedDeviceIds(*list), order);
+        window.devices().pinRequested(order.first(), false);
+        QCOMPARE(trustedDeviceIds(*list), order);
+        QCOMPARE(incoming->isChecked(), !holdAtStartup);
+        QCOMPARE(QFile::exists(path + ".hold"), holdAtStartup);
+
+        if (!holdAtStartup) {
+            const device_probe::Ui ui(window);
+            QVERIFY(!ui.message().isEmpty());
+            heldFile.reset();
+            audio->setChecked(false);
+        }
+    }
+    evp::DeviceStore reopened(path);
+    QVERIFY(reopened.open());
+    QCOMPARE(reopened.hasStorageHold(), holdAtStartup);
+    QVERIFY(reopened.preferences.allowIncoming);
+    QCOMPARE(reopened.preferences.audio, holdAtStartup);
+    QCOMPARE(evp::orderedDeviceIds(reopened.peers), order);
+    QCOMPARE(reopened.peers.value(order.first()).displayName(), originalName);
+    QVERIFY(reopened.peers.value(order.at(0)).pinned);
+    QVERIFY(reopened.peers.value(order.at(1)).pinned);
+    QVERIFY(!reopened.peers.value(order.at(2)).pinned);
+    QVERIFY(!reopened.peers.value(order.at(3)).pinned);
 }
 
 void DeviceSecurityProbe::lockedProfileRejectsFallbackJoin() {
@@ -1122,8 +1322,231 @@ void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     QCOMPARE(list->currentItem()->data(Qt::UserRole).toString(), selected);
     QCOMPARE(scroll->value(), position);
     QVERIFY(!connectButton->isEnabled());
+    const auto* last = list->item(list->count() - 1);
+    const auto lastId = last->data(Qt::UserRole).toString();
+    connect(&page, &DevicePage::pinRequested, &page, [&](const QString& id, bool pinned) {
+        peers[id].pinned = pinned;
+        page.setDevices(peers, online);
+    });
+    const auto lastRect = list->visualItemRect(last);
+    const QPoint pin(lastRect.right() - 21, lastRect.center().y());
+    QTest::mouseMove(list->viewport(), pin);
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier, pin);
+    QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), lastId);
+    QCOMPARE(list->currentRow(), 0);
+    QTRY_VERIFY(list->viewport()->rect().contains(list->visualItemRect(list->item(0)).center()));
     navigation->click();
     QCOMPARE(tabs->currentIndex(), 1);
+}
+
+void DeviceSecurityProbe::trustedDeviceMenuActions() {
+    QTemporaryDir profile;
+    QVERIFY(profile.isValid());
+    const auto path = profile.filePath("devices.dat");
+    {
+        evp::DeviceStore seed(path);
+        QVERIFY(seed.open());
+        for (int i = 0; i < 3; ++i) {
+            evp::DeviceIdentity peer;
+            QVERIFY(peer.load({}));
+            const auto key = peer.publicKey();
+            seed.peers.insert(evp::deviceId(key), {key, QStringLiteral("设备 %1").arg(i + 1)});
+        }
+        QVERIFY(seed.save());
+    }
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    evp::DesktopController controller(window, {}, path);
+    window.show();
+    window.showDevicePage();
+    auto* list = window.findChild<QListWidget*>("trustedDeviceList");
+    QVERIFY(list && list->count() == 3);
+    const auto initial = trustedDeviceIds(*list);
+    const auto selectedName = list->item(1)->text().section("   ·   ", 0, 0);
+    const auto contextAt = [&](QPoint point) {
+        QContextMenuEvent event(QContextMenuEvent::Mouse, point, list->viewport()->mapToGlobal(point));
+        QApplication::sendEvent(list->viewport(), &event);
+        return qobject_cast<QMenu*>(QApplication::activePopupWidget());
+    };
+    const auto menuForRow = [&](int row) {
+        auto* item = list->item(row);
+        list->scrollToItem(item);
+        return contextAt(list->visualItemRect(item).center());
+    };
+    const auto choose = [&](int row, const char* actionName) {
+        auto* menu = menuForRow(row);
+        auto* action = menu ? menu->findChild<QAction*>(actionName) : nullptr;
+        if (!action || !action->isEnabled()) return false;
+        QTest::mouseClick(menu, Qt::LeftButton, Qt::NoModifier, menu->actionGeometry(action).center());
+        return true;
+    };
+    auto* menu = menuForRow(1);
+    QVERIFY(menu);
+    QCOMPARE(list->currentRow(), 1);
+    QStringList labels;
+    for (auto* action : menu->actions())
+        if (!action->isSeparator()) labels << action->text();
+    QCOMPARE(labels, QStringList({QStringLiteral("重命名"), QStringLiteral("上移"), QStringLiteral("下移"),
+                                  QStringLiteral("置顶"), QStringLiteral("移除")}));
+    menu->close();
+
+    QVERIFY(choose(1, "renameDeviceAction"));
+    auto* rename = window.findChild<QInputDialog*>("renameDeviceDialog");
+    QVERIFY(rename && rename->isVisible());
+    QCOMPARE(rename->textValue(), selectedName);
+    rename->setTextValue("  Desk  ");
+    rename->accept();
+    QVERIFY(list->currentItem()->text().startsWith("Desk   ·"));
+    QVERIFY(choose(1, "renameDeviceAction"));
+    rename = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+    QVERIFY(rename);
+    QCOMPARE(rename->textValue(), QStringLiteral("Desk"));
+    rename->setTextValue(QStringLiteral("放弃改名"));
+    rename->reject();
+    QVERIFY(list->currentItem()->text().startsWith("Desk   ·"));
+    QVERIFY(choose(1, "moveDeviceUpAction"));
+    QCOMPARE(trustedDeviceIds(*list), QStringList({initial[1], initial[0], initial[2]}));
+    QCOMPARE(list->currentRow(), 0);
+    menu = menuForRow(0);
+    QVERIFY(menu);
+    auto* up = menu->findChild<QAction*>("moveDeviceUpAction");
+    auto* top = menu->findChild<QAction*>("moveDeviceTopAction");
+    QVERIFY(up && top && !up->isEnabled() && top->isEnabled());
+    menu->close();
+    QVERIFY(choose(0, "moveDeviceDownAction"));
+    QCOMPARE(trustedDeviceIds(*list), initial);
+    menu = menuForRow(2);
+    QVERIFY(menu);
+    auto* down = menu->findChild<QAction*>("moveDeviceDownAction");
+    QVERIFY(down && !down->isEnabled());
+    menu->close();
+    QVERIFY(choose(2, "moveDeviceTopAction"));
+    QCOMPARE(trustedDeviceIds(*list), QStringList({initial[2], initial[0], initial[1]}));
+    QCOMPARE(list->currentRow(), 0);
+    menu = menuForRow(0);
+    QVERIFY(menu && !up->isEnabled() && !down->isEnabled());
+    QCOMPARE(top->text(), QStringLiteral("取消置顶"));
+    menu->close();
+    const auto pinPoint = [&](int row) {
+        const auto rect = list->visualItemRect(list->item(row));
+        return QPoint(rect.right() - 21, rect.center().y());
+    };
+    QSignalSpy connections(&window.devices(), &DevicePage::connectRequested);
+    QTest::mouseMove(list->viewport(), pinPoint(2));
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier, pinPoint(2));
+    QCOMPARE(trustedDeviceIds(*list), QStringList({initial[1], initial[2], initial[0]}));
+    menu = menuForRow(0);
+    QVERIFY(menu && down->isEnabled());
+    QCOMPARE(top->text(), QStringLiteral("取消置顶"));
+    menu->close();
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier, pinPoint(0));
+    QCOMPARE(trustedDeviceIds(*list), QStringList({initial[2], initial[1], initial[0]}));
+    QCOMPARE(connections.count(), 0);
+    QVERIFY(choose(1, "moveDeviceDownAction"));
+    QVERIFY(choose(1, "removeDeviceAction"));
+    QCOMPARE(trustedDeviceIds(*list), QStringList({initial[2], initial[1]}));
+
+    const auto empty = QPoint(list->viewport()->width() / 2, list->viewport()->height() - 1);
+    QVERIFY(!list->itemAt(empty));
+    QVERIFY(!contextAt(empty));
+
+    // A mutation while the menu is open must not retarget the next row.
+    menu = menuForRow(0);
+    QVERIFY(menu);
+    window.devices().removeRequested(initial[2]);
+    QTRY_VERIFY(!QApplication::activePopupWidget());
+    QCOMPARE(trustedDeviceIds(*list), QStringList{initial[1]});
+    menu = menuForRow(0);
+    QVERIFY(menu);
+    for (const auto* name : {"moveDeviceUpAction", "moveDeviceDownAction"}) {
+        auto* action = menu->findChild<QAction*>(name);
+        QVERIFY(action && !action->isEnabled());
+    }
+    QVERIFY(top->isEnabled());
+    menu->close();
+}
+
+void DeviceSecurityProbe::trustedDevicePinHover() {
+    native_ui::applyTheme(native_ui::Theme::Dark);
+    const auto restore = qScopeGuard([] { native_ui::applyTheme(native_ui::Theme::Light); });
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    window.showDevicePage();
+    auto& page = window.devices();
+    QMap<QString, evp::DevicePeer> peers;
+    peers["pinned"].name = QStringLiteral("办公室电脑");
+    peers["pinned"].pinned = true;
+    peers["regular"].name = QStringLiteral("开发机");
+    page.setDevices(peers, {"regular"});
+    page.setRegistration(true, QStringLiteral("本机在线"));
+    auto* list = window.findChild<QListWidget*>("trustedDeviceList");
+    QVERIFY(list && list->count() == 2);
+    QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), QStringLiteral("pinned"));
+    QCoreApplication::processEvents();
+    auto* viewport = list->viewport();
+    const auto pinCenter = [&](int row) {
+        const auto rect = list->visualItemRect(list->item(row));
+        return QPoint(qMin(rect.right(), viewport->rect().right()) - 21, rect.center().y());
+    };
+    const auto pinHasInk = [&](int row) {
+        const auto area = QRect(pinCenter(row) - QPoint(9, 9), QSize(19, 19));
+        const auto pixels = viewport->grab(area).toImage();
+        const auto background = pixels.pixel(0, 0);
+        int changed = 0;
+        for (int y = 0; y < pixels.height(); ++y)
+            for (int x = 0; x < pixels.width(); ++x)
+                if (pixels.pixel(x, y) != background) ++changed;
+        return changed >= 8;
+    };
+    // The offscreen window has no native cursor. Deliver the viewport events
+    // that Qt would generate for a move over the center of the actual row.
+    const auto hoverRow = [&](int row) {
+        const auto pos = list->visualItemRect(list->item(row)).intersected(viewport->rect()).center();
+        const auto global = viewport->mapToGlobal(pos);
+        QMouseEvent move(QEvent::MouseMove, pos, global, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(viewport, &move);
+        QHoverEvent hover(QEvent::HoverMove, pos, global, QPointF(-1, -1));
+        QApplication::sendEvent(viewport, &hover);
+    };
+    hoverRow(0);
+    QTRY_VERIFY(!pinHasInk(1));
+    hoverRow(1);
+    QTRY_VERIFY(pinHasInk(1));
+    QVERIFY(pinHasInk(0));
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty())
+        QVERIFY(list->grab().save(QDir(preview).filePath("device-pins.png")));
+    list->setCurrentRow(1);
+    auto* connectButton = window.findChild<QPushButton*>("connectDevice");
+    QVERIFY(connectButton && connectButton->isEnabled());
+    QSignalSpy connections(&page, &DevicePage::connectRequested);
+    list->setFixedSize(270, 165);
+    peers["spare"].name = QString(80, QChar(u'机'));
+    page.setDevices(peers, {"pinned", "regular", "spare"});
+    QCoreApplication::processEvents();
+    QCOMPARE(trustedDeviceIds(*list), QStringList({"pinned", "regular", "spare"}));
+    QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, list->visualItemRect(list->item(1)).center());
+    hoverRow(2);
+    const auto pin = pinCenter(2) - QPoint(14, 0);  // leftmost pixel in the pin target
+    QVERIFY(viewport->rect().contains(pin));
+    QVERIFY(pin.x() >= viewport->width() - 40);
+    QVERIFY(pinHasInk(2));
+    connect(&page, &DevicePage::pinRequested, &page, [&](const QString& id, bool value) {
+        peers[id].pinned = value;
+        peers[id].order = -1;
+        page.setDevices(peers, {"pinned", "regular", "spare"});
+    });
+    QSignalSpy pins(&page, &DevicePage::pinRequested);
+    QTest::mouseClick(viewport, Qt::LeftButton, Qt::NoModifier, pin);
+    QCOMPARE(trustedDeviceIds(*list), QStringList({"spare", "pinned", "regular"}));
+    // The original screen position now contains an unpinned device. Its pin
+    // must be visible even before another movement event reaches the view.
+    QVERIFY(pinHasInk(2));
+    QTest::mouseDClick(viewport, Qt::LeftButton, Qt::NoModifier, pin - QPoint(1, 0));
+    QTest::mouseRelease(viewport, Qt::LeftButton, Qt::NoModifier, pin - QPoint(1, 0));
+    QCOMPARE(pins.count(), 1);
+    QCOMPARE(connections.count(), 0);
 }
 
 void DeviceSecurityProbe::cleanTabFocus() {

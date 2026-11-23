@@ -57,6 +57,11 @@ private:
     bool persist();
     void storageUnavailable(QString message);
     void changePreferences(DevicePreferences options);
+    void renamePeer(const QString& id, const QString& name);
+    void movePeer(const QString& id, DeviceMove move);
+    void pinPeer(const QString& id, bool pinned);
+    void savePeerOrder(QMap<QString, DevicePeer> peers, const QStringList& ids);
+    void savePeerPresentation(QMap<QString, DevicePeer> peers);
     void removePeer(const QString& id);
     void makePairingCode(CodeOptions options);
     void clearPairingCode();

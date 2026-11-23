@@ -22,6 +22,8 @@ constexpr int sessionMs = 60 * 60 * 1000;
 const auto secureFailure = QStringLiteral("设备身份或会话验证失败，已停止连接。可检查配对关系后重试。");
 const auto storageFailure = QStringLiteral("本地设置尚未保存，可信设备远控已暂停。请恢复存储、核对配对和权限，再到「设置」点击「保存设置」。");
 const auto storageHold = QStringLiteral("存储停用标记仍然有效，设备注册和创建邀请已暂停。请恢复写入权限后再次保存设置。");
+const auto presentationFailure = QStringLiteral("无法保存设备列表更改。请检查本机存储后重试。");
+const auto emptyDeviceName = QStringLiteral("请输入设备名称。");
 
 QString modeName(bool pair) {
     return pair ? QStringLiteral("pair") : QStringLiteral("control");
@@ -115,6 +117,9 @@ DeviceConnection::DeviceConnection(DesktopController& controller, HomeWindow& ho
     connect(&page_, &DevicePage::pairingRequested, this, &DeviceConnection::startPairing);
     connect(&page_, &DevicePage::pairingDecided, this, &DeviceConnection::approvePairing);
     connect(&page_, &DevicePage::connectRequested, this, [this](const QString& id) { start(id, false); });
+    connect(&page_, &DevicePage::renameRequested, this, &DeviceConnection::renamePeer);
+    connect(&page_, &DevicePage::moveRequested, this, &DeviceConnection::movePeer);
+    connect(&page_, &DevicePage::pinRequested, this, &DeviceConnection::pinPeer);
     connect(&page_, &DevicePage::removeRequested, this, &DeviceConnection::removePeer);
     connect(&page_, &DevicePage::preferencesChanged, this,
             [this](bool incoming, bool audio, bool relayOnly) {
@@ -418,6 +423,67 @@ void DeviceConnection::changePreferences(DevicePreferences options) {
     }
 }
 
+void DeviceConnection::renamePeer(const QString& id, const QString& name) {
+    const auto peer = store_.peers.constFind(id);
+    if (peer == store_.peers.cend())
+        return;
+    auto alias = normalizedDeviceName(name);
+    if (alias.isEmpty()) {
+        page_.setMessage(emptyDeviceName);
+        return;
+    }
+    if (alias == peer->displayName())
+        return;
+    auto peers = store_.peers;
+    peers[id].alias = std::move(alias);
+    savePeerPresentation(std::move(peers));
+}
+
+void DeviceConnection::movePeer(const QString& id, DeviceMove move) {
+    auto ids = orderedDeviceIds(store_.peers);
+    const auto from = ids.indexOf(id);
+    if (from < 0)
+        return;
+    const auto to = move == DeviceMove::Up ? from - 1 : from + 1;
+    if (to < 0 || to >= ids.size() ||
+        store_.peers.constFind(id)->pinned != store_.peers.constFind(ids.at(to))->pinned)
+        return;
+    ids.move(from, to);
+    savePeerOrder(store_.peers, ids);
+}
+
+void DeviceConnection::pinPeer(const QString& id, bool pinned) {
+    const auto peer = store_.peers.constFind(id);
+    if (peer == store_.peers.cend() || peer->pinned == pinned)
+        return;
+
+    auto ids = orderedDeviceIds(store_.peers);
+    ids.removeOne(id);
+    const auto before = pinned ? ids.cbegin() : std::find_if(ids.cbegin(), ids.cend(), [this](const QString& other) {
+        return !store_.peers.constFind(other)->pinned;
+    });
+    ids.insert(before, id);
+    auto peers = store_.peers;
+    peers[id].pinned = pinned;
+    savePeerOrder(std::move(peers), ids);
+}
+
+void DeviceConnection::savePeerOrder(QMap<QString, DevicePeer> peers, const QStringList& ids) {
+    for (qsizetype order = 0; order < ids.size(); ++order)
+        peers[ids.at(order)].order = order;
+    savePeerPresentation(std::move(peers));
+}
+
+void DeviceConnection::savePeerPresentation(QMap<QString, DevicePeer> peers) {
+    if (storageFault_ || !store_.savePeerPresentation(std::move(peers))) {
+        page_.setMessage(presentationFailure);
+        return;
+    }
+    page_.setDevices(store_.peers, online_);
+    page_.clearMessageIf(presentationFailure);
+    page_.clearMessageIf(emptyDeviceName);
+}
+
 void DeviceConnection::removePeer(const QString& id) {
     if (!store_.peers.remove(id))
         return;
@@ -507,7 +573,7 @@ void DeviceConnection::start(const QString& target, bool pair, const QByteArray&
     attempt_->pair = pair;
     if (known != store_.peers.cend()) {
         attempt_->key = known->publicKey;
-        attempt_->name = known->name;
+        attempt_->name = known->displayName();
     }
     attemptTimeout_.start(pendingMs);
     updateActivity();
@@ -566,7 +632,7 @@ void DeviceConnection::receiveRequest(const QJsonObject& message) {
     attempt_->id = attemptId;
     attempt_->peer = peer;
     attempt_->key = key;
-    attempt_->name = pair ? deviceName(data.value("name").toString()) : known->name;
+    attempt_->name = pair ? deviceName(data.value("name").toString()) : known->displayName();
     attempt_->pair = pair;
     attempt_->host = true;
     attempt_->relayOnly = store_.preferences.relayOnly;
@@ -746,7 +812,15 @@ void DeviceConnection::ready(const QJsonObject& message) {
 bool DeviceConnection::rememberPeer() {
     const auto peer = attempt_->peer;
     const auto previous = store_.peers;
-    store_.peers.insert(peer, {attempt_->key, attempt_->name});
+    const auto existing = store_.peers.find(peer);
+    if (existing != store_.peers.end()) {
+        existing->publicKey = attempt_->key;
+        existing->name = attempt_->name;
+    } else {
+        const auto ids = orderedDeviceIds(store_.peers);
+        const auto order = ids.isEmpty() ? 0 : store_.peers.constFind(ids.last())->order + 1;
+        store_.peers.insert(peer, {attempt_->key, attempt_->name, {}, order});
+    }
     if (!persist()) {
         store_.peers = previous;
         page_.setDevices(store_.peers, online_);

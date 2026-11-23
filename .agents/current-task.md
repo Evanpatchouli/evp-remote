@@ -1,5 +1,13 @@
 # Current task
 
+## Trusted device context menu
+
+- **Execute / S2.** Store local display names, pins and row order across restarts, preserve existing profiles and reuse the existing pairing revocation path.
+- **Execute / S2.** Add row-specific rename, move up, move down, pin/unpin and remove actions. Offer a trailing pin on hover and keep it visible on pinned rows. Keep selection attached to the device through presence updates and reordering.
+- **Verify / independent review.** Exercise the actual Qt menu, boundaries, cancelled edits, offline persistence and write failures with isolated profiles. Build and verify a portable client.
+
+The Release build and targeted Qt suite passed. The tests exercised all five menu actions, pin visibility on dark rows, an 80-character name in a narrow viewport, stationary hover after reordering, and a double-click at the edge of a pin. The profile probes verified persistence, migration from unpinned records, and preservation of the original list on write failure.
+
 ## Native Windows picture quality and frame delivery
 
 - **Execute / S2.** Filter shrinking viewer images in physical pixels while preserving source colors, orientation and the inexpensive 1:1 path.

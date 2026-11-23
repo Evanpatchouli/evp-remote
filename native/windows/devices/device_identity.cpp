@@ -14,6 +14,7 @@
 #include <Windows.h>
 #include <bcrypt.h>
 #include <dpapi.h>
+#include <algorithm>
 #include <cstring>
 #include <utility>
 
@@ -93,15 +94,31 @@ QByteArray deviceProof(std::initializer_list<QString> fields) {
     return result;
 }
 
-QString deviceName(QString name) {
-    name.truncate(80);
+QString normalizedDeviceName(QString name) {
+    name.truncate(maxDeviceNameLength);
+    if (!name.isEmpty() && name.back().isHighSurrogate())
+        name.chop(1);
     for (auto& character : name) {
         if (character.category() == QChar::Other_Control || character.category() == QChar::Other_Format ||
             character.category() == QChar::Separator_Line || character.category() == QChar::Separator_Paragraph)
             character = QChar(' ');
     }
-    name = name.simplified();
+    return name.simplified();
+}
+
+QString deviceName(QString name) {
+    name = normalizedDeviceName(std::move(name));
     return name.isEmpty() ? QStringLiteral("Windows 设备") : name;
+}
+
+QStringList orderedDeviceIds(const QMap<QString, DevicePeer>& peers) {
+    auto ids = peers.keys();
+    std::stable_sort(ids.begin(), ids.end(), [&peers](const QString& left, const QString& right) {
+        const auto& first = *peers.constFind(left);
+        const auto& second = *peers.constFind(right);
+        return first.pinned != second.pinned ? first.pinned : first.order < second.order;
+    });
+    return ids;
 }
 
 bool equalDeviceSecrets(const QByteArray& left, const QByteArray& right) {
@@ -269,12 +286,14 @@ bool DeviceStore::open() {
     const auto entries = state.value("peers").toArray();
     if (entries.size() > maxDevicePeers)
         return false;
-    for (const auto& entry : entries) {
-        const auto item = entry.toObject();
+    for (qsizetype order = 0; order < entries.size(); ++order) {
+        const auto item = entries.at(order).toObject();
         const auto key = decodeDeviceBytes(item.value("publicKey").toString(), 64);
         if (key.isEmpty())
             return false;
-        peers.insert(deviceId(key), {key, deviceName(item.value("name").toString())});
+        peers.insert(deviceId(key), {key, deviceName(item.value("name").toString()),
+                                    normalizedDeviceName(item.value("alias").toString()), order,
+                                    item.value("pinned").toBool()});
     }
     const auto savedUrl = state.value("url").toString();
     url = deviceServerUrl(QUrl(savedUrl, QUrl::StrictMode));
@@ -287,15 +306,22 @@ bool DeviceStore::open() {
     return true;
 }
 
-DeviceStore::WriteResult DeviceStore::write() const {
+bool DeviceStore::writeProfile(const QMap<QString, DevicePeer>& savedPeers) const {
     if (!lock_ || !lock_->isLocked())
-        return WriteResult::Failed;
+        return false;
     auto plain = identity.privateKey();
     if (plain.size() != privateSize)
-        return WriteResult::Failed;
+        return false;
     QJsonArray entries;
-    for (const auto& peer : peers)
-        entries.append(QJsonObject{{"publicKey", encodeDeviceBytes(peer.publicKey)}, {"name", peer.name}});
+    for (const auto& id : orderedDeviceIds(savedPeers)) {
+        const auto peer = savedPeers.constFind(id);
+        QJsonObject item{{"publicKey", encodeDeviceBytes(peer->publicKey)}, {"name", peer->name}};
+        if (!peer->alias.isEmpty())
+            item.insert("alias", peer->alias);
+        if (peer->pinned)
+            item.insert("pinned", true);
+        entries.append(item);
+    }
     const QJsonObject state{{"version", 1}, {"peers", entries}, {"url", url.toString(QUrl::FullyEncoded)},
                             {"key", deploymentKey}, {"allowIncoming", preferences.allowIncoming},
                             {"audio", preferences.audio}, {"relayOnly", preferences.relayOnly}};
@@ -303,9 +329,20 @@ DeviceStore::WriteResult DeviceStore::write() const {
     const auto encrypted = dpapi(plain, true);
     erase(plain);
     if (encrypted.isEmpty() || encrypted.size() > maxStoreBytes)
-        return WriteResult::Failed;
+        return false;
     QSaveFile file(path_);
-    if (!file.open(QIODevice::WriteOnly) || file.write(encrypted) != encrypted.size() || !file.commit())
+    return file.open(QIODevice::WriteOnly) && file.write(encrypted) == encrypted.size() && file.commit();
+}
+
+bool DeviceStore::savePeerPresentation(QMap<QString, DevicePeer> updatedPeers) {
+    if (hasStorageHold() || !writeProfile(updatedPeers))
+        return false;
+    peers = std::move(updatedPeers);
+    return true;
+}
+
+DeviceStore::WriteResult DeviceStore::write() const {
+    if (!writeProfile(peers))
         return WriteResult::Failed;
     const auto marker = path_ + ".hold";
     if (QFileInfo::exists(marker) && !QFile::remove(marker))

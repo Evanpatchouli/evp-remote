@@ -3,6 +3,7 @@
 #include <QByteArray>
 #include <QMap>
 #include <QString>
+#include <QStringList>
 #include <QUrl>
 #include <initializer_list>
 #include <memory>
@@ -13,12 +14,14 @@ namespace evp {
 
 inline constexpr int maxDevicePeers = 64;
 inline constexpr int maxDevicePayload = 56 * 1024;
+inline constexpr int maxDeviceNameLength = 80;
 
 QByteArray decodeDeviceBytes(const QString& encoded, qsizetype size = -1);
 QString encodeDeviceBytes(const QByteArray& bytes);
 QString deviceId(const QByteArray& publicKey);
 QByteArray deviceRandom();
 QByteArray deviceProof(std::initializer_list<QString> fields);
+QString normalizedDeviceName(QString name);
 QString deviceName(QString name);
 bool equalDeviceSecrets(const QByteArray& left, const QByteArray& right);
 QUrl deviceServerUrl(QUrl url);
@@ -41,7 +44,16 @@ private:
 struct DevicePeer {
     QByteArray publicKey;
     QString name;
+    QString alias;
+    qsizetype order = 0;
+    bool pinned = false;
+
+    QString displayName() const { return alias.isEmpty() ? name : alias; }
 };
+
+enum class DeviceMove { Up, Down };
+
+QStringList orderedDeviceIds(const QMap<QString, DevicePeer>& peers);
 
 struct DevicePreferences {
     bool allowIncoming = false;
@@ -57,6 +69,7 @@ public:
     bool open();
     WriteResult write() const;
     bool save() const { return write() == WriteResult::Saved; }
+    bool savePeerPresentation(QMap<QString, DevicePeer> updatedPeers);
     bool hasStorageHold() const;
     bool markStorageHold() const;
 
@@ -67,6 +80,8 @@ public:
     QString deploymentKey;
 
 private:
+    bool writeProfile(const QMap<QString, DevicePeer>& savedPeers) const;
+
     QString path_;
     QString holdSetting_;
     std::unique_ptr<QLockFile> lock_;
