@@ -14,7 +14,7 @@ public:
         : QPushButton(icon, text, parent) {
         setMinimumHeight(36);
         setCursor(Qt::PointingHandCursor);
-        setStyleSheet(QStringLiteral("QPushButton { border-radius: 8px; }"));
+        setStyleSheet(QStringLiteral("QPushButton { border-radius: 8px; outline: none; }"));
     }
 };
 

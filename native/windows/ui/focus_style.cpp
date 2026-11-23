@@ -1,8 +1,10 @@
 #include "focus_style.h"
+#include "theme.h"
 
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QFocusEvent>
+#include <QPainter>
 #include <QProxyStyle>
 #include <QStyleOption>
 
@@ -19,14 +21,15 @@ public:
                        QPainter* painter, const QWidget* widget) const override {
         if (element == PE_FrameFocusRect) {
             // Item views set State_KeyboardFocusChange even for mouse selection.
-            if (!keyboardFocusVisible_)
+            if (!keyboardFocusVisible_ || option->rect.width() < 3 || option->rect.height() < 3)
                 return;
-            if (const auto* focus = qstyleoption_cast<const QStyleOptionFocusRect*>(option)) {
-                auto keyboardFocus = *focus;
-                keyboardFocus.state |= State_KeyboardFocusChange;
-                QProxyStyle::drawPrimitive(element, &keyboardFocus, painter, widget);
-                return;
-            }
+            painter->save();
+            painter->setRenderHint(QPainter::Antialiasing);
+            painter->setBrush(Qt::NoBrush);
+            painter->setPen(QPen(themeColor("#2356b3", "#a9c7ff", "accentMark"), 1.5));
+            painter->drawRoundedRect(QRectF(option->rect).adjusted(0.75, 0.75, -0.75, -0.75), 2, 2);
+            painter->restore();
+            return;
         }
         QProxyStyle::drawPrimitive(element, option, painter, widget);
     }

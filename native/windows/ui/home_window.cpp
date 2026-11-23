@@ -122,7 +122,7 @@ constexpr auto homeStyle = R"(
     }
     QPushButton#join:hover, QPushButton#hostCreate:hover, QPushButton#hostApprove:hover, QPushButton#saveSettings:hover { background: #1956c5/#2a60bc@accentHover; }
     QPushButton#join:pressed, QPushButton#hostCreate:pressed, QPushButton#hostApprove:pressed, QPushButton#saveSettings:pressed { background: #1348ac/#214b96@accentPressed; }
-    QPushButton#join:focus, QPushButton#hostCreate:focus, QPushButton#hostApprove:focus, QPushButton#saveSettings:focus { border-color: #8db5ff/#a2c0ff@accentMark; }
+    QPushButton#join:focus, QPushButton#hostCreate:focus, QPushButton#hostApprove:focus, QPushButton#saveSettings:focus { border-color: #8db5ff/#a2c0ff@onAccent; }
     QPushButton#join:disabled, QPushButton#saveSettings:disabled { color: #43608f/#9da7b8@muted; background: #e2eafb/#292f39@raised; }
     QPushButton#hostEnd {
         background: #922f31/#814044; color: white/#eef0f5; border: 2px solid transparent;

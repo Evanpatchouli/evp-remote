@@ -67,6 +67,7 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
         QPushButton[deviceAction="secondary"]:hover { background: #edf4ff/#303844@raised; }
         QPushButton[deviceAction] { padding: 0 10px; }
         QPushButton[deviceAction]:focus { border: 1px solid #3475e4/#739ff1@accentMark; }
+        QPushButton[deviceAction="primary"]:focus { border-color: #8db5ff/#a2c0ff@onAccent; }
         QPushButton[deviceAction]:disabled { background: #f0f4fa/#24262a@surface; color: #667899/#9da7b8@muted; border: 1px solid #dfe6f1/#343942@stroke; }
         QListWidget#trustedDeviceList { background: white/#25272b@surface; border: 2px solid #e0e8f3/#343942@stroke; border-radius: 9px; }
         QListWidget#trustedDeviceList:focus { border-color: #3475e4/#739ff1@accentMark; }

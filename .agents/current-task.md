@@ -1,5 +1,9 @@
 # Current task
 
+## Windows focus outlines
+
+Replace the native dotted focus primitive with a solid keyboard cue and use the existing focus border on styled buttons. The sidebar regression reproduced the inner frame in both themes before the fix. The standard Qt suite and live picture-settings smoke passed after the fix. The optional desktop-compositor probe failed at its initial screen sample on both the 0.3.2 baseline and the revised client.
+
 ## Windows appearance
 
 - **Decide / S2.** Use Qt's application color scheme for native widgets and preserve the existing light values in custom painting and stylesheets.

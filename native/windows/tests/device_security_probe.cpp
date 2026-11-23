@@ -128,6 +128,8 @@ private slots:
     void readsLegacyConnectionSettings();
     void assistanceTabsAndScrollableDeviceList();
     void cleanTabFocus();
+    void cleanSidebarFocus_data();
+    void cleanSidebarFocus();
     void cleanDeviceListFocus();
     void cleanCheckBoxFocus();
     void themedLifetimeSelectors_data();
@@ -276,6 +278,16 @@ void DeviceSecurityProbe::rendersUpdateDialog() {
     if (hasUpdate) {
         QCOMPARE(window.findChild<QLabel*>("updateLatestVersion")->text(), tag);
         QVERIFY(dialog->height() <= 380);
+        auto* install = dialog->findChild<QPushButton*>("installUpdate");
+        QVERIFY(install);
+        if (install->isVisible()) {
+            QApplication::setActiveWindow(dialog);
+            install->clearFocus();
+            const auto unfocused = install->grab().toImage();
+            install->setFocus(Qt::TabFocusReason);
+            QVERIFY(install->hasFocus());
+            QVERIFY2(install->grab().toImage() != unfocused, "The update button needs a visible focus border.");
+        }
     } else {
         QVERIFY(detail->text().contains(QCoreApplication::applicationVersion()));
         QVERIFY(dialog->height() <= 170);
@@ -677,6 +689,17 @@ void DeviceSecurityProbe::appearanceCustomizesActivePaletteAndFont() {
     QVERIFY(window.centralWidget()->styleSheet().contains("background: #e5eee8"));
     QCOMPARE(title->palette().color(QPalette::WindowText), QColor("#2a3a2d"));
     QVERIFY(window.centralWidget()->styleSheet().contains("background: #3a7543"));
+
+    window.findChild<QPushButton*>("settingsConnectionNavigation")->click();
+    QApplication::setActiveWindow(&window);
+    auto* save = window.findChild<QPushButton*>("saveSettings");
+    QVERIFY(save && save->isVisible() && save->isEnabled());
+    QVERIFY(!save->hasFocus());
+    const auto unfocusedSave = save->grab().toImage();
+    save->setFocus(Qt::TabFocusReason);
+    QVERIFY(save->hasFocus());
+    QVERIFY2(save->grab().toImage() != unfocusedSave, "A custom accent must keep the primary button's focus visible.");
+    window.findChild<QPushButton*>("settingsAppearanceNavigation")->click();
 
     const auto defaultFont = title->font();
     const auto family = QStringLiteral("Consolas");
@@ -1088,6 +1111,44 @@ void DeviceSecurityProbe::cleanTabFocus() {
     QVERIFY(tabs->grab().toImage() == clicked);
 }
 
+void DeviceSecurityProbe::cleanSidebarFocus_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
+void DeviceSecurityProbe::cleanSidebarFocus() {
+    QFETCH(bool, dark);
+    native_ui::applyTheme(dark ? native_ui::Theme::Dark : native_ui::Theme::Light);
+    const auto restore = qScopeGuard([] { native_ui::applyTheme(native_ui::Theme::Light); });
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    QApplication::setActiveWindow(&window);
+    window.showDevicePage();
+
+    auto* button = window.findChild<QPushButton*>("deviceNavigation");
+    auto* assistance = window.findChild<QPushButton*>("navigation");
+    auto* settings = window.findChild<QPushButton*>("settingsNavigation");
+    auto* back = window.findChild<QPushButton*>("settingsBack");
+    QVERIFY(button && assistance && settings && back && button->isChecked());
+    const auto interior = [&] { return button->grab(button->rect().adjusted(4, 4, -4, -4)).toImage(); };
+    assistance->setFocus(Qt::OtherFocusReason);
+    QVERIFY(!button->hasFocus());
+    const auto unfocused = button->grab().toImage();
+    const auto unfocusedInterior = interior();
+
+    button->setFocus(Qt::TabFocusReason);
+    QVERIFY(button->hasFocus());
+    QVERIFY2(button->grab().toImage() != unfocused, "Keyboard focus needs a visible border.");
+    QVERIFY2(interior() == unfocusedInterior, "Keyboard focus drew a second border inside the navigation button.");
+
+    QTest::mouseClick(settings, Qt::LeftButton);
+    QTest::mouseClick(back, Qt::LeftButton);
+    QVERIFY(button->hasFocus() && button->isChecked());
+    QVERIFY2(interior() == unfocusedInterior, "Returning from settings drew an inner focus border.");
+}
+
 void DeviceSecurityProbe::cleanDeviceListFocus() {
     HomeWindow window;
     window.setAttribute(Qt::WA_DontShowOnScreen);
@@ -1155,7 +1216,19 @@ void DeviceSecurityProbe::cleanCheckBoxFocus() {
 
     check->setFocus(Qt::ShortcutFocusReason);
     QVERIFY(check->hasFocus());
-    QVERIFY2(check->grab().toImage() != clicked, "Shortcut focus needs a visible cue on the checkbox.");
+    const auto keyboard = check->grab().toImage();
+    bool solidLine = false;
+    for (int y = 0; y < keyboard.height() && !solidLine; ++y) {
+        int length = 0;
+        for (int x = 0; x < keyboard.width(); ++x) {
+            length = keyboard.pixel(x, y) != clicked.pixel(x, y) ? length + 1 : 0;
+            if (length >= 12) {
+                solidLine = true;
+                break;
+            }
+        }
+    }
+    QVERIFY2(solidLine, "Shortcut focus needs a continuous focus line on the checkbox.");
     QTest::keyClick(check, Qt::Key_Space);
     QVERIFY(!check->isChecked());
 }

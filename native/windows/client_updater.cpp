@@ -80,6 +80,7 @@ ClientUpdater::ClientUpdater(HomeWindow& home, const QUrl& releaseEndpoint)
         "QPushButton:focus { border-color: #3475e4/#739ff1@accentMark; }"
         "QPushButton#installUpdate { background: #2865d5/#2355ad@accent; border-color: #2865d5/#739ff1@accentMark; color: #ffffff/#eef0f5@onAccent; }"
         "QPushButton#installUpdate:hover { background: #2058c2/#2a60bc@accentHover; }"
+        "QPushButton#installUpdate:focus { border: 2px solid #d3e2ff/#b7d0ff@onAccent; }"
         "QPushButton:disabled, QPushButton#installUpdate:disabled {"
         " background: #f4f7fc/#24262a@surface; color: #667893/#9da7b8@muted; border-color: #d9e3f1/#3d434d@stroke; }"));
     auto* layout = new QVBoxLayout(dialog_);
