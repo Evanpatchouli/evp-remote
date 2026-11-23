@@ -196,6 +196,18 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
 
     deviceMenu_ = new QMenu(this);
     deviceMenu_->setObjectName("trustedDeviceMenu");
+    deviceMenu_->setAttribute(Qt::WA_TranslucentBackground);
+    deviceMenu_->setFont(native_ui::uiFont(14));
+    deviceMenu_->setMinimumWidth(144);
+    native_ui::setThemedStyle(*deviceMenu_, QStringLiteral(R"(
+        QMenu { background: #ffffff/#25272b@surface; color: #263955/#e6e8ec@foreground;
+                border: 1px solid #cbd7e8/#495160@stroke; border-radius: 9px; padding: 5px; }
+        QMenu::item { padding: 7px 18px 7px 14px; border-radius: 5px; }
+        QMenu::icon { left: 5px; }
+        QMenu::item:selected { background: #e8effa/#344153@accentHoverTint; color: #214c98/#b7d0ff@accentText; }
+        QMenu::item:disabled { color: #778598/#929baa@muted; background: transparent; }
+        QMenu::separator { height: 1px; margin: 4px 8px; background: #dce5f1/#424953@stroke; }
+    )"));
     auto* rename = deviceMenu_->addAction(QStringLiteral("重命名"));
     rename->setObjectName("renameDeviceAction");
     moveUp_ = deviceMenu_->addAction(QStringLiteral("上移"));
@@ -207,6 +219,15 @@ DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
     deviceMenu_->addSeparator();
     auto* removeDevice = deviceMenu_->addAction(QStringLiteral("移除"));
     removeDevice->setObjectName("removeDeviceAction");
+    connect(deviceMenu_, &QMenu::aboutToShow, this, [this, rename, removeDevice] {
+        using native_ui::Symbol;
+        const auto ink = native_ui::themeColor("#456594", "#aec9fb", "accentText");
+        const auto icon = [&](Symbol glyph) { return native_ui::symbolIcon(glyph, ink, 16); };
+        rename->setIcon(icon(Symbol::Rename));
+        moveUp_->setIcon(icon(Symbol::MoveUp));
+        moveDown_->setIcon(icon(Symbol::MoveDown));
+        removeDevice->setIcon(native_ui::symbolIcon(Symbol::Remove, native_ui::themeColor("#ac4037", "#edaba7"), 16));
+    });
     connect(rename, &QAction::triggered, this, &DevicePage::renameContextDevice);
     connect(moveUp_, &QAction::triggered, this, [this] { moveContextDevice(evp::DeviceMove::Up); });
     connect(moveDown_, &QAction::triggered, this, [this] { moveContextDevice(evp::DeviceMove::Down); });
@@ -632,7 +653,10 @@ void DevicePage::updateDeviceMenu() {
     }
     moveUp_->setEnabled(canMoveDevice(item, evp::DeviceMove::Up));
     moveDown_->setEnabled(canMoveDevice(item, evp::DeviceMove::Down));
-    pin_->setText(pinActionText(item->data(DevicePinnedRole).toBool()));
+    const bool pinned = item->data(DevicePinnedRole).toBool();
+    pin_->setText(pinActionText(pinned));
+    pin_->setIcon(native_ui::symbolIcon(pinned ? native_ui::Symbol::Unpin : native_ui::Symbol::Pin,
+                                       native_ui::themeColor("#456594", "#aec9fb", "accentText"), 16));
 }
 
 QString DevicePage::takeContextDeviceId() {

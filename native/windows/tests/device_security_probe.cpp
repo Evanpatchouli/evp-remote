@@ -150,6 +150,7 @@ private slots:
     void cleanSidebarFocus_data();
     void cleanSidebarFocus();
     void cleanDeviceListFocus();
+    void trustedDeviceMenuActions_data();
     void trustedDeviceMenuActions();
     void trustedDevicePinHover();
     void cleanCheckBoxFocus();
@@ -1562,7 +1563,16 @@ void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {
     QCOMPARE(tabs->currentIndex(), 1);
 }
 
+void DeviceSecurityProbe::trustedDeviceMenuActions_data() {
+    QTest::addColumn<bool>("dark");
+    QTest::newRow("light") << false;
+    QTest::newRow("dark") << true;
+}
+
 void DeviceSecurityProbe::trustedDeviceMenuActions() {
+    QFETCH(bool, dark);
+    native_ui::applyTheme(dark ? native_ui::Theme::Dark : native_ui::Theme::Light);
+    const auto restore = qScopeGuard([] { native_ui::applyTheme(native_ui::Theme::Light); });
     QTemporaryDir profile;
     QVERIFY(profile.isValid());
     const auto path = profile.filePath("devices.dat");
@@ -1607,8 +1617,14 @@ void DeviceSecurityProbe::trustedDeviceMenuActions() {
     QVERIFY(menu);
     QCOMPARE(list->currentRow(), 1);
     QStringList labels;
-    for (auto* action : menu->actions())
-        if (!action->isSeparator()) labels << action->text();
+    for (auto* action : menu->actions()) {
+        if (action->isSeparator()) continue;
+        QVERIFY(!action->icon().isNull());
+        labels << action->text();
+    }
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty())
+        QVERIFY(menu->grab().save(QDir(preview).filePath(dark ? "device-menu-dark.png" : "device-menu-light.png")));
     QCOMPARE(labels, QStringList({QStringLiteral("重命名"), QStringLiteral("上移"), QStringLiteral("下移"),
                                   QStringLiteral("置顶"), QStringLiteral("移除")}));
     menu->close();

@@ -27,6 +27,7 @@ enum class Symbol {
     End,
     Power,
     Settings,
+    Rename, MoveUp, MoveDown, Pin, Unpin, Remove,
 };
 
 inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
@@ -41,6 +42,35 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
     painter.scale(unit, unit);
     painter.setPen(QPen(color, 1.65, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     switch (symbol) {
+    case Symbol::Rename:
+        painter.drawPolygon(QPolygonF{{4, 20}, {5, 15}, {16, 4}, {20, 8}, {9, 19}});
+        painter.drawLine(QPointF(14, 6), QPointF(18, 10));
+        break;
+    case Symbol::MoveDown:
+    case Symbol::MoveUp:
+        if (symbol == Symbol::MoveDown) {
+            painter.translate(24, 24);
+            painter.rotate(180);
+        }
+        painter.drawLine(QPointF(12, 20), QPointF(12, 4));
+        painter.drawPolyline(QPolygonF{{5, 11}, {12, 4}, {19, 11}});
+        break;
+    case Symbol::Pin:
+    case Symbol::Unpin:
+        if (symbol == Symbol::Unpin)
+            painter.drawLine(QPointF(3, 3), QPointF(21, 21));
+        painter.translate(12, 12);
+        painter.rotate(32);
+        painter.drawPolygon(QPolygonF{{-4,-8}, {4,-8}, {3,-2}, {6,2}, {6,3}, {-6,3}, {-6,2}, {-3,-2}});
+        painter.drawLine(QPointF(0, 3), QPointF(0, 10));
+        break;
+    case Symbol::Remove:
+        painter.drawLine(QPointF(4, 7), QPointF(20, 7));
+        painter.drawLine(QPointF(9, 4), QPointF(15, 4));
+        painter.drawPolyline(QPolygonF{{6, 9}, {7, 20}, {17, 20}, {18, 9}});
+        painter.drawLine(QPointF(10, 10), QPointF(10.5, 17));
+        painter.drawLine(QPointF(14, 10), QPointF(13.5, 17));
+        break;
     case Symbol::Connect:
         painter.drawRoundedRect(QRectF(2.7, 4.3, 11.8, 10.2), 2, 2);
         painter.drawLine(QPointF(8.6, 14.5), QPointF(8.6, 18.6));
