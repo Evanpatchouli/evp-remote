@@ -23,76 +23,81 @@ namespace {
 
 using native_ui::ActionButton;
 using native_ui::label;
+using native_ui::onThemeChanged;
+using native_ui::setThemedStyle;
 using native_ui::Symbol;
 using native_ui::symbolIcon;
 using native_ui::symbolPixmap;
+using native_ui::themeColor;
+using native_ui::themeStyle;
 using native_ui::uiFont;
 
 constexpr auto sessionStyle = R"(
-    QWidget#sessionToolbar { background: #f8faff; border-bottom: 1px solid #e0e8f3; }
-    QLabel { color: #182844; background: transparent; }
-    QLabel#sessionMark { background: #e8f1ff; border-radius: 8px; }
-    QLabel#sessionStatus { color: #526684; }
-    QFrame#toolbarDivider { background-color: #dce5f1; border: none; }
-    QWidget#sessionViewport { background: #101824; }
+    QWidget#sessionToolbar { background: #f8faff/#222427@surface; border-bottom: 1px solid #e0e8f3/#343942@stroke; }
+    QLabel { color: #182844/#e6e8ec@foreground; background: transparent; }
+    QLabel#sessionMark { background: #e8f1ff/#283b56@accentTint; border-radius: 8px; }
+    QLabel#sessionStatus { color: #526684/#b7c0cf@muted; }
+    QFrame#toolbarDivider { background-color: #dce5f1/#373c45@stroke; border: none; }
+    QWidget#sessionViewport { background: #101824/#141517; }
     QPushButton#sessionVideoSettings {
-        background: #f4f8ff; color: #182844; border: 1px solid #dbe5f5; padding: 0 10px;
+        background: #f4f8ff/#24262a@surface; color: #182844/#e6e8ec@foreground; border: 1px solid #dbe5f5/#3d434d@stroke; padding: 0 10px;
     }
-    QPushButton#sessionVideoSettings:hover { background: #e5eeff; border-color: #b2c8eb; }
-    QPushButton#sessionVideoSettings:pressed { background: #d9e7ff; }
-    QPushButton#sessionVideoSettings:focus { border-color: #3475e4; }
+    QPushButton#sessionVideoSettings:hover { background: #e5eeff/#344153@accentHoverTint; border-color: #b2c8eb/#536783@stroke; }
+    QPushButton#sessionVideoSettings:pressed { background: #d9e7ff/#304867@accentHoverTint; }
+    QPushButton#sessionVideoSettings:focus { border-color: #3475e4/#739ff1@accentMark; }
     QPushButton#fullscreen {
-        background: palette(button); color: palette(button-text); border: 1px solid palette(mid); padding: 0 12px;
+        background: palette(button)/#222427@surface; color: palette(button-text)/#e6e8ec@foreground;
+        border: 1px solid palette(mid)/#3d434d@stroke; padding: 0 12px;
     }
-    QPushButton#fullscreen:hover { background: palette(light); }
-    QPushButton#fullscreen:pressed { background: palette(midlight); }
-    QPushButton#fullscreen:focus { border-color: palette(highlight); }
+    QPushButton#fullscreen:hover { background: palette(light)/#303844@raised; }
+    QPushButton#fullscreen:pressed { background: palette(midlight)/#344153@accentHoverTint; }
+    QPushButton#fullscreen:focus { border-color: palette(highlight)/#739ff1@accentMark; }
     QPushButton#endSession {
-        background: #fdf0ed; color: #963b2f; border: 1px solid #efd8d2; padding: 0 12px;
+        background: #fdf0ed/#382724; color: #963b2f/#f2c3b8; border: 1px solid #efd8d2/#634640; padding: 0 12px;
     }
-    QPushButton#endSession:hover { background: #fde5df; border-color: #e8b7ad; }
-    QPushButton#endSession:pressed { background: #f7d7d0; }
-    QPushButton#endSession:focus { border-color: #c66658; }
+    QPushButton#endSession:hover { background: #fde5df/#45302b; border-color: #e8b7ad/#825651; }
+    QPushButton#endSession:pressed { background: #f7d7d0/#503531; }
+    QPushButton#endSession:focus { border-color: #c66658/#e3948b; }
 )";
 
 constexpr auto videoSettingsStyle = R"(
     QFrame#videoSettingsSurface {
-        background: #ffffff; border: 1px solid #bdcde4; border-radius: 10px;
+        background: #ffffff/#25272b@surface; border: 1px solid #bdcde4/#495160@stroke; border-radius: 10px;
     }
-    QFrame#videoSettingsDivider { background: #e0e8f3; border: none; }
-    QLabel { color: #182844; background: transparent; }
-    QLabel#videoBitrateRange, QLabel#videoColorNote { color: #526684; }
+    QFrame#videoSettingsDivider { background: #e0e8f3/#373c45@stroke; border: none; }
+    QLabel { color: #182844/#e6e8ec@foreground; background: transparent; }
+    QLabel#videoBitrateRange, QLabel#videoColorNote { color: #526684/#b7c0cf@muted; }
     QLabel#videoSettingsMessage {
-        background: #f1f5fd; color: #435b81; border-radius: 6px; padding: 6px 8px;
+        background: #f1f5fd/#2b3037@raised; color: #435b81/#b7c0cf@muted; border-radius: 6px; padding: 6px 8px;
     }
     QPushButton[videoChoice="true"], QPushButton#videoCustomApply {
-        background: #f8faff; color: #263955; border: 1px solid #d9e3f1;
+        background: #f8faff/#222427@surface; color: #263955/#e6e8ec@foreground; border: 1px solid #d9e3f1/#3d434d@stroke;
         padding: 0 8px;
     }
     QPushButton[videoChoice="true"]:hover, QPushButton#videoCustomApply:hover {
-        background: #edf4ff; border-color: #b2c8eb;
+        background: #edf4ff/#303844@raised; border-color: #b2c8eb/#536783@stroke;
     }
     QPushButton[videoChoice="true"]:checked, QPushButton#videoCustomApply {
-        background: #e8f1ff; color: #214c98; border-color: #9ebbee;
+        background: #e8f1ff/#283b56@accentTint; color: #214c98/#b7d0ff@accentText; border-color: #9ebbee/#627eac@accentMark;
     }
     QPushButton[videoChoice="true"]:focus, QPushButton#videoCustomApply:focus {
-        border-color: #3475e4;
+        border-color: #3475e4/#739ff1@accentMark;
     }
     QPushButton[videoChoice="true"]:pressed, QPushButton#videoCustomApply:pressed {
-        background: #d9e7ff;
+        background: #d9e7ff/#304867@accentHoverTint;
     }
     QPushButton[videoChoice="true"]:disabled, QPushButton#videoCustomApply:disabled {
-        background: #f4f7fc; color: #667893; border-color: #e0e8f3;
+        background: #f4f7fc/#24262a@surface; color: #667893/#9da7b8@muted; border-color: #e0e8f3/#343942@stroke;
     }
     QPushButton[videoChoice="true"]:checked:disabled {
-        background: #edf3fd; color: #435b81; border-color: #abbedb;
+        background: #edf3fd/#2b3037@raised; color: #435b81/#b7c0cf@muted; border-color: #abbedb/#536783@stroke;
     }
     QSpinBox#videoCustomBitrate {
-        background: #ffffff; color: #182844; border: 1px solid #cbd7e8;
+        background: #ffffff/#25272b@surface; color: #182844/#e6e8ec@foreground; border: 1px solid #cbd7e8/#3d434d@stroke;
         border-radius: 7px; padding: 0 8px;
     }
-    QSpinBox#videoCustomBitrate:focus { border-color: #3475e4; }
-    QSpinBox#videoCustomBitrate:disabled { background: #f4f7fc; color: #667893; }
+    QSpinBox#videoCustomBitrate:focus { border-color: #3475e4/#739ff1@accentMark; }
+    QSpinBox#videoCustomBitrate:disabled { background: #f4f7fc/#24262a@surface; color: #667893/#9da7b8@muted; }
 )";
 
 struct VideoOption {
@@ -139,7 +144,7 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     resize(1100, 686);
 
     auto* session = new QWidget;
-    session->setStyleSheet(QString::fromLatin1(sessionStyle));
+    setThemedStyle(*session, QString::fromLatin1(sessionStyle));
     setCentralWidget(session);
     auto* layout = new QVBoxLayout(session);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -159,7 +164,9 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     auto* mark = label({}, "sessionMark", 14);
     mark->setFixedSize(34, 34);
     mark->setAlignment(Qt::AlignCenter);
-    mark->setPixmap(symbolPixmap(Symbol::Display, QColor("#2b63be"), 21));
+    onThemeChanged(*mark, [mark] {
+        mark->setPixmap(symbolPixmap(Symbol::Display, themeColor("#2b63be", "#aec9fb", "accentText"), 21));
+    });
     identity->addWidget(mark, 0, Qt::AlignVCenter);
     auto* titles = new QVBoxLayout;
     titles->setSpacing(3);
@@ -186,7 +193,10 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     routeLabel_->setMaximumWidth(156);
     tools->addWidget(routeLabel_, 0, Qt::AlignVCenter);
 
-    videoSettingsButton_ = new ActionButton(symbolIcon(Symbol::ChevronDown, QColor("#456594"), 14), {});
+    videoSettingsButton_ = new ActionButton(QString{});
+    onThemeChanged(*videoSettingsButton_, [this] {
+        videoSettingsButton_->setIcon(symbolIcon(Symbol::ChevronDown, themeColor("#456594", "#aec9fb", "accentText"), 14));
+    });
     videoSettingsButton_->setObjectName(QStringLiteral("sessionVideoSettings"));
     videoSettingsButton_->setAccessibleName(QStringLiteral("远程画面设置"));
     videoSettingsButton_->setToolTip(QStringLiteral("点击调整画面设置。按钮显示远端画面尺寸和每秒提交给显卡的不同帧数。"));
@@ -225,7 +235,10 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     connect(shortcut, &QShortcut::activated, this, toggle);
     auto* popupShortcut = new QShortcut(shortcut->key(), videoSettingsPanel_);
     connect(popupShortcut, &QShortcut::activated, this, toggle);
-    auto* end = new ActionButton(symbolIcon(Symbol::Power, QColor("#963b2f"), 17), QStringLiteral("结束控制"));
+    auto* end = new ActionButton(QStringLiteral("结束控制"));
+    onThemeChanged(*end, [end] {
+        end->setIcon(symbolIcon(Symbol::Power, themeColor("#963b2f", "#f2c3b8"), 17));
+    });
     end->setObjectName(QStringLiteral("endSession"));
     end->setFont(uiFont(13, QFont::DemiBold));
     end->setIconSize(QSize(17, 17));
@@ -245,7 +258,7 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
     setVideoFormat({}, 0);
     const evp::VideoSettings defaults;
     setVideoSettings(defaults.maxBitrateMbps, defaults.maxFps, false, QStringLiteral("等待远端画面设置可用"));
-    updateStatus();
+    onThemeChanged(*this, [this] { updateStatus(); });
 }
 
 void SessionWindow::createVideoSettingsPanel()
@@ -254,7 +267,7 @@ void SessionWindow::createVideoSettingsPanel()
     videoSettingsPanel_->setObjectName(QStringLiteral("videoSettingsPanel"));
     videoSettingsPanel_->setAccessibleName(QStringLiteral("画面设置"));
     videoSettingsPanel_->setFocusPolicy(Qt::StrongFocus);
-    videoSettingsPanel_->setStyleSheet(QString::fromLatin1(videoSettingsStyle));
+    setThemedStyle(*videoSettingsPanel_, QString::fromLatin1(videoSettingsStyle));
 
     auto* surface = new QFrame(videoSettingsPanel_);
     surface->setObjectName(QStringLiteral("videoSettingsSurface"));
@@ -505,25 +518,25 @@ void SessionWindow::closeEvent(QCloseEvent* event)
 void SessionWindow::updateStatus()
 {
     if (failed_) {
-        statusIndicator_->setStyleSheet(QStringLiteral("background: #bb4c3b; border-radius: 3px;"));
+        statusIndicator_->setStyleSheet(themeStyle(QStringLiteral("background: #bb4c3b/#e58f85; border-radius: 3px;")));
         statusLabel_->setText(statusMessage_.isEmpty() ? QStringLiteral("连接已中断") : statusMessage_);
     } else if (connected_) {
-        statusIndicator_->setStyleSheet(QStringLiteral("background: #268568; border-radius: 3px;"));
+        statusIndicator_->setStyleSheet(themeStyle(QStringLiteral("background: #268568/#72c9a7; border-radius: 3px;")));
         statusLabel_->setText(statusMessage_.isEmpty() ? QStringLiteral("已连接") : statusMessage_);
     } else {
-        statusIndicator_->setStyleSheet(QStringLiteral("background: #b67b23; border-radius: 3px;"));
+        statusIndicator_->setStyleSheet(themeStyle(QStringLiteral("background: #b67b23/#eab077; border-radius: 3px;")));
         statusLabel_->setText(statusMessage_.isEmpty() ? QStringLiteral("正在建立连接") : statusMessage_);
     }
 
     inputLabel_->setVisible(connected_ && !failed_);
     if (inputAvailable_) {
         inputLabel_->setText(QStringLiteral("可控制"));
-        inputLabel_->setStyleSheet(QStringLiteral(
-            "background: #e3f4ed; color: #20694f; border-radius: 11px; padding: 4px 9px;"));
+        inputLabel_->setStyleSheet(themeStyle(QStringLiteral(
+            "background: #e3f4ed/#243a31; color: #20694f/#a2d9bd; border-radius: 11px; padding: 4px 9px;")));
     } else {
         inputLabel_->setText(QStringLiteral("仅查看"));
-        inputLabel_->setStyleSheet(QStringLiteral(
-            "background: #eaf0fb; color: #435b81; border-radius: 11px; padding: 4px 9px;"));
+        inputLabel_->setStyleSheet(themeStyle(QStringLiteral(
+            "background: #eaf0fb/#303844@raised; color: #435b81/#b7c0cf@muted; border-radius: 11px; padding: 4px 9px;")));
     }
 }
 

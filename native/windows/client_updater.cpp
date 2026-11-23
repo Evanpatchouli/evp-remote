@@ -65,23 +65,23 @@ ClientUpdater::ClientUpdater(HomeWindow& home, const QUrl& releaseEndpoint)
     dialog_->setObjectName("updateDialog");
     dialog_->setWindowTitle(QStringLiteral("检查更新 · EVP 远程"));
     dialog_->setFixedWidth(dialogWidth);
-    dialog_->setStyleSheet(QStringLiteral(
-        "QDialog { background: #ffffff; }"
-        "QLabel { color: #182844; background: transparent; }"
-        "QLabel#updateDetail, QLabel#updateVersionCaption { color: #526684; }"
-        "QLabel#updateLatestVersion { color: #2356b3; }"
-        "QFrame#updateVersions { background: #f5f8fd; border: 1px solid #e0e8f3; border-radius: 8px; }"
-        "QTextBrowser { background: #ffffff; color: #263955; border: 1px solid #e0e8f3;"
+    native_ui::setThemedStyle(*dialog_, QStringLiteral(
+        "QDialog { background: #ffffff/#25272b@surface; }"
+        "QLabel { color: #182844/#e6e8ec@foreground; background: transparent; }"
+        "QLabel#updateDetail, QLabel#updateVersionCaption { color: #526684/#b7c0cf@muted; }"
+        "QLabel#updateLatestVersion { color: #2356b3/#b7d0ff@accentText; }"
+        "QFrame#updateVersions { background: #f5f8fd/#222427@surface; border: 1px solid #e0e8f3/#343942@stroke; border-radius: 8px; }"
+        "QTextBrowser { background: #ffffff/#25272b@surface; color: #263955/#e6e8ec@foreground; border: 1px solid #e0e8f3/#343942@stroke;"
         " border-radius: 8px; padding: 5px 8px; }"
-        "QProgressBar { min-height: 6px; max-height: 6px; border: none; border-radius: 3px; background: #e7eef9; }"
-        "QProgressBar::chunk { border-radius: 3px; background: #3475e4; }"
-        "QPushButton { background: #edf4ff; color: #214c98; border: 1px solid #b2c8eb; padding: 0 12px; outline: none; }"
-        "QPushButton:hover { background: #e0edff; }"
-        "QPushButton:focus { border-color: #3475e4; }"
-        "QPushButton#installUpdate { background: #2865d5; border-color: #2865d5; color: #ffffff; }"
-        "QPushButton#installUpdate:hover { background: #2058c2; }"
+        "QProgressBar { min-height: 6px; max-height: 6px; border: none; border-radius: 3px; background: #e7eef9/#292c31@raised; }"
+        "QProgressBar::chunk { border-radius: 3px; background: #3475e4/#739ff1@accent; }"
+        "QPushButton { background: #edf4ff/#303844@raised; color: #214c98/#b7d0ff@accentText; border: 1px solid #b2c8eb/#536783@stroke; padding: 0 12px; outline: none; }"
+        "QPushButton:hover { background: #e0edff/#344153@accentHoverTint; }"
+        "QPushButton:focus { border-color: #3475e4/#739ff1@accentMark; }"
+        "QPushButton#installUpdate { background: #2865d5/#2355ad@accent; border-color: #2865d5/#739ff1@accentMark; color: #ffffff/#eef0f5@onAccent; }"
+        "QPushButton#installUpdate:hover { background: #2058c2/#2a60bc@accentHover; }"
         "QPushButton:disabled, QPushButton#installUpdate:disabled {"
-        " background: #f4f7fc; color: #667893; border-color: #d9e3f1; }"));
+        " background: #f4f7fc/#24262a@surface; color: #667893/#9da7b8@muted; border-color: #d9e3f1/#3d434d@stroke; }"));
     auto* layout = new QVBoxLayout(dialog_);
     layout->setContentsMargins(20, 18, 20, 16);
     layout->setSpacing(14);
@@ -90,6 +90,7 @@ ClientUpdater::ClientUpdater(HomeWindow& home, const QUrl& releaseEndpoint)
     mark_ = native_ui::label({}, "updateMark", 13);
     mark_->setAlignment(Qt::AlignCenter);
     mark_->setFixedSize(44, 44);
+    native_ui::onThemeChanged(*mark_, [this] { updateMark(); });
     header->addWidget(mark_, 0, Qt::AlignTop);
     auto* summary = new QVBoxLayout;
     summary->setSpacing(4);
@@ -379,18 +380,26 @@ bool ClientUpdater::canInstall() const {
         QFileInfo::exists(QDir(QCoreApplication::applicationDirPath()).filePath(helperName));
 }
 
-void ClientUpdater::setStatus(Appearance appearance, const QString& heading, const QString& detail) {
+void ClientUpdater::updateMark() {
     using native_ui::Symbol;
-    struct Mark { Symbol symbol; const char* ink; const char* background; };
-    Mark mark{Symbol::Refresh, "#2865d5", "#edf4ff"};
-    if (appearance == Appearance::Current)
-        mark = {Symbol::Check, "#198064", "#e7f5ef"};
-    else if (appearance == Appearance::Offer)
-        mark = {Symbol::Download, "#2865d5", "#edf4ff"};
-    else if (appearance == Appearance::Warning)
-        mark = {Symbol::Warning, "#9e5a14", "#fff3e1"};
-    mark_->setPixmap(native_ui::symbolPixmap(mark.symbol, QColor(mark.ink), 24));
-    mark_->setStyleSheet(QStringLiteral("background: %1; border-radius: 11px;").arg(QString::fromLatin1(mark.background)));
+    using native_ui::themeColor;
+    struct Mark { Symbol symbol; QColor ink; QColor background; };
+    const auto blueInk = themeColor("#2865d5", "#aec9fb");
+    const auto blueBackground = themeColor("#edf4ff", "#283b56");
+    Mark mark{Symbol::Refresh, blueInk, blueBackground};
+    if (appearance_ == Appearance::Current)
+        mark = {Symbol::Check, themeColor("#198064", "#a2d9bd"), themeColor("#e7f5ef", "#243a31")};
+    else if (appearance_ == Appearance::Offer)
+        mark = {Symbol::Download, blueInk, blueBackground};
+    else if (appearance_ == Appearance::Warning)
+        mark = {Symbol::Warning, themeColor("#9e5a14", "#edb782"), themeColor("#fff3e1", "#3d3026")};
+    mark_->setPixmap(native_ui::symbolPixmap(mark.symbol, mark.ink, 24));
+    mark_->setStyleSheet(QStringLiteral("background: %1; border-radius: 11px;").arg(mark.background.name()));
+}
+
+void ClientUpdater::setStatus(Appearance appearance, const QString& heading, const QString& detail) {
+    appearance_ = appearance;
+    updateMark();
     status_->setText(heading);
     detail_->setText(detail);
     detail_->setVisible(!detail.isEmpty());

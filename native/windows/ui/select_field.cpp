@@ -33,10 +33,13 @@ public:
         const QRect row = option.rect.adjusted(3, 1, -3, -1);
         if (chosen || highlighted || hovered) {
             painter->setPen(Qt::NoPen);
-            painter->setBrush(highlighted || hovered ? QColor("#e5eeff") : QColor("#f1f5fd"));
+            painter->setBrush(highlighted || hovered ? themeColor("#e5eeff", "#344153", "accentHoverTint")
+                                                      : themeColor("#f1f5fd", "#283b56", "accentTint"));
             painter->drawRoundedRect(row, 6, 6);
         }
-        const QColor ink = !enabled ? QColor("#78869c") : chosen || highlighted ? QColor("#214c98") : QColor("#263955");
+        const auto ink = !enabled ? themeColor("#78869c", "#9da7b8", "muted")
+                       : chosen || highlighted ? themeColor("#214c98", "#b7d0ff", "accentText")
+                                               : themeColor("#263955", "#e6e8ec", "foreground");
         auto font = option.font;
         if (chosen)
             font.setWeight(QFont::DemiBold);
@@ -65,14 +68,14 @@ SelectField::SelectField(QWidget* parent) : QComboBox(parent) {
     setMinimumSize(128, 38);
     setFocusPolicy(Qt::StrongFocus);
     setCursor(Qt::PointingHandCursor);
-    setStyleSheet(QStringLiteral(R"(
+    setThemedStyle(*this, QStringLiteral(R"(
         QComboBox {
-            color: #182844; background: #ffffff; border: 1px solid #cbd7e8;
+            color: #182844/#e6e8ec@foreground; background: #ffffff/#25272b@surface; border: 1px solid #cbd7e8/#3d434d@stroke;
             border-radius: 8px; padding: 0 32px 0 12px; combobox-popup: 0;
         }
-        QComboBox:hover { background: #f8faff; border-color: #9fb7d8; }
-        QComboBox:focus, QComboBox:on { border: 2px solid #3475e4; padding: 0 31px 0 11px; }
-        QComboBox:disabled { background: #f4f7fc; color: #71809a; border: 1px solid #dfe6f1; }
+        QComboBox:hover { background: #f8faff/#222427@surface; border-color: #9fb7d8/#536783@stroke; }
+        QComboBox:focus, QComboBox:on { border: 2px solid #3475e4/#739ff1@accentMark; padding: 0 31px 0 11px; }
+        QComboBox:disabled { background: #f4f7fc/#24262a@surface; color: #71809a/#9da7b8@muted; border: 1px solid #dfe6f1/#343942@stroke; }
         QComboBox::drop-down { width: 30px; border: none; background: transparent; }
         QComboBox::down-arrow { image: none; width: 0; height: 0; }
     )"));
@@ -84,8 +87,8 @@ SelectField::SelectField(QWidget* parent) : QComboBox(parent) {
     list->viewport()->setAttribute(Qt::WA_Hover);
     list->viewport()->setCursor(Qt::PointingHandCursor);
     list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    list->setStyleSheet(QStringLiteral(
-        "QListView#selectOptions { background: #ffffff; border: 1px solid #bdcde4; "
+    setThemedStyle(*list, QStringLiteral(
+        "QListView#selectOptions { background: #ffffff/#25272b@surface; border: 1px solid #bdcde4/#495160@stroke; "
         "border-radius: 9px; padding: 4px; outline: none; }"));
     setView(list);
     setItemDelegate(new OptionDelegate(this));
@@ -131,7 +134,9 @@ void SelectField::paintEvent(QPaintEvent* event) {
     const qreal offset = view()->isVisible() ? -2 : 2;
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QPen(isEnabled() ? QColor("#456594") : QColor("#99a6ba"), 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    const auto ink = isEnabled() ? themeColor("#456594", "#aec9fb", "accentText")
+                                 : themeColor("#99a6ba", "#9da7b8", "muted");
+    painter.setPen(QPen(ink, 1.7, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.drawPolyline(QPolygonF{center + QPointF(-4, -offset), center + QPointF(0, offset),
                                   center + QPointF(4, -offset)});
 }

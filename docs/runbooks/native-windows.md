@@ -8,6 +8,8 @@ Closing the main window keeps the client online in the Windows notification area
 
 Open **设置** at the bottom of the main sidebar. In **设置中心 → 连接设置**, enter the deployment's `wss://` address. Add the deployment key if this PC will create invitations or use My Devices, then save. An invitation guest can save just the address. Both modes use these settings for the current Windows user, including after restarting the portable EXE. The back button returns to the previous page.
 
+In **设置中心 → 外观 → 主题**, the **模式** row offers **跟随系统** (Follow system), **浅色模式** (Light), and **深色模式** (Dark). Follow system is the default and responds to changes in the Windows app color mode. Set **强调色**, **背景**, and **前景** to customize the active mode's accent, background, and text colors. The light and dark palettes are saved separately. **字体** chooses an installed font family and applies to both modes. Changes take effect immediately and persist for the current Windows user. **恢复默认** restores the active palette and the shared font.
+
 An upgrade reuses the protected address and key previously saved in My Devices. If there is no saved endpoint, the client uses a valid previous Remote Assistance address, then the `EVP_SIGNAL_URL` or packaged default address. Existing device IDs and pairings carry over. For the same address, a blank key field retains its saved key. To rotate it, type the new key and save. To remove it, use the forget-key option. Changing to a different address with a blank key saves an address-only configuration. End the current invitation, pairing request or session before applying new settings.
 
 ## Check for updates
@@ -52,7 +54,7 @@ If the app reports a local storage error, restore write access to the Windows us
 
 Use Windows x64, Visual Studio 2022 with Desktop development with C++, a Windows SDK, CMake 3.24+, PowerShell 7, Node.js with npm, and NSIS 3. The packager discovers NSIS through `EVP_NSIS_ROOT`, PATH, or a standard NSIS or Tauri cache installation. The native dependency build was validated with:
 
-- Qt **6.8.3 msvc2022_64**, Qt Base, Widgets, Network, WebSockets, and translations. Qt Test is required for the interop probe. [Qt for Windows](https://doc.qt.io/qt-6/windows.html)
+- Qt **6.8 or later**, validated with **6.8.3 msvc2022_64**, with Qt Base, Widgets, Network, WebSockets, and translations. Qt Test is required for the interop probe. [Qt for Windows](https://doc.qt.io/qt-6/windows.html)
 - Shiguredo **webrtc-rs 0.157.0**, the native libwebrtc C ABI Windows x64 archive. Verify SHA-256 `efb4e3dbce5b759f7b4e8b74479098f5ace17521e6343211bf923616a3e5544c` before extracting. Its root contains `include/webrtc_c.h`, `lib/webrtc_c.lib`, and the notice files. This SDK lets the application plug in its own FFmpeg decoder factory. [Release archive](https://github.com/shiguredo/webrtc-rs/releases/download/0.157.0/libwebrtc_c-windows_x86_64.tar.gz)
 - FFmpeg: use a shared x64 SDK with D3D11VA and the tested video library majors **avcodec 63, avutil 61 and swscale 10**. The audio path also links **swresample 7**. Use headers, MSVC import libraries, runtime DLLs and `ffmpeg.exe` from the same build; the acceptance workstation also needs its matching `ffprobe.exe`.
 

@@ -39,6 +39,7 @@ private:
     void finishDownload();
     void applyUpdate();
     bool canInstall() const;
+    void updateMark();
     void setStatus(Appearance appearance, const QString& heading, const QString& detail = {});
     void abortTransfer(const QString& error);
     void fail(const QString& message);
@@ -59,6 +60,7 @@ private:
     QPushButton* install_;
     QPushButton* close_;
     State state_ = State::Idle;
+    Appearance appearance_ = Appearance::Activity;
     bool manual_ = false;
     QString lastOffered_, transferError_;
     QByteArray metadata_, prefix_;

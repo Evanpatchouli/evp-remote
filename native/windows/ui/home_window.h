@@ -64,10 +64,11 @@ protected:
 
 private:
     enum class Page { Assistance, Devices, Settings };
+    enum class SettingsView { Connection, Appearance, About };
     QWidget* createHostPage();
     QWidget* createSettingsPage();
     void selectPage(Page page);
-    void selectSettingsView(bool about);
+    void selectSettingsView(SettingsView view);
     void resetSettingsDraft();
     void updateKeyPlaceholder();
     void updateSettingsAvailability();
@@ -100,6 +101,7 @@ private:
     QStackedWidget* rails_;
     QPushButton* settingsBack_;
     QPushButton* settingsConnectionNavigation_;
+    QPushButton* settingsAppearanceNavigation_;
     QPushButton* settingsAboutNavigation_;
     QWidget* settingsPage_;
     QStackedWidget* settingsViews_;

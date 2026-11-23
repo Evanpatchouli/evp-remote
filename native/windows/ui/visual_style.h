@@ -1,5 +1,7 @@
 #pragma once
 
+#include "theme.h"
+
 #include <QColor>
 #include <QFont>
 #include <QIcon>
@@ -80,7 +82,7 @@ inline QPixmap symbolPixmap(Symbol symbol, const QColor& color, int size)
         break;
     case Symbol::Clipboard:
         painter.drawRoundedRect(QRectF(5.8, 5.5, 12.4, 15), 2, 2);
-        painter.setBrush(QColor("#f8faff"));
+        painter.setBrush(themeColor("#f8faff", "#222427", "surface"));
         painter.drawRoundedRect(QRectF(8.4, 3.1, 7.2, 4.8), 1.2, 1.2);
         painter.drawLine(QPointF(9, 12), QPointF(15, 12));
         painter.drawLine(QPointF(9, 15.5), QPointF(15, 15.5));

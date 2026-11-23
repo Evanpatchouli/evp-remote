@@ -1,6 +1,7 @@
 #include "device_page.h"
 #include "action_button.h"
 #include "select_field.h"
+#include "theme.h"
 #include "visual_style.h"
 
 #include <QApplication>
@@ -59,24 +60,24 @@ QHBoxLayout* row(QVBoxLayout* layout, QWidget* leading, QWidget* trailing, bool 
 }
 
 DevicePage::DevicePage(QWidget* parent) : QWidget(parent) {
-    setStyleSheet(QStringLiteral(R"(
-        QPushButton[deviceAction="primary"] { background: #2463da; color: white; border: 1px solid transparent; }
-        QPushButton[deviceAction="primary"]:hover { background: #1956c5; }
-        QPushButton[deviceAction="secondary"] { background: #f8faff; color: #284675; border: 1px solid #ccd9ec; }
-        QPushButton[deviceAction="secondary"]:hover { background: #edf4ff; }
+    native_ui::setThemedStyle(*this, QStringLiteral(R"(
+        QPushButton[deviceAction="primary"] { background: #2463da/#2355ad@accent; color: white/#eef0f5@onAccent; border: 1px solid transparent; }
+        QPushButton[deviceAction="primary"]:hover { background: #1956c5/#2a60bc@accentHover; }
+        QPushButton[deviceAction="secondary"] { background: #f8faff/#222427@surface; color: #284675/#b7d0ff@accentText; border: 1px solid #ccd9ec/#3d434d@stroke; }
+        QPushButton[deviceAction="secondary"]:hover { background: #edf4ff/#303844@raised; }
         QPushButton[deviceAction] { padding: 0 10px; }
-        QPushButton[deviceAction]:focus { border: 1px solid #3475e4; }
-        QPushButton[deviceAction]:disabled { background: #f0f4fa; color: #667899; border: 1px solid #dfe6f1; }
-        QListWidget#trustedDeviceList { background: white; border: 2px solid #e0e8f3; border-radius: 9px; }
-        QListWidget#trustedDeviceList:focus { border-color: #3475e4; }
+        QPushButton[deviceAction]:focus { border: 1px solid #3475e4/#739ff1@accentMark; }
+        QPushButton[deviceAction]:disabled { background: #f0f4fa/#24262a@surface; color: #667899/#9da7b8@muted; border: 1px solid #dfe6f1/#343942@stroke; }
+        QListWidget#trustedDeviceList { background: white/#25272b@surface; border: 2px solid #e0e8f3/#343942@stroke; border-radius: 9px; }
+        QListWidget#trustedDeviceList:focus { border-color: #3475e4/#739ff1@accentMark; }
         QListWidget#trustedDeviceList::item {
             padding: 8px 12px; border: 1px solid transparent; border-radius: 7px;
-            background: #f4f6fa; color: #263955;
+            background: #f4f6fa/#222427@surface; color: #263955/#e6e8ec@foreground;
         }
-        QListWidget#trustedDeviceList::item:hover { background: #e8effa; border-color: #b8cbed; }
-        QListWidget#trustedDeviceList::item:selected { background: #dceaff; border-color: #739bda; color: #163e7b; }
-        QListWidget#trustedDeviceList::item:selected:hover { background: #cbdfff; border-color: #547fbe; }
-        QListWidget#trustedDeviceList::item:focus { border: 1px solid #2459ab; }
+        QListWidget#trustedDeviceList::item:hover { background: #e8effa/#303844@raised; border-color: #b8cbed/#536783@stroke; }
+        QListWidget#trustedDeviceList::item:selected { background: #dceaff/#283b56@accentTint; border-color: #739bda/#627eac@accentMark; color: #163e7b/#b7d0ff@accentText; }
+        QListWidget#trustedDeviceList::item:selected:hover { background: #cbdfff/#304867@accentHoverTint; border-color: #547fbe/#739ff1@accentMark; }
+        QListWidget#trustedDeviceList::item:focus { border: 1px solid #2459ab/#739ff1@accentMark; }
     )"));
     auto* page = new QVBoxLayout(this);
     page->setContentsMargins(0, 0, 0, 0);

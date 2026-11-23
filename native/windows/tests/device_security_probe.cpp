@@ -5,11 +5,13 @@
 #include "ui/focus_style.h"
 #include "ui/select_field.h"
 #include "ui/system_tray.h"
+#include "ui/theme.h"
 #include "update_release.h"
 #include <QAction>
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDialog>
 #include <QElapsedTimer>
@@ -21,6 +23,7 @@
 #include <QMouseEvent>
 #include <QScopeGuard>
 #include <QPainter>
+#include <QRadioButton>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QScrollArea>
@@ -32,6 +35,7 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWebSocket>
 #include <QWebSocketServer>
@@ -116,6 +120,8 @@ private slots:
     void retriesFailedForgetWithoutEditing();
     void committedAddressSurvivesHeldMarker();
     void settingsEditorDiscardsDrafts();
+    void appearanceFollowsAndPersistsTheme();
+    void appearanceCustomizesActivePaletteAndFont();
     void guestJoinsWithAddressOnly();
     void storedKeyIsScopedToAddress();
     void readsLegacyConnectionSettings_data();
@@ -499,6 +505,208 @@ void DeviceSecurityProbe::committedAddressSurvivesHeldMarker() {
         QCOMPARE(reopened.url, changed.url());
         QCOMPARE(reopened.deploymentKey, newKey);
     }
+}
+
+void DeviceSecurityProbe::appearanceFollowsAndPersistsTheme() {
+    using namespace native_ui;
+    applyTheme(Theme::System);
+    const auto systemScheme = QApplication::styleHints()->colorScheme();
+    const auto restore = qScopeGuard([] {
+        saveTheme(Theme::System);
+        applyTheme(Theme::Light);
+    });
+    QCOMPARE(savedTheme(), Theme::System);
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    window.showSettingsPage();
+    auto* appearance = window.findChild<QPushButton*>("settingsAppearanceNavigation");
+    auto* system = window.findChild<QRadioButton*>("themeSystem");
+    auto* light = window.findChild<QRadioButton*>("themeLight");
+    auto* dark = window.findChild<QRadioButton*>("themeDark");
+    QVERIFY(appearance && system && light && dark);
+    appearance->click();
+    QVERIFY(appearance->isChecked() && system->isVisible() && system->isChecked());
+    QVERIFY(light->isVisible() && dark->isVisible());
+    QCOMPARE(system->y(), light->y());
+    QCOMPARE(light->y(), dark->y());
+    QVERIFY(system->x() < light->x() && light->x() < dark->x());
+    auto* themeTitle = window.findChild<QLabel*>("themeTitle");
+    auto* modeTitle = window.findChild<QLabel*>("themeModeTitle");
+    QVERIFY(themeTitle && modeTitle);
+    QCOMPARE(themeTitle->text(), QStringLiteral("主题"));
+    QCOMPARE(modeTitle->text(), QStringLiteral("模式"));
+    QVERIFY(modeTitle->geometry().right() < system->geometry().left());
+    QVERIFY(themeTitle->mapTo(&window, themeTitle->rect().bottomLeft()).y() <
+            modeTitle->mapTo(&window, modeTitle->rect().topLeft()).y());
+    QVERIFY(!system->icon().isNull() && !light->icon().isNull() && !dark->icon().isNull());
+
+    // Simulate a platform scheme notification while the setting is still Follow system.
+    QApplication::styleHints()->setColorScheme(Qt::ColorScheme::Dark);
+    QTRY_COMPARE(system->palette().color(QPalette::WindowText), QColor("#e6e8ec"));
+    QVERIFY(system->isChecked());
+    QCOMPARE(savedTheme(), Theme::System);
+    light->click();
+    QVERIFY(light->isChecked());
+    QCOMPARE(savedTheme(), Theme::Light);
+    QCOMPARE(QApplication::styleHints()->colorScheme(), Qt::ColorScheme::Light);
+
+    dark->click();
+    QVERIFY(dark->isChecked());
+    QCOMPARE(savedTheme(), Theme::Dark);
+    QCOMPARE(QApplication::styleHints()->colorScheme(), Qt::ColorScheme::Dark);
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty())
+        QVERIFY(window.grab().save(QDir(preview).filePath("appearance-dark.png")));
+    {
+        applyTheme(Theme::System);
+        applyTheme(savedTheme());
+        HomeWindow reopened;
+        QVERIFY(reopened.findChild<QRadioButton*>("themeDark")->isChecked());
+        QCOMPARE(QApplication::styleHints()->colorScheme(), Qt::ColorScheme::Dark);
+    }
+
+    window.showDevicePage();
+    auto& devices = window.devices();
+    devices.setIdentity("UI-PREVIEW");
+    devices.setPreferences({}, true);
+    devices.setRegistration(true, QStringLiteral("本机在线"));
+    auto* scroll = window.findChild<QScrollArea*>("homeScroll");
+    auto* permissions = window.findChild<QCheckBox*>("allowTrustedControl");
+    QVERIFY(scroll && permissions);
+    const auto scrollToPermissions = [&] {
+        QTRY_VERIFY(scroll->verticalScrollBar()->maximum() > 0);
+        QTRY_VERIFY(permissions->height() >= permissions->sizeHint().height());
+        scroll->verticalScrollBar()->setValue(scroll->verticalScrollBar()->maximum());
+    };
+    scrollToPermissions();
+    if (!preview.isEmpty())
+        QVERIFY(window.grab().save(QDir(preview).filePath("devices-dark.png")));
+    const auto verifyPermissions = [&](bool darkMode) {
+        for (const auto* name : {"allowTrustedControl", "deviceShareAudio", "deviceRelayOnly"}) {
+            auto* check = window.findChild<QCheckBox*>(name);
+            QVERIFY(check && check->isVisible() && check->isEnabled());
+            auto* card = check->parentWidget();
+            QCOMPARE(card->objectName(), QStringLiteral("card"));
+            const auto cardImage = card->grab();
+            const auto cardRatio = cardImage.devicePixelRatio();
+            QCOMPARE(cardImage.toImage().pixelColor(qRound(8 * cardRatio), qRound(check->geometry().center().y() * cardRatio)),
+                     QColor(darkMode ? "#25272b" : "#ffffff"));
+            const auto grab = check->grab();
+            const auto image = grab.toImage();
+            const auto labelStart = qRound(24 * grab.devicePixelRatio());
+            bool hasContrastingText = false;
+            for (int y = 0; y < image.height() && !hasContrastingText; ++y) {
+                for (int x = labelStart; x < image.width(); ++x) {
+                    const auto pixel = image.pixelColor(x, y);
+                    const auto luma = pixel.lightness();
+                    if (pixel.alpha() == 255 && (darkMode ? luma > 160 && luma < 245 : luma < 80)) {
+                        hasContrastingText = true;
+                        break;
+                    }
+                }
+            }
+            const auto description = QString("%1 in %2 mode").arg(QString::fromLatin1(name),
+                                                                  darkMode ? "dark" : "light");
+            QVERIFY2(hasContrastingText, qPrintable(description));
+        }
+    };
+    verifyPermissions(true);
+
+    window.showSettingsPage();
+    appearance->click();
+    light->click();
+    QTRY_VERIFY(light->palette().color(QPalette::WindowText).lightness() < 80);
+    if (!preview.isEmpty())
+        QVERIFY(window.grab().save(QDir(preview).filePath("appearance-light.png")));
+    window.showDevicePage();
+    scrollToPermissions();
+    verifyPermissions(false);
+    if (!preview.isEmpty())
+        QVERIFY(window.grab().save(QDir(preview).filePath("devices-light.png")));
+    window.showSettingsPage();
+    appearance->click();
+    system->click();
+    QVERIFY(system->isChecked());
+    QCOMPARE(savedTheme(), Theme::System);
+    QCOMPARE(QApplication::styleHints()->colorScheme(), systemScheme);
+}
+
+void DeviceSecurityProbe::appearanceCustomizesActivePaletteAndFont() {
+    using namespace native_ui;
+    applyTheme(Theme::Light);
+    const auto restore = qScopeGuard([] {
+        applyTheme(Theme::Dark);
+        resetAppearance();
+        applyTheme(Theme::Light);
+        resetAppearance();
+        saveTheme(Theme::System);
+        applyTheme(Theme::Light);
+    });
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.show();
+    window.showSettingsPage();
+    window.findChild<QPushButton*>("settingsAppearanceNavigation")->click();
+    auto* accent = window.findChild<QPushButton*>("themeAccent");
+    auto* background = window.findChild<QPushButton*>("themeBackground");
+    auto* foreground = window.findChild<QPushButton*>("themeForeground");
+    auto* title = window.findChild<QLabel*>("themeTitle");
+    auto* font = window.findChild<QComboBox*>("themeFont");
+    auto* reset = window.findChild<QPushButton*>("resetAppearance");
+    auto* dark = window.findChild<QRadioButton*>("themeDark");
+    auto* light = window.findChild<QRadioButton*>("themeLight");
+    QVERIFY(accent && background && foreground && title && font && reset && dark && light);
+
+    const auto chooseColor = [&](QPushButton* button, const QColor& color) {
+        QTimer::singleShot(0, &window, [&] {
+            auto* dialog = window.findChild<QColorDialog*>();
+            Q_ASSERT(dialog);
+            dialog->setCurrentColor(color);
+            dialog->accept();
+        });
+        button->click();
+        QCOMPARE(button->text(), color.name().toUpper());
+    };
+    chooseColor(background, QColor("#101010"));
+    QVERIFY(title->palette().color(QPalette::WindowText).lightness() > 180);
+    QVERIFY(!window.centralWidget()->styleSheet().contains("background: #dbe8ff"));
+    chooseColor(accent, QColor("#3a7543"));
+    chooseColor(background, QColor("#e5eee8"));
+    chooseColor(foreground, QColor("#2a3a2d"));
+    QVERIFY(window.centralWidget()->styleSheet().contains("background: #e5eee8"));
+    QCOMPARE(title->palette().color(QPalette::WindowText), QColor("#2a3a2d"));
+    QVERIFY(window.centralWidget()->styleSheet().contains("background: #3a7543"));
+
+    const auto defaultFont = title->font();
+    const auto family = QStringLiteral("Consolas");
+    const int fontIndex = font->findData(family);
+    QVERIFY(fontIndex > 0);
+    font->setCurrentIndex(fontIndex);
+    QTRY_COMPARE(title->font().family(), family);
+    QCOMPARE(title->font().pixelSize(), defaultFont.pixelSize());
+    QCOMPARE(title->font().weight(), defaultFont.weight());
+
+    dark->click();
+    QCOMPARE(appearanceColor(ThemeColor::Background), QColor("#191a1c"));
+    chooseColor(background, QColor("#302538"));
+    QCOMPARE(font->currentData().toString(), family);
+    light->click();
+    QCOMPARE(background->text(), QStringLiteral("#E5EEE8"));
+    QCOMPARE(foreground->text(), QStringLiteral("#2A3A2D"));
+    auto* reopened = new HomeWindow(&window);
+    QCOMPARE(reopened->findChild<QPushButton*>("themeAccent")->text(), QStringLiteral("#3A7543"));
+    QCOMPARE(reopened->findChild<QComboBox*>("themeFont")->currentData().toString(), family);
+    delete reopened;
+
+    reset->click();
+    QCOMPARE(accent->text(), QStringLiteral("#2463DA"));
+    QCOMPARE(background->text(), QStringLiteral("#F7F9FD"));
+    QCOMPARE(foreground->text(), QStringLiteral("#182844"));
+    QTRY_COMPARE(title->font().family(), defaultFont.family());
+    QVERIFY(font->currentData().toString().isEmpty());
+    dark->click();
+    QCOMPARE(background->text(), QStringLiteral("#302538"));
 }
 
 void DeviceSecurityProbe::settingsEditorDiscardsDrafts() {
@@ -1180,6 +1388,7 @@ void DeviceSecurityProbe::onscreenPopupOpening() {
 
 int runDeviceSecurityProbe(int argc, char** argv) {
     QApplication app(argc, argv);
+    native_ui::applyTheme(native_ui::Theme::Light);
     native_ui::installFocusStyle(app);
     QTemporaryDir preferences;
     if (!preferences.isValid())

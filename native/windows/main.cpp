@@ -3,6 +3,7 @@
 #include "ui/focus_style.h"
 #include "ui/home_window.h"
 #include "ui/system_tray.h"
+#include "ui/theme.h"
 #include "ui/visual_style.h"
 #include <QApplication>
 #include <QLibraryInfo>
@@ -27,6 +28,7 @@ int main(int argc, char** argv) {
     if (translator.load("qtbase_zh_CN", QLibraryInfo::path(QLibraryInfo::TranslationsPath)))
         app.installTranslator(&translator);
     native_ui::installFocusStyle(app);
+    native_ui::applyTheme(native_ui::savedTheme());
     app.setWindowIcon(native_ui::brandIcon());
     HomeWindow home;
     const QSettings defaults(QCoreApplication::applicationDirPath() + "/evp-remote.ini",

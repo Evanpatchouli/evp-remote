@@ -17,7 +17,7 @@ enable_language(RC)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
-find_package(Qt6 6.5 REQUIRED COMPONENTS Network Widgets WebSockets)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Network Widgets WebSockets)
 set(EVP_WEBRTC_ROOT "" CACHE PATH "Root of the x64 libwebrtc SDK")
 set(EVP_FFMPEG_ROOT "" CACHE PATH "Root of the shared x64 FFmpeg development distribution")
 find_path(WEBRTC_INCLUDE webrtc_c.h PATHS "${EVP_WEBRTC_ROOT}/include" NO_DEFAULT_PATH REQUIRED)
@@ -34,7 +34,7 @@ add_library(evp_client STATIC
     ui/home_window.cpp ui/home_window.h ui/session_window.cpp ui/session_window.h
     ui/system_tray.cpp ui/system_tray.h
     ui/device_page.cpp ui/device_page.h ui/select_field.cpp ui/select_field.h
-    ui/floating_surface.cpp ui/floating_surface.h ui/focus_style.cpp ui/focus_style.h
+    ui/floating_surface.cpp ui/floating_surface.h ui/focus_style.cpp ui/focus_style.h ui/theme.cpp ui/theme.h
     media/video_surface.cpp media/video_surface.h media/ffmpeg_decoder.cpp media/ffmpeg_decoder.h
     media/webrtc_ffmpeg_decoder.cpp media/webrtc_ffmpeg_decoder.h
     rtc/rtc_viewer.cpp rtc/rtc_viewer.h rtc/rtc_host.cpp rtc/rtc_host.h

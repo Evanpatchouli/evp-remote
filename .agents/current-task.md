@@ -1,5 +1,13 @@
 # Current task
 
+## Windows appearance
+
+- **Decide / S2.** Use Qt's application color scheme for native widgets and preserve the existing light values in custom painting and stylesheets.
+- **Execute / S2.** Add the per-user mode and horizontal previews, independent light and dark color overrides, and a shared font. Apply the palettes across the main window, session controls and update dialog.
+- **Verify / S1 and independent review.** Check the default, live switching, persisted overrides, resetting the active palette, and checkbox contrast in both schemes. Run existing native UI and session probes.
+
+The Windows Release build passed the full Qt UI probe, including the compositor check, and the live picture-settings session smoke. The theme probes checked horizontal placement, rendered permission cards, both color profiles, the shared font and reset behavior. The system-mode probe exercised the Qt color scheme notification without modifying Windows personalization settings.
+
 ## Noncommercial distribution and companion website
 
 - Decide / S2: scope the license to original material and preserve dependency terms.

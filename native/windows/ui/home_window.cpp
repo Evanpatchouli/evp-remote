@@ -5,12 +5,16 @@
 #include "devices/device_identity.h"
 #include "floating_surface.h"
 #include "select_field.h"
+#include "theme.h"
 #include "visual_style.h"
 
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QColorDialog>
 #include <QCoreApplication>
+#include <QFontDatabase>
 #include <QFormLayout>
 #include <QFocusEvent>
 #include <QFrame>
@@ -18,6 +22,8 @@
 #include <QLineEdit>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QPainterPath>
+#include <QRadioButton>
 #include <QScreen>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -36,9 +42,14 @@ namespace {
 
 using native_ui::ActionButton;
 using native_ui::label;
+using native_ui::onThemeChanged;
+using native_ui::setThemedStyle;
 using native_ui::Symbol;
 using native_ui::symbolIcon;
 using native_ui::symbolPixmap;
+using native_ui::Theme;
+using native_ui::themeColor;
+using native_ui::themeStyle;
 using native_ui::uiFont;
 
 const auto idleMessage = QStringLiteral("输入对方发来的一次性邀请码，请求控制对方的设备。");
@@ -46,69 +57,80 @@ const auto waitingMessage = QStringLiteral("正在向对方发送连接请求。
 const auto hostIdleMessage = QStringLiteral("设置有效期和确认方式，将一次性邀请码发给你信任的人。");
 
 constexpr auto homeStyle = R"(
-    QWidget#home, QWidget#homeBody, QScrollArea#homeScroll { background: #f7f9fd; }
-    QWidget#rail, QWidget#settingsRail { background: #eaf1fc; border-right: 1px solid #e1eafa; }
-    QLabel { color: #182844; background: transparent; }
-    QLabel#subtle, QLabel#machinePlatform { color: #566986; }
-    QLabel#deviceIcon { background: #ecf3ff; border-radius: 10px; }
-    QFrame#card { background: #ffffff; border: 1px solid #e0e8f3; border-radius: 14px; }
-    QLineEdit {
-        background: #ffffff; color: #182844; selection-background-color: #2364da;
-        selection-color: #ffffff; border: 1px solid #cbd7e8; border-radius: 8px; padding: 0 12px;
+    QWidget#home, QWidget#homeBody, QScrollArea#homeScroll { background: #f7f9fd/#191a1c@background; }
+    QWidget#rail, QWidget#settingsRail { background: #eaf1fc/#1e2023@surface; border-right: 1px solid #e1eafa/#343942@stroke; }
+    QLabel { color: #182844/#e6e8ec@foreground; background: transparent; }
+    QLabel#subtle, QLabel#machinePlatform { color: #566986/#b7c0cf@muted; }
+    QCheckBox, QRadioButton { color: palette(window-text)/#e6e8ec@foreground; }
+    QCheckBox:disabled, QRadioButton:disabled { color: palette(window-text)/#9da7b8@muted; }
+    QRadioButton { spacing: 7px; }
+    QRadioButton::indicator {
+        width: 14px; height: 14px; border-radius: 8px;
+        background: #ffffff/#25272b@surface; border: 1px solid #8499b7/#8a95a5;
     }
-    QLineEdit:hover { border-color: #9fb7d8; }
-    QLineEdit:focus { border: 2px solid #3475e4; padding: 0 11px; }
-    QLineEdit:disabled { background: #f4f7fc; color: #566986; }
+    QRadioButton::indicator:checked { background: #2463da/#a9c7ff@accentMark; border-color: #2463da/#a9c7ff@accentMark; }
+    QLabel#deviceIcon { background: #ecf3ff/#253347@accentTint; border-radius: 10px; }
+    QFrame#card { background: #ffffff/#25272b@surface; border: 1px solid #e0e8f3/#343942@stroke; border-radius: 14px; }
+    QLineEdit {
+        background: #ffffff/#25272b@surface; color: #182844/#e6e8ec@foreground; selection-background-color: #2364da/#345b9d@accent;
+        selection-color: #ffffff/#eef0f5@onAccent; border: 1px solid #cbd7e8/#3d434d@stroke; border-radius: 8px; padding: 0 12px;
+    }
+    QLineEdit:hover { border-color: #9fb7d8/#536783@stroke; }
+    QLineEdit:focus { border: 2px solid #3475e4/#739ff1@accentMark; padding: 0 11px; }
+    QLineEdit:disabled { background: #f4f7fc/#24262a@surface; color: #566986/#b7c0cf@muted; }
     QPushButton[roleNavigation="true"] {
-        background: transparent; color: #214c98; border: 1px solid transparent;
+        background: transparent; color: #214c98/#b7d0ff@accentText; border: 1px solid transparent;
         padding: 0 12px; text-align: left;
     }
-    QPushButton[roleNavigation="true"]:checked { background: #dbe8ff; }
-    QPushButton[roleNavigation="true"]:hover { background: #cddfff; }
-    QPushButton[roleNavigation="true"]:pressed { background: #c2d6fa; }
-    QPushButton[roleNavigation="true"]:focus { border-color: #3475e4; }
-    QPushButton[roleNavigation="true"]:disabled { color: #4a6592; }
+    QPushButton[roleNavigation="true"]:checked { background: #dbe8ff/#283b56@accentTint; }
+    QPushButton[roleNavigation="true"]:hover { background: #cddfff/#304867@accentHoverTint; }
+    QPushButton[roleNavigation="true"]:pressed { background: #c2d6fa/#395377@accentHoverTint; }
+    QPushButton[roleNavigation="true"]:focus { border-color: #3475e4/#739ff1@accentMark; }
+    QPushButton[roleNavigation="true"]:disabled { color: #4a6592/#9da7b8@muted; }
     QTabBar#assistanceTabs::tab {
         min-height: 34px; padding: 0 18px; margin-right: 4px;
-        color: #405777; background: transparent;
+        color: #405777/#b7c0cf@muted; background: transparent;
         border: 1px solid transparent; border-bottom-width: 3px; border-radius: 5px;
     }
-    QTabBar#assistanceTabs::tab:hover { background: #edf3fd; color: #214c98; }
+    QTabBar#assistanceTabs::tab:hover { background: #edf3fd/#2b3037@raised; color: #214c98/#b7d0ff@accentText; }
     QTabBar#assistanceTabs::tab:selected {
-        background: #e4eeff; color: #174ca8; border-bottom-color: #2865d5;
+        background: #e4eeff/#283b56@accentTint; color: #174ca8/#b7d0ff@accentText; border-bottom-color: #2865d5/#739ff1@accentMark;
     }
-    QTabBar#assistanceTabs::tab:disabled { background: transparent; color: #78869c; }
+    QTabBar#assistanceTabs::tab:disabled { background: transparent; color: #78869c/#9da7b8@muted; }
     QPushButton#paste, QPushButton#cancel, QPushButton#copyHostInvitation, QPushButton#hostDeny,
-    QPushButton#checkForUpdates, QPushButton#settingsBack {
-        background: #f8faff; color: #284675; border: 1px solid #ccd9ec;
+    QPushButton#checkForUpdates, QPushButton#settingsBack, QPushButton[appearanceAction="true"] {
+        background: #f8faff/#222427@surface; color: #284675/#b7d0ff@accentText; border: 1px solid #ccd9ec/#3d434d@stroke;
         padding: 0 12px;
     }
     QPushButton#paste:hover, QPushButton#cancel:hover, QPushButton#copyHostInvitation:hover,
     QPushButton#hostDeny:hover, QPushButton#checkForUpdates:hover,
-    QPushButton#settingsBack:hover { background: #edf4ff; border-color: #a4bce4; }
+    QPushButton#settingsBack:hover { background: #edf4ff/#303844@raised; border-color: #a4bce4/#536783@stroke; }
+    QPushButton[appearanceAction="true"]:hover { background: #edf4ff/#303844@raised; border-color: #a4bce4/#536783@stroke; }
     QPushButton#paste:pressed, QPushButton#cancel:pressed, QPushButton#copyHostInvitation:pressed,
     QPushButton#hostDeny:pressed, QPushButton#checkForUpdates:pressed,
-    QPushButton#settingsBack:pressed { background: #e0ecff; }
+    QPushButton#settingsBack:pressed { background: #e0ecff/#344153@accentHoverTint; }
     QPushButton#paste:focus, QPushButton#cancel:focus, QPushButton#copyHostInvitation:focus,
     QPushButton#hostDeny:focus, QPushButton#checkForUpdates:focus,
-    QPushButton#settingsBack:focus { border-color: #3475e4; }
+    QPushButton#settingsBack:focus { border-color: #3475e4/#739ff1@accentMark; }
+    QPushButton[appearanceAction="true"]:focus { border-color: #3475e4/#739ff1@accentMark; }
+    QFrame#appearanceDivider { background: #e0e8f3/#373c45@stroke; border: none; }
     QPushButton#settingsBack { padding: 0; }
-    QPushButton#paste:disabled { color: #667899; border-color: #dfe6f1; background: #f4f7fc; }
+    QPushButton#paste:disabled { color: #667899/#9da7b8@muted; border-color: #dfe6f1/#343942@stroke; background: #f4f7fc/#24262a@surface; }
     QPushButton#join, QPushButton#hostCreate, QPushButton#hostApprove, QPushButton#saveSettings {
-        background: #2463da; color: #ffffff; border: 2px solid transparent;
+        background: #2463da/#2355ad@accent; color: #ffffff/#eef0f5@onAccent; border: 2px solid transparent;
         padding: 0 17px;
     }
-    QPushButton#join:hover, QPushButton#hostCreate:hover, QPushButton#hostApprove:hover, QPushButton#saveSettings:hover { background: #1956c5; }
-    QPushButton#join:pressed, QPushButton#hostCreate:pressed, QPushButton#hostApprove:pressed, QPushButton#saveSettings:pressed { background: #1348ac; }
-    QPushButton#join:focus, QPushButton#hostCreate:focus, QPushButton#hostApprove:focus, QPushButton#saveSettings:focus { border-color: #8db5ff; }
-    QPushButton#join:disabled, QPushButton#saveSettings:disabled { color: #43608f; background: #e2eafb; }
+    QPushButton#join:hover, QPushButton#hostCreate:hover, QPushButton#hostApprove:hover, QPushButton#saveSettings:hover { background: #1956c5/#2a60bc@accentHover; }
+    QPushButton#join:pressed, QPushButton#hostCreate:pressed, QPushButton#hostApprove:pressed, QPushButton#saveSettings:pressed { background: #1348ac/#214b96@accentPressed; }
+    QPushButton#join:focus, QPushButton#hostCreate:focus, QPushButton#hostApprove:focus, QPushButton#saveSettings:focus { border-color: #8db5ff/#a2c0ff@accentMark; }
+    QPushButton#join:disabled, QPushButton#saveSettings:disabled { color: #43608f/#9da7b8@muted; background: #e2eafb/#292f39@raised; }
     QPushButton#hostEnd {
-        background: #922f31; color: white; border: 2px solid transparent;
+        background: #922f31/#814044; color: white/#eef0f5; border: 2px solid transparent;
         padding: 0 11px;
     }
-    QPushButton#hostEnd:hover { background: #7c2225; }
-    QPushButton#hostEnd:pressed { background: #61191d; }
-    QPushButton#hostEnd:focus { border-color: #f3aab0; }
+    QPushButton#hostEnd:hover { background: #7c2225/#98494c; }
+    QPushButton#hostEnd:pressed { background: #61191d/#713639; }
+    QPushButton#hostEnd:focus { border-color: #f3aab0/#e3948b; }
 )";
 
 class AssistanceTabs final : public QTabBar {
@@ -142,7 +164,7 @@ protected:
             return;
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(QPen(QColor("#2865d5"), 1.5));
+        painter.setPen(QPen(themeColor("#2865d5", "#739ff1", "accentMark"), 1.5));
         painter.setBrush(Qt::NoBrush);
         painter.drawRoundedRect(QRectF(tabRect(currentIndex())).adjusted(1, 1, -5, -2), 5, 5);
     }
@@ -151,8 +173,8 @@ private:
     bool keyboardFocus_ = false;
 };
 
-ActionButton* roleButton(const QString& text, const char* name, const QIcon& icon = {}) {
-    auto* button = new ActionButton(icon, text);
+ActionButton* roleButton(const QString& text, const char* name) {
+    auto* button = new ActionButton(text);
     button->setObjectName(QString::fromLatin1(name));
     button->setProperty("roleNavigation", true);
     button->setFont(uiFont(14, QFont::DemiBold));
@@ -178,6 +200,49 @@ QVBoxLayout* hostCard(QFrame* card) {
     return layout;
 }
 
+QIcon themePreview(Theme choice) {
+    QPixmap preview(64, 44);
+    preview.setDevicePixelRatio(2);
+    preview.fill(Qt::transparent);
+    QPainter painter(&preview);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QRectF surface(0.5, 0.5, 31, 21);
+    QPainterPath outline;
+    outline.addRoundedRect(surface, 4, 4);
+    painter.setClipPath(outline);
+    const auto draw = [&](bool dark) {
+        painter.fillRect(surface, QColor(dark ? "#25272b" : "#ffffff"));
+        painter.fillRect(QRectF(0, 0, 8, 22), QColor(dark ? "#303844" : "#eaf1fc"));
+        painter.fillRect(QRectF(2, 5, 4, 2), QColor(dark ? "#a9c7ff" : "#2463da"));
+        painter.fillRect(QRectF(11, 5, 14, 2), QColor(dark ? "#e6e8ec" : "#263955"));
+        painter.fillRect(QRectF(11, 10, 17, 3), QColor(dark ? "#395377" : "#dbe8ff"));
+        painter.fillRect(QRectF(11, 15, 11, 2), QColor(dark ? "#9da7b8" : "#b2c8eb"));
+    };
+    draw(choice == Theme::Dark);
+    if (choice == Theme::System) {
+        painter.setClipRect(QRectF(16, 0, 16, 22), Qt::IntersectClip);
+        draw(true);
+    }
+    painter.setClipping(false);
+    painter.setPen(QColor("#8493a7"));
+    painter.drawPath(outline);
+    painter.end();
+    return QIcon(preview);
+}
+
+QIcon colorSwatch(const QColor& color) {
+    QPixmap pixmap(32, 32);
+    pixmap.setDevicePixelRatio(2);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(themeColor("#9aacc4", "#7d8898", "stroke"));
+    painter.setBrush(color);
+    painter.drawEllipse(QRectF(1.5, 1.5, 13, 13));
+    painter.end();
+    return QIcon(pixmap);
+}
+
 } // namespace
 
 HomeWindow::HomeWindow(QWidget* parent)
@@ -192,7 +257,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     auto* home = new QWidget;
     home->setObjectName(QStringLiteral("home"));
     home->setFont(uiFont(14));
-    home->setStyleSheet(QString::fromLatin1(homeStyle));
+    setThemedStyle(*home, QString::fromLatin1(homeStyle));
     setCentralWidget(home);
     auto* shell = new QHBoxLayout(home);
     shell->setContentsMargins(0, 0, 0, 0);
@@ -220,11 +285,8 @@ HomeWindow::HomeWindow(QWidget* parent)
     brand->addWidget(label(QStringLiteral("EVP 远程"), "brandName", 17, QFont::DemiBold), 1);
     railLayout->addLayout(brand);
     railLayout->addSpacing(34);
-    const QColor navigationIconColor("#275cae");
-    deviceNavigation_ = roleButton(QStringLiteral("我的设备"), "deviceNavigation",
-                                   symbolIcon(Symbol::Display, navigationIconColor, 19));
-    assistanceNavigation_ = roleButton(QStringLiteral("远程协助"), "navigation",
-                                       symbolIcon(Symbol::Connect, navigationIconColor, 19));
+    deviceNavigation_ = roleButton(QStringLiteral("我的设备"), "deviceNavigation");
+    assistanceNavigation_ = roleButton(QStringLiteral("远程协助"), "navigation");
     railLayout->addWidget(deviceNavigation_);
     railLayout->addSpacing(6);
     railLayout->addWidget(assistanceNavigation_);
@@ -240,9 +302,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     indicatorLayout->setContentsMargins(0, 0, 0, 0);
     auto* stop = hostButton(QStringLiteral("正在共享本机 · 停止共享"), "trustedShareStop");
     indicatorLayout->addWidget(stop);
-    shareIndicator_->setStyleSheet(QStringLiteral(
-        "QPushButton { color: white; background: #922f31; border: 0; padding: 0 14px; }"
-        "QPushButton:hover { background: #7c2225; } QPushButton:pressed { background: #61191d; }"));
+    setThemedStyle(*shareIndicator_, QStringLiteral(
+        "QPushButton { color: white/#eef0f5; background: #922f31/#814044; border: 0; padding: 0 14px; }"
+        "QPushButton:hover { background: #7c2225/#98494c; } QPushButton:pressed { background: #61191d/#713639; }"));
     stop->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
     native_ui::styleFloatingSurface(*shareIndicator_, *stop);
     connect(stop, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
@@ -251,8 +313,13 @@ HomeWindow::HomeWindow(QWidget* parent)
     role->setContentsMargins(8, 0, 0, 0);
     railLayout->addWidget(role);
     railLayout->addSpacing(6);
-    settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation",
-                                     symbolIcon(Symbol::Settings, navigationIconColor, 19));
+    settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation");
+    onThemeChanged(*this, [this] {
+        const auto ink = themeColor("#275cae", "#aec9fb", "accentText");
+        deviceNavigation_->setIcon(symbolIcon(Symbol::Display, ink, 19));
+        assistanceNavigation_->setIcon(symbolIcon(Symbol::Connect, ink, 19));
+        settingsNavigation_->setIcon(symbolIcon(Symbol::Settings, ink, 19));
+    });
     railLayout->addWidget(settingsNavigation_);
 
     auto* settingsRail = new QWidget;
@@ -262,7 +329,10 @@ HomeWindow::HomeWindow(QWidget* parent)
     settingsRailLayout->setSpacing(0);
     auto* settingsHeader = new QHBoxLayout;
     settingsHeader->setSpacing(10);
-    settingsBack_ = new ActionButton(symbolIcon(Symbol::Back, QColor("#456594"), 18), {});
+    settingsBack_ = new ActionButton(QString{});
+    onThemeChanged(*settingsBack_, [this] {
+        settingsBack_->setIcon(symbolIcon(Symbol::Back, themeColor("#456594", "#aec9fb", "accentText"), 18));
+    });
     settingsBack_->setObjectName(QStringLiteral("settingsBack"));
     settingsBack_->setAccessibleName(QStringLiteral("返回"));
     settingsBack_->setToolTip(settingsBack_->accessibleName());
@@ -273,8 +343,11 @@ HomeWindow::HomeWindow(QWidget* parent)
     settingsRailLayout->addLayout(settingsHeader);
     settingsRailLayout->addSpacing(34);
     settingsConnectionNavigation_ = roleButton(QStringLiteral("连接设置"), "settingsConnectionNavigation");
+    settingsAppearanceNavigation_ = roleButton(QStringLiteral("外观"), "settingsAppearanceNavigation");
     settingsAboutNavigation_ = roleButton(QStringLiteral("关于"), "settingsAboutNavigation");
     settingsRailLayout->addWidget(settingsConnectionNavigation_);
+    settingsRailLayout->addSpacing(6);
+    settingsRailLayout->addWidget(settingsAppearanceNavigation_);
     settingsRailLayout->addSpacing(6);
     settingsRailLayout->addWidget(settingsAboutNavigation_);
     settingsRailLayout->addStretch();
@@ -358,7 +431,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     auto* deviceIcon = label({}, "deviceIcon", 15);
     deviceIcon->setFixedSize(42, 42);
     deviceIcon->setAlignment(Qt::AlignCenter);
-    deviceIcon->setPixmap(symbolPixmap(Symbol::Display, QColor("#2c63be"), 24));
+    onThemeChanged(*deviceIcon, [deviceIcon] {
+        deviceIcon->setPixmap(symbolPixmap(Symbol::Display, themeColor("#2c63be", "#aec9fb", "accentText"), 24));
+    });
     deviceLayout->addWidget(deviceIcon);
     auto* machine = new QVBoxLayout;
     machine->setSpacing(3);
@@ -400,7 +475,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     pasteButton_->setAccessibleName(QStringLiteral("粘贴邀请码"));
     pasteButton_->setFont(uiFont(13, QFont::DemiBold));
     pasteButton_->setMinimumHeight(41);
-    pasteButton_->setIcon(symbolIcon(Symbol::Clipboard, QColor("#456594"), 17));
+    onThemeChanged(*pasteButton_, [this] {
+        pasteButton_->setIcon(symbolIcon(Symbol::Clipboard, themeColor("#456594", "#aec9fb", "accentText"), 17));
+    });
     pasteButton_->setIconSize(QSize(17, 17));
     invitationRow->addWidget(pasteButton_);
     formLayout->addLayout(invitationRow);
@@ -410,7 +487,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     joinButton_->setObjectName(QStringLiteral("join"));
     joinButton_->setFont(uiFont(14, QFont::DemiBold));
     joinButton_->setMinimumSize(119, 41);
-    joinButton_->setIcon(symbolIcon(Symbol::Arrow, Qt::white, 18));
+    onThemeChanged(*joinButton_, [this] {
+        joinButton_->setIcon(symbolIcon(Symbol::Arrow, themeColor("#ffffff", "#eef0f5", "onAccent"), 18));
+    });
     joinButton_->setIconSize(QSize(18, 18));
     joinButton_->setLayoutDirection(Qt::RightToLeft);
     auto* actions = new QHBoxLayout;
@@ -434,7 +513,8 @@ HomeWindow::HomeWindow(QWidget* parent)
     contentLayout->addWidget(settingsPage_);
 
     setTabOrder(settingsBack_, settingsConnectionNavigation_);
-    setTabOrder(settingsConnectionNavigation_, settingsAboutNavigation_);
+    setTabOrder(settingsConnectionNavigation_, settingsAppearanceNavigation_);
+    setTabOrder(settingsAppearanceNavigation_, settingsAboutNavigation_);
     setTabOrder(settingsAboutNavigation_, settingsServerUrl_);
     setTabOrder(hostEndButton_, settingsNavigation_);
     setTabOrder(settingsNavigation_, deviceNavigation_);
@@ -449,8 +529,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     connect(assistanceTabs_, &QTabBar::currentChanged, this, [this](int index) { switchRole(index == 1, true); });
     connect(deviceNavigation_, &QPushButton::clicked, this, &HomeWindow::showDevicePage);
     connect(settingsNavigation_, &QPushButton::clicked, this, &HomeWindow::showSettingsPage);
-    connect(settingsConnectionNavigation_, &QPushButton::clicked, this, [this] { selectSettingsView(false); });
-    connect(settingsAboutNavigation_, &QPushButton::clicked, this, [this] { selectSettingsView(true); });
+    connect(settingsConnectionNavigation_, &QPushButton::clicked, this, [this] { selectSettingsView(SettingsView::Connection); });
+    connect(settingsAppearanceNavigation_, &QPushButton::clicked, this, [this] { selectSettingsView(SettingsView::Appearance); });
+    connect(settingsAboutNavigation_, &QPushButton::clicked, this, [this] { selectSettingsView(SettingsView::About); });
     connect(settingsBack_, &QPushButton::clicked, this, [this] {
         if (pageBeforeSettings_ == Page::Devices) {
             showDevicePage();
@@ -473,7 +554,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     connect(invitation_, &QLineEdit::returnPressed, this, &HomeWindow::requestJoin);
     invitation_->setFocus(Qt::OtherFocusReason);
     updateForm();
-    updateBanner();
+    onThemeChanged(*this, [this] { updateBanner(); });
 }
 
 HomeWindow::~HomeWindow()
@@ -548,7 +629,9 @@ QWidget* HomeWindow::createHostPage()
     inviteRow->setSpacing(8);
     inviteRow->addWidget(hostInvitation_, 1);
     auto* copy = hostButton(QStringLiteral("复制邀请码"), "copyHostInvitation");
-    copy->setIcon(symbolIcon(Symbol::Clipboard, QColor("#456594"), 17));
+    onThemeChanged(*copy, [copy] {
+        copy->setIcon(symbolIcon(Symbol::Clipboard, themeColor("#456594", "#aec9fb", "accentText"), 17));
+    });
     copy->setIconSize(QSize(17, 17));
     inviteRow->addWidget(copy);
     inviteLayout->addLayout(inviteRow);
@@ -667,6 +750,109 @@ QWidget* HomeWindow::createSettingsPage()
     connection->addStretch();
     settingsViews_->addWidget(connectionPage);
 
+    auto* appearancePage = new QWidget;
+    auto* appearance = new QVBoxLayout(appearancePage);
+    appearance->setContentsMargins(0, 0, 0, 0);
+    appearance->setSpacing(12);
+    appearance->addWidget(label(QStringLiteral("主题"), "themeTitle", 21, QFont::DemiBold));
+    auto* themeCard = new QFrame;
+    auto* theme = hostCard(themeCard);
+    const auto newAppearanceRow = [&](QLabel* title) {
+        auto* divider = new QFrame;
+        divider->setObjectName("appearanceDivider");
+        divider->setFixedHeight(1);
+        theme->addWidget(divider);
+        auto* row = new QHBoxLayout;
+        row->addWidget(title);
+        row->addStretch();
+        theme->addLayout(row);
+        return row;
+    };
+    auto* themeRow = new QHBoxLayout;
+    themeRow->setSpacing(14);
+    themeRow->addWidget(label(QStringLiteral("模式"), "themeModeTitle", 14, QFont::DemiBold));
+    themeRow->addStretch();
+    theme->addLayout(themeRow);
+    auto* themeOptions = new QButtonGroup(themeCard);
+    const auto addTheme = [&](Theme choice, const QString& text, const char* name) {
+        auto* button = new QRadioButton(text);
+        button->setObjectName(QString::fromLatin1(name));
+        button->setFont(uiFont(14));
+        button->setIcon(themePreview(choice));
+        button->setIconSize(QSize(32, 22));
+        button->setMinimumHeight(32);
+        themeOptions->addButton(button, static_cast<int>(choice));
+        themeRow->addWidget(button);
+        return button;
+    };
+    auto* systemTheme = addTheme(Theme::System, QStringLiteral("跟随系统"), "themeSystem");
+    auto* lightTheme = addTheme(Theme::Light, QStringLiteral("浅色模式"), "themeLight");
+    auto* darkTheme = addTheme(Theme::Dark, QStringLiteral("深色模式"), "themeDark");
+    themeOptions->button(static_cast<int>(native_ui::savedTheme()))->setChecked(true);
+    connect(themeOptions, &QButtonGroup::idClicked, this, [](int choice) {
+        native_ui::saveTheme(static_cast<Theme>(choice));
+    });
+
+    using native_ui::ThemeColor;
+    const auto addColorControl = [&](ThemeColor role, const QString& title, const char* name) {
+        auto* row = newAppearanceRow(label(title, "fieldLabel", 14, QFont::DemiBold));
+        auto* button = new ActionButton(QString{});
+        button->setObjectName(QString::fromLatin1(name));
+        button->setProperty("appearanceAction", true);
+        button->setFont(uiFont(13));
+        button->setIconSize(QSize(16, 16));
+        button->setMinimumWidth(114);
+        row->addWidget(button);
+        onThemeChanged(*button, [button, title, role] {
+            const auto color = native_ui::appearanceColor(role);
+            const auto hex = color.name().toUpper();
+            button->setText(hex);
+            button->setAccessibleName(QStringLiteral("%1 %2").arg(title, hex));
+            button->setIcon(colorSwatch(color));
+        });
+        connect(button, &QPushButton::clicked, this, [this, title, role] {
+            QColorDialog dialog(native_ui::appearanceColor(role), this);
+            dialog.setOption(QColorDialog::DontUseNativeDialog);
+            dialog.setWindowTitle(title);
+            if (dialog.exec() == QDialog::Accepted)
+                native_ui::saveAppearanceColor(role, dialog.selectedColor());
+        });
+        return button;
+    };
+    auto* accent = addColorControl(ThemeColor::Accent, QStringLiteral("强调色"), "themeAccent");
+    auto* background = addColorControl(ThemeColor::Background, QStringLiteral("背景"), "themeBackground");
+    auto* foreground = addColorControl(ThemeColor::Foreground, QStringLiteral("前景"), "themeForeground");
+    auto* fontLabel = label(QStringLiteral("字体"), "fieldLabel", 14, QFont::DemiBold);
+    auto* fontRow = newAppearanceRow(fontLabel);
+    auto* font = new native_ui::SelectField;
+    font->setObjectName("themeFont");
+    font->setAccessibleName(fontLabel->text());
+    fontLabel->setBuddy(font);
+    font->setMinimumWidth(176);
+    font->setMaximumWidth(224);
+    font->addItem(QStringLiteral("默认字体"), QString{});
+    for (const auto& family : QFontDatabase::families())
+        font->addItem(family, family);
+    fontRow->addWidget(font);
+    onThemeChanged(*font, [font] {
+        const QSignalBlocker block(font);
+        font->setCurrentIndex(qMax(0, font->findData(native_ui::appearanceFont())));
+    });
+    connect(font, &QComboBox::currentIndexChanged, this, [font] {
+        native_ui::saveAppearanceFont(font->currentData().toString());
+    });
+
+    auto* reset = new ActionButton(QStringLiteral("恢复默认"));
+    reset->setObjectName("resetAppearance");
+    reset->setToolTip(QStringLiteral("恢复当前模式的默认配色和默认字体"));
+    reset->setProperty("appearanceAction", true);
+    reset->setFont(uiFont(13));
+    connect(reset, &QPushButton::clicked, this, &native_ui::resetAppearance);
+    appearance->addWidget(themeCard);
+    appearance->addWidget(reset, 0, Qt::AlignRight);
+    appearance->addStretch();
+    settingsViews_->addWidget(appearancePage);
+
     auto* aboutPage = new QWidget;
     auto* about = new QVBoxLayout(aboutPage);
     about->setContentsMargins(0, 0, 0, 0);
@@ -708,7 +894,15 @@ QWidget* HomeWindow::createSettingsPage()
     setTabOrder(settingsServerUrl_, settingsDeploymentKey_);
     setTabOrder(settingsDeploymentKey_, forgetDeploymentKey_);
     setTabOrder(forgetDeploymentKey_, save);
-    setTabOrder(save, checkForUpdates);
+    setTabOrder(save, systemTheme);
+    setTabOrder(systemTheme, lightTheme);
+    setTabOrder(lightTheme, darkTheme);
+    setTabOrder(darkTheme, accent);
+    setTabOrder(accent, background);
+    setTabOrder(background, foreground);
+    setTabOrder(foreground, font);
+    setTabOrder(font, reset);
+    setTabOrder(reset, checkForUpdates);
     updateKeyPlaceholder();
     return page;
 }
@@ -806,18 +1000,19 @@ void HomeWindow::showPendingConfirmation()
 void HomeWindow::showSettingsPage()
 {
     selectPage(Page::Settings);
-    selectSettingsView(false);
+    selectSettingsView(SettingsView::Connection);
     if (settingsForm_->isEnabled())
         settingsServerUrl_->setFocus(Qt::ShortcutFocusReason);
     else
         settingsBack_->setFocus(Qt::ShortcutFocusReason);
 }
 
-void HomeWindow::selectSettingsView(bool about)
+void HomeWindow::selectSettingsView(SettingsView view)
 {
-    settingsViews_->setCurrentIndex(about ? 1 : 0);
-    settingsConnectionNavigation_->setChecked(!about);
-    settingsAboutNavigation_->setChecked(about);
+    settingsViews_->setCurrentIndex(static_cast<int>(view));
+    settingsConnectionNavigation_->setChecked(view == SettingsView::Connection);
+    settingsAppearanceNavigation_->setChecked(view == SettingsView::Appearance);
+    settingsAboutNavigation_->setChecked(view == SettingsView::About);
     scroll_->ensureVisible(0, 0, 0, 0);
 }
 
@@ -1203,22 +1398,22 @@ void HomeWindow::updateShareIndicator()
 void HomeWindow::updateBanner()
 {
     if (failed_) {
-        banner_->setStyleSheet(QStringLiteral(R"(
-            QFrame#statusBanner { background: #fff1ed; border: 1px solid #f0d8cf; border-radius: 13px; }
-            QLabel#bannerGlyph { background: #fbe0d7; border-radius: 10px; }
-            QLabel#bannerTitle { color: #82372b; }
-            QLabel#bannerMessage { color: #75473e; }
-        )"));
-        bannerIcon_->setPixmap(symbolPixmap(Symbol::Warning, QColor("#a54737"), 22));
+        banner_->setStyleSheet(themeStyle(QStringLiteral(R"(
+            QFrame#statusBanner { background: #fff1ed/#382724; border: 1px solid #f0d8cf/#634640; border-radius: 13px; }
+            QLabel#bannerGlyph { background: #fbe0d7/#45302b; border-radius: 10px; }
+            QLabel#bannerTitle { color: #82372b/#f2c3b8; }
+            QLabel#bannerMessage { color: #75473e/#f2c3b8; }
+        )")));
+        bannerIcon_->setPixmap(symbolPixmap(Symbol::Warning, themeColor("#a54737", "#efa799"), 22));
         bannerTitle_->setText(hostPage_ ? QStringLiteral("共享操作失败") : QStringLiteral("无法连接"));
     } else {
-        banner_->setStyleSheet(QStringLiteral(R"(
-            QFrame#statusBanner { background: #eaf2ff; border: 1px solid #dce9fd; border-radius: 13px; }
-            QLabel#bannerGlyph { background: #d9e8ff; border-radius: 10px; }
-            QLabel#bannerTitle { color: #1e427c; }
-            QLabel#bannerMessage { color: #405b85; }
-        )"));
-        bannerIcon_->setPixmap(symbolPixmap(Symbol::Connect, QColor("#2864c2"), 24));
+        banner_->setStyleSheet(themeStyle(QStringLiteral(R"(
+            QFrame#statusBanner { background: #eaf2ff/#202b3a@accentTint; border: 1px solid #dce9fd/#343942@stroke; border-radius: 13px; }
+            QLabel#bannerGlyph { background: #d9e8ff/#253347@accentTint; border-radius: 10px; }
+            QLabel#bannerTitle { color: #1e427c/#b7d0ff@accentText; }
+            QLabel#bannerMessage { color: #405b85/#b7c0cf@muted; }
+        )")));
+        bannerIcon_->setPixmap(symbolPixmap(Symbol::Connect, themeColor("#2864c2", "#aec9fb", "accentText"), 24));
         if (hostPage_) {
             if (hostActive_) {
                 bannerTitle_->setText(QStringLiteral("正在共享本机"));
