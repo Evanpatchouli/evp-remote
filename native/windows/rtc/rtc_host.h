@@ -1,6 +1,7 @@
 #pragma once
 
 #include "rtc_viewer.h"
+#include "../video_settings.h"
 
 #include <cstddef>
 
@@ -50,7 +51,7 @@ public:
     RtcHost(const RtcHost&) = delete;
     RtcHost& operator=(const RtcHost&) = delete;
 
-    bool start(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, int maxFps = 60);
+    bool start(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, VideoSettings settings);
     void acceptAnswer(std::string sdp);
     void addRemoteCandidate(IceCandidate candidate);
     bool sendInput(std::string_view message);

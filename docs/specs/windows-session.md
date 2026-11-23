@@ -14,7 +14,7 @@ Validate an actual cross-network direct connection, automatic relay when the dir
 
 ## Native client's high-refresh target
 
-The viewer can open picture settings from the resolution and frame-rate display. Automatic quality leaves bitrate to congestion control. The 30, 14 and 8 Mbps presets and the 1–50 Mbps custom value set upper limits. The frame-rate choices set a target ceiling of 144, 90, 60 or 30 FPS. The host applies authenticated requests automatically during the active native session. Media settings expire when the session ends. The SDR 8-bit 4:2:0 path offers standard color. True color and HDR are shown as unavailable.
+The viewer can open picture settings from the resolution and frame-rate display. New native sessions default to HD with an 8 Mbps bitrate ceiling. Automatic quality leaves bitrate to congestion control. The 30, 14 and 8 Mbps presets and the 1–50 Mbps custom value set upper limits. The frame-rate choices set a target ceiling of 144, 90, 60 or 30 FPS. The host applies authenticated requests automatically during the active native session. Media settings expire when the session ends. The SDR 8-bit 4:2:0 path offers standard color. True color and HDR are shown as unavailable.
 
 The desktop sender asks WebRTC to prefer preserving resolution over preserving frame rate, including before the first offer. Congestion control remains active. To qualify startup on physical PCs, start with the same moving desktop and fresh sessions, then record time from first displayed frame to the first stable native-resolution image, actual frame rate and transport route. Measure visual sharpness as well as dimensions.
 

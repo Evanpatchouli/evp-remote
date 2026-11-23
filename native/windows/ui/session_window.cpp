@@ -3,6 +3,7 @@
 #include "action_button.h"
 #include "floating_surface.h"
 #include "visual_style.h"
+#include "../video_settings.h"
 
 #include <QButtonGroup>
 #include <QCloseEvent>
@@ -242,7 +243,8 @@ SessionWindow::SessionWindow(QWidget* videoSurface, QWidget* parent)
 
     setRoute({});
     setVideoFormat({}, 0);
-    setVideoSettings(0, 0, false, QStringLiteral("等待远端画面设置可用"));
+    const evp::VideoSettings defaults;
+    setVideoSettings(defaults.maxBitrateMbps, defaults.maxFps, false, QStringLiteral("等待远端画面设置可用"));
     updateStatus();
 }
 

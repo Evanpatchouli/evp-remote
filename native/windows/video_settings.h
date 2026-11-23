@@ -3,7 +3,7 @@
 namespace evp {
 
 struct VideoSettings {
-    int maxBitrateMbps = 0;
+    int maxBitrateMbps = 8;
     int maxFps = 60;
 
     bool valid() const {

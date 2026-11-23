@@ -157,12 +157,13 @@ int runViewerProbe(int argc, char** argv) {
                 auto* trigger = window->findChild<QAbstractButton*>("sessionVideoSettings");
                 auto* panel = window->findChild<QWidget*>("videoSettingsPanel");
                 auto* hd = window->findChild<QAbstractButton*>("videoBitrate8");
+                auto* ultra = window->findChild<QAbstractButton*>("videoBitrate14");
                 auto* initialFps = window->findChild<QAbstractButton*>(device.isEmpty() ? "videoFps144" : "videoFps60");
                 auto* targetFps = window->findChild<QAbstractButton*>(device.isEmpty() ? "videoFps90" : "videoFps144");
                 auto* automatic = window->findChild<QAbstractButton*>("videoBitrateAuto");
                 auto* custom = window->findChild<QSpinBox*>("videoCustomBitrate");
                 auto* apply = window->findChild<QAbstractButton*>("videoCustomApply");
-                if (!trigger || !panel || !hd || !initialFps || !targetFps || !automatic || !custom || !apply) {
+                if (!trigger || !panel || !hd || !ultra || !initialFps || !targetFps || !automatic || !custom || !apply) {
                     app.exit(5);
                     return;
                 }
@@ -180,14 +181,14 @@ int runViewerProbe(int argc, char** argv) {
                         return;
                     }
                     ++pictureStep;
-                } else if (pictureStep == 1 && hd->isEnabled() && automatic->isChecked()) {
-                    if (!initialFps->isChecked()) {
+                } else if (pictureStep == 1 && hd->isEnabled()) {
+                    if (!hd->isChecked() || !initialFps->isChecked()) {
                         app.exit(5);
                         return;
                     }
-                    hd->click();
+                    ultra->click();
                     ++pictureStep;
-                } else if (pictureStep == 2 && hd->isEnabled() && hd->isChecked()) {
+                } else if (pictureStep == 2 && ultra->isEnabled() && ultra->isChecked()) {
                     targetFps->click();
                     ++pictureStep;
                 } else if (pictureStep == 3 && targetFps->isEnabled() && targetFps->isChecked()) {
@@ -203,7 +204,7 @@ int runViewerProbe(int argc, char** argv) {
                     custom->setValue(22);
                     apply->click();
                     ++pictureStep;
-                } else if (pictureStep == 4 && automatic->isEnabled() && !hd->isChecked() &&
+                } else if (pictureStep == 4 && automatic->isEnabled() && !ultra->isChecked() &&
                            !automatic->isChecked() && custom->value() == 22) {
                     automatic->click();
                     ++pictureStep;

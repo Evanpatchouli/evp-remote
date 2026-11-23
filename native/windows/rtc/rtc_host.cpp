@@ -4,7 +4,6 @@
 #include "../capture/desktop_capture.h"
 #include "../capture/loopback_audio.h"
 #include "../capture/webrtc_ffmpeg_encoder.h"
-#include "../video_settings.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -364,7 +363,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         if (!failed.exchange(true)) notify(&Callbacks::error, std::move(message));
     }
 
-    std::string start(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, int maxFps) {
+    std::string start(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, VideoSettings settings) {
         network.reset(webrtc_Thread_CreateWithSocketServer());
         signaling.reset(webrtc_Thread_Create());
         if (!network || !signaling || !webrtc_Thread_Start(webrtc_Thread_unique_get(network.get())) ||
@@ -374,13 +373,13 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         signalingStarted = true;
 
         std::string error;
-        onSignalingThread([&] { error = createPeer(iceServers, relayOnly, maxFps); });
+        onSignalingThread([&] { error = createPeer(iceServers, relayOnly, settings); });
         if (!error.empty()) return error;
 
         const auto captureError = [weak = weak_from_this()](std::string message) {
             if (const auto self = weak.lock()) self->reportError(std::move(message));
         };
-        if (!media.startVideo(videoSource.get(), maxFps, captureError, [weak = weak_from_this()](int width, int height) {
+        if (!media.startVideo(videoSource.get(), settings.maxFps, captureError, [weak = weak_from_this()](int width, int height) {
                 if (const auto self = weak.lock()) self->notify(&Callbacks::videoSize, width, height);
             })) {
             return "Could not start desktop capture.";
@@ -421,7 +420,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         });
     }
 
-    std::string createPeer(const std::vector<IceServer>& iceServers, bool relayOnly, int maxFps) {
+    std::string createPeer(const std::vector<IceServer>& iceServers, bool relayOnly, VideoSettings settings) {
         const auto dependencies = own<webrtc_PeerConnectionFactoryDependencies_delete>(
             webrtc_PeerConnectionFactoryDependencies_new());
         webrtc_PeerConnectionFactoryDependencies_set_network_thread(dependencies.get(), webrtc_Thread_unique_get(network.get()));
@@ -508,11 +507,11 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         if (!peer) return "Could not create a native WebRTC peer connection." + detail;
 
         const auto sharedStream = own<std_string_unique_delete>(std_string_new_from_bytes(streamId.data(), streamId.size()));
-        if (auto error = addVideoTrack(std_string_unique_get(sharedStream.get()), maxFps); !error.empty()) return error;
+        if (auto error = addVideoTrack(std_string_unique_get(sharedStream.get()), settings); !error.empty()) return error;
         return createInputChannel();
     }
 
-    std::string addVideoTrack(const std_string* sharedStream, int maxFps) {
+    std::string addVideoTrack(const std_string* sharedStream, VideoSettings settings) {
         auto* source = webrtc_AdaptedVideoTrackSource_Create();
         videoSource.reset(webrtc_AdaptedVideoTrackSource_refcounted_get(source));
         if (!videoSource) return "Could not create the desktop video source.";
@@ -534,7 +533,7 @@ struct RtcHost::Session final : std::enable_shared_from_this<Session> {
         const auto detail = errorDetail(error);
         videoSender.reset(webrtc_RtpSenderInterface_refcounted_get(result));
         if (!videoSender) return "Could not publish the desktop video track." + detail;
-        return setVideoParameters(0, maxFps);
+        return setVideoParameters(settings.maxBitrateMbps, settings.maxFps);
     }
 
     std::string setVideoParameters(int maxBitrateMbps, int maxFps) {
@@ -820,7 +819,7 @@ RtcHost::~RtcHost() {
     if (initialized_) rtc::releaseRuntime();
 }
 
-bool RtcHost::start(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, int maxFps) {
+bool RtcHost::start(const std::vector<IceServer>& iceServers, bool relayOnly, bool withAudio, VideoSettings settings) {
     close();
     if (!callbacks_.post) {
         if (callbacks_.error) callbacks_.error("The WebRTC owner thread dispatcher is missing.");
@@ -832,7 +831,7 @@ bool RtcHost::start(const std::vector<IceServer>& iceServers, bool relayOnly, bo
         return false;
     }
     auto session = std::make_shared<Session>(callbacks_, *media_);
-    if (auto error = session->start(iceServers, relayOnly, withAudio, maxFps); !error.empty()) {
+    if (auto error = session->start(iceServers, relayOnly, withAudio, settings); !error.empty()) {
         session->close();
         if (callbacks_.error) callbacks_.error(std::move(error));
         return false;

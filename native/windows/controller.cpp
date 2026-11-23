@@ -392,7 +392,8 @@ void DesktopController::ready(const QJsonObject& m) {
     input_ = new ViewerInput(surface_, [this](QJsonObject e) { return sendInput(std::move(e)); }, this);
     connect(window_, &SessionWindow::endRequested, this, &DesktopController::endSession);
     connect(window_, &SessionWindow::videoSettingsRequested, this, &DesktopController::requestVideoSettings);
-    window_->setVideoSettings(0, 60, false, QStringLiteral("连接后可查看对端支持的画面设置。"));
+    window_->setVideoSettings(videoSettings_.maxBitrateMbps, videoSettings_.maxFps, false,
+                              QStringLiteral("连接后可查看对端支持的画面设置。"));
     window_->setStatus(QStringLiteral("正在协商音视频连接…"));
     window_->show();
     home_.setSessionActive(true);

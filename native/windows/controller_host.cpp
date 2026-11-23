@@ -116,11 +116,11 @@ void DesktopController::hostReady(const std::vector<IceServer>& servers) {
         });
     };
     host_ = std::make_unique<RtcHost>(std::move(cb), hostAdapters_.media ? hostAdapters_.media() : nullptr);
-    videoSettings_ = {0, highRefresh_ ? 144 : 60};
+    videoSettings_ = {.maxFps = highRefresh_ ? 144 : 60};
     home_.setHostActive(true);
     home_.setStatus(withAudio_ ? QStringLiteral("正在准备共享本机屏幕和系统声音…")
                                : QStringLiteral("正在共享本机屏幕，等待对方连接…"));
-    if (!host_->start(servers, relayOnly_, withAudio_, videoSettings_.maxFps)) {
+    if (!host_->start(servers, relayOnly_, withAudio_, videoSettings_)) {
         finish(QStringLiteral("无法启动共享。请检查主显示器和编码设备后重试。"), true);
         return;
     }
