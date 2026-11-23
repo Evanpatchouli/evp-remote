@@ -1271,16 +1271,19 @@ void DeviceSecurityProbe::homeFrameAndSidebarGeometry() {
 
     const auto verifyRow = [](const QPushButton& button, const QWidget& parentRail) {
         QVERIFY(button.isVisible());
+        QCOMPARE(parentRail.width(), 168);
         const auto start = button.mapTo(&parentRail, QPoint{});
         QCOMPARE(start.x(), 8);
         const int rightInset = parentRail.width() - start.x() - button.width();
         QVERIFY(rightInset >= 8 && rightInset <= 9);
-        QCOMPARE(button.height(), 32);
+        QCOMPARE(button.height(), 44);
+        QCOMPARE(button.font().pixelSize(), 14);
+        QCOMPARE(button.font().weight(), QFont::DemiBold);
     };
     for (auto* button : {device, assistance, settings}) {
         verifyRow(*button, *rail);
         QVERIFY(!button->icon().isNull());
-        QCOMPARE(button->iconSize(), QSize(16, 16));
+        QCOMPARE(button->iconSize(), QSize(19, 19));
     }
     QCOMPARE(assistance->y() - device->geometry().bottom() - 1, 2);
     QCOMPARE(rail->height() - settings->geometry().bottom() - 1, 8);
@@ -1316,6 +1319,8 @@ void DeviceSecurityProbe::homeFrameAndSidebarGeometry() {
     QCOMPARE(settingsRail->height(), window.height());
     QCOMPARE(caption->mapTo(&window, QPoint{}), QPoint(settingsRail->width(), 0));
     QVERIFY(back->isVisible());
+    QCOMPARE(back->width(), 36);
+    QCOMPARE(back->minimumHeight(), 36);
     QCOMPARE(back->mapTo(settingsRail, QPoint{}), QPoint(8, 12));
     for (auto* button : {connection, appearance, about})
         verifyRow(*button, *settingsRail);

@@ -80,7 +80,7 @@ constexpr auto homeStyle = R"(
     QLineEdit:disabled { background: #f4f7fc/#24262a@surface; color: #566986/#b7c0cf@muted; }
     QPushButton[roleNavigation="true"] {
         background: transparent; color: #214c98/#b7d0ff@accentText; border: 1px solid transparent;
-        padding: 0 8px; text-align: left;
+        padding: 0 12px; text-align: left;
     }
     QPushButton[roleNavigation="true"]:checked { background: #dbe8ff/#283b56@accentTint; }
     QPushButton[roleNavigation="true"]:hover { background: #cddfff/#304867@accentHoverTint; }
@@ -177,9 +177,9 @@ ActionButton* roleButton(const QString& text, const char* name) {
     auto* button = new ActionButton(text);
     button->setObjectName(QString::fromLatin1(name));
     button->setProperty("roleNavigation", true);
-    button->setFont(uiFont(13, QFont::Medium));
-    button->setIconSize(QSize(16, 16));
-    button->setMinimumHeight(32);
+    button->setFont(uiFont(14, QFont::DemiBold));
+    button->setIconSize(QSize(19, 19));
+    button->setMinimumHeight(44);
     button->setCheckable(true);
     return button;
 }
@@ -264,7 +264,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     shell->setSpacing(0);
 
     rails_ = new QStackedWidget;
-    rails_->setFixedWidth(184);
+    rails_->setFixedWidth(168);
     shell->addWidget(rails_);
 
     auto* rail = new QWidget;
@@ -319,9 +319,9 @@ HomeWindow::HomeWindow(QWidget* parent)
     settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation");
     onThemeChanged(*this, [this] {
         const auto ink = themeColor("#275cae", "#aec9fb", "accentText");
-        deviceNavigation_->setIcon(symbolIcon(Symbol::Display, ink, 16));
-        assistanceNavigation_->setIcon(symbolIcon(Symbol::Connect, ink, 16));
-        settingsNavigation_->setIcon(symbolIcon(Symbol::Settings, ink, 16));
+        deviceNavigation_->setIcon(symbolIcon(Symbol::Display, ink, 19));
+        assistanceNavigation_->setIcon(symbolIcon(Symbol::Connect, ink, 19));
+        settingsNavigation_->setIcon(symbolIcon(Symbol::Settings, ink, 19));
     });
     railLayout->addWidget(settingsNavigation_);
 
@@ -340,7 +340,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     settingsBack_->setAccessibleName(QStringLiteral("返回"));
     settingsBack_->setToolTip(settingsBack_->accessibleName());
     settingsBack_->setIconSize(QSize(18, 18));
-    settingsBack_->setFixedSize(32, 32);
+    settingsBack_->setFixedWidth(36);
     settingsHeader->addWidget(settingsBack_);
     settingsHeader->addWidget(label(QStringLiteral("设置中心"), "settingsCenterTitle", 17, QFont::DemiBold), 1);
     settingsRailLayout->addLayout(settingsHeader);
