@@ -1,5 +1,10 @@
 # Current task
 
+## Windows 0.4.0 release
+
+- **Execute / S1.** Bump the release manifest and lockfile, record the ongoing Windows client GPL grant and apply the existing GPL/x264 packaging checks to future Windows releases.
+- **Verify / S0.** Build and check the setup, portable launcher, ZIP and corresponding source from the release commit. Check the publication against the tag and the local SHA-256 values.
+
 ## Home window frame and sidebar
 
 - **Execute / S2.** Extend the home client area over the system caption, retain system window operations and place window controls on the right.

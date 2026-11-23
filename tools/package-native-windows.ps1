@@ -189,7 +189,7 @@ if ($LASTEXITCODE -ne 0 -or $ffmpegReport -notmatch '(?m)^ffmpeg version (\S+)')
     throw "Could not identify the FFmpeg build and its license from $ffmpeg."
 }
 $ffmpegVersion = $Matches[1]
-$gplClient = $version -cin @('0.3.1', '0.3.2')
+$gplClient = $version -cin @('0.3.1', '0.3.2') -or [version]$numericVersion -ge [version]'0.4.0.0'
 if ($gplClient) {
     if ($ffmpegReport -notmatch 'GNU General Public License' -or $ffmpegReport -notmatch '--enable-libx264\b' -or
         $ffmpegReport -match '--enable-nonfree\b') {
@@ -408,7 +408,7 @@ try {
         "Qt license text: https://github.com/qt/qtbase/tree/v$qtVersion/LICENSES"
         "Qt translations license text: https://github.com/qt/qttranslations/tree/v$qtVersion/LICENSES"
         ''
-        "FFmpeg $ffmpegVersion supplies media decoding and colorspace conversion."
+        "FFmpeg $ffmpegVersion supplies media encoding, decoding and colorspace conversion."
         'The supplied FFmpeg license and executable build configuration are in ffmpeg/.'
         $ffmpegSource
         ''
