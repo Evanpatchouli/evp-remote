@@ -19,6 +19,10 @@ class QShowEvent;
 class QStackedWidget;
 class QTabBar;
 
+namespace native_ui {
+class HomeWindowFrame;
+}
+
 class HomeWindow final : public QMainWindow {
     Q_OBJECT
 
@@ -84,6 +88,7 @@ private:
     void updateShareIndicator();
 
     QFrame* banner_;
+    native_ui::HomeWindowFrame* frame_ = nullptr;
     QLabel* bannerIcon_;
     QLabel* bannerTitle_;
     QLabel* bannerMessage_;

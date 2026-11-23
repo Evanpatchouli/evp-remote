@@ -1,5 +1,13 @@
 # Current task
 
+## Home window frame and sidebar
+
+- **Execute / S2.** Extend the home client area over the system caption, retain system window operations and place window controls on the right.
+- **Execute / S1.** Tighten the home and settings rails to compact navigation rows and matching side and bottom insets. Shorten the tray actions to **打开** and **退出**.
+- **Verify / independent review.** Check frame hit tests, layout, window state changes and tray behavior. Capture the native home and verify a portable build.
+
+The Release build and Windows probes passed at 100%, 125%, 150% and 200% Qt scaling on one display. They checked native client alignment, the maximized work area, physical edge and caption-button hits, cancellation of a dragged-out maximize click, title double-click, minimize/restore and close-to-tray. The dark home preview shows a continuous rail from top to bottom. Physical mixed-DPI monitor transitions were not exercised.
+
 ## Trusted device context menu
 
 - **Execute / S2.** Store local display names, pins and row order across restarts, preserve existing profiles and reuse the existing pairing revocation path.

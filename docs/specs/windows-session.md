@@ -4,6 +4,8 @@ The Windows app has three sidebar destinations. My Devices lists paired PCs, Rem
 
 The sidebar and local device summary show the installed Windows name and its release when available, for example `Windows 11 25H2`.
 
+The home and settings sidebars extend to the top of the window. Drag the brand or the empty strip beside the window buttons to move the home window. Double-click either drag area to maximize or restore it. Minimize, maximize/restore and close are at the top right.
+
 Each Windows user configures one signaling endpoint. Invitation redemption uses the address and the guest's single-use invitation. Invitation creation and device registration use the deployment key saved for that endpoint. An address-only configuration supports guests. The client applies changes only after a successful save while idle.
 
 The host selects an invitation lifetime of 5, 15, or 30 minutes or 1, 2, 5, or 12 hours. The default is five minutes. A locally generated invitation can authorize one viewer. By default the host approves the request when it arrives. For a particular invitation the host may explicitly select **持码免本机确认** and set sound, refresh, and relay preferences before creating the code. The first valid redemption then starts that session. Expiry, cancellation, disconnect, and redemption invalidate the code. New invitations start with manual approval.

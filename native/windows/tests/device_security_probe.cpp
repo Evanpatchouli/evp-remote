@@ -7,6 +7,7 @@
 #include "ui/system_tray.h"
 #include "ui/theme.h"
 #include "update_release.h"
+#include <QAbstractButton>
 #include <QAction>
 #include <QAbstractItemView>
 #include <QApplication>
@@ -142,6 +143,8 @@ private slots:
     void storedKeyIsScopedToAddress();
     void readsLegacyConnectionSettings_data();
     void readsLegacyConnectionSettings();
+    void homeFrameAndSidebarGeometry();
+    void homeCaptionNativeBehavior();
     void assistanceTabsAndScrollableDeviceList();
     void cleanTabFocus();
     void cleanSidebarFocus_data();
@@ -179,7 +182,9 @@ void DeviceSecurityProbe::trayKeepsSharingControlsAvailable() {
     QVERIFY(!icon.isNull() && icon.pixelColor(0, 0).alpha() == 0);
     QVERIFY(!QApplication::quitOnLastWindowClosed());
     window.show();
-    QVERIFY(window.close());
+    auto* captionClose = window.findChild<QAbstractButton*>("homeClose");
+    QVERIFY(captionClose && captionClose->isVisible());
+    QTest::mouseClick(captionClose, Qt::LeftButton);
     QVERIFY(!window.isVisible() && tray->isVisible());
     open->trigger();
     QVERIFY(window.isVisible());
@@ -1237,6 +1242,216 @@ void DeviceSecurityProbe::readsLegacyConnectionSettings() {
     }
     QCOMPARE(legacy.connections, 0);
     QCOMPARE(fallback.connections, 0);
+}
+
+void DeviceSecurityProbe::homeFrameAndSidebarGeometry() {
+    native_ui::applyTheme(native_ui::Theme::Dark);
+    const auto restore = qScopeGuard([] { native_ui::applyTheme(native_ui::Theme::Light); });
+    HomeWindow window;
+    window.setAttribute(Qt::WA_DontShowOnScreen);
+    window.showDevicePage();
+    window.show();
+    QCoreApplication::processEvents();
+
+    auto* caption = window.findChild<QWidget*>("homeCaption");
+    auto* rail = window.findChild<QWidget*>("rail");
+    auto* brand = window.findChild<QLabel*>("brandMark");
+    auto* device = window.findChild<QPushButton*>("deviceNavigation");
+    auto* assistance = window.findChild<QPushButton*>("navigation");
+    auto* settings = window.findChild<QPushButton*>("settingsNavigation");
+    auto* platform = window.findChild<QLabel*>("sidebarPlatform");
+    QVERIFY(caption && rail && brand && device && assistance && settings && platform);
+    QVERIFY(caption->isVisible() && rail->isVisible() && device->isChecked());
+    QCOMPARE(rail->mapTo(&window, QPoint{}), QPoint(0, 0));
+    QCOMPARE(rail->height(), window.height());
+    QCOMPARE(caption->mapTo(&window, QPoint{}), QPoint(rail->width(), 0));
+    QCOMPARE(caption->height(), 32);
+    QCOMPARE(brand->mapTo(rail, QPoint{}), QPoint(12, 12));
+    QCOMPARE(brand->size(), QSize(30, 30));
+
+    const auto verifyRow = [](const QPushButton& button, const QWidget& parentRail) {
+        QVERIFY(button.isVisible());
+        const auto start = button.mapTo(&parentRail, QPoint{});
+        QCOMPARE(start.x(), 8);
+        const int rightInset = parentRail.width() - start.x() - button.width();
+        QVERIFY(rightInset >= 8 && rightInset <= 9);
+        QCOMPARE(button.height(), 32);
+    };
+    for (auto* button : {device, assistance, settings}) {
+        verifyRow(*button, *rail);
+        QVERIFY(!button->icon().isNull());
+        QCOMPARE(button->iconSize(), QSize(16, 16));
+    }
+    QCOMPARE(assistance->y() - device->geometry().bottom() - 1, 2);
+    QCOMPARE(rail->height() - settings->geometry().bottom() - 1, 8);
+    QVERIFY(platform->isVisible() && platform->geometry().bottom() < settings->y());
+
+    const auto preview = qEnvironmentVariable("EVP_PROBE_UI_DIR");
+    if (!preview.isEmpty()) {
+        auto& devices = window.devices();
+        devices.setIdentity("UI-PREVIEW");
+        devices.setConnectionConfigured(true);
+        devices.setRegistration(true, QStringLiteral("本机在线"));
+        devices.setDevices({{"preview-office", {{}, QStringLiteral("办公室电脑")}},
+                            {"preview-home", {{}, QStringLiteral("家用台式机")}},
+                            {"preview-laptop", {{}, QStringLiteral("工作笔记本")}}},
+                           {"preview-office", "preview-laptop"});
+        QCoreApplication::processEvents();
+        const auto frame = window.grab();
+        QVERIFY(qAbs(frame.deviceIndependentSize().width() - window.width()) <= 1);
+        QVERIFY(qAbs(frame.deviceIndependentSize().height() - window.height()) <= 1);
+        QVERIFY(frame.save(QDir(preview).filePath("home-frame-dark.png")));
+    }
+
+    QTest::mouseClick(settings, Qt::LeftButton);
+    QCoreApplication::processEvents();
+    auto* settingsRail = window.findChild<QWidget*>("settingsRail");
+    auto* back = window.findChild<QPushButton*>("settingsBack");
+    auto* connection = window.findChild<QPushButton*>("settingsConnectionNavigation");
+    auto* appearance = window.findChild<QPushButton*>("settingsAppearanceNavigation");
+    auto* about = window.findChild<QPushButton*>("settingsAboutNavigation");
+    QVERIFY(settingsRail && back && connection && appearance && about);
+    QVERIFY(settingsRail->isVisible() && !rail->isVisible() && connection->isChecked());
+    QCOMPARE(settingsRail->mapTo(&window, QPoint{}), QPoint(0, 0));
+    QCOMPARE(settingsRail->height(), window.height());
+    QCOMPARE(caption->mapTo(&window, QPoint{}), QPoint(settingsRail->width(), 0));
+    QVERIFY(back->isVisible());
+    QCOMPARE(back->mapTo(settingsRail, QPoint{}), QPoint(8, 12));
+    for (auto* button : {connection, appearance, about})
+        verifyRow(*button, *settingsRail);
+    QCOMPARE(appearance->y() - connection->geometry().bottom() - 1, 2);
+    QCOMPARE(about->y() - appearance->geometry().bottom() - 1, 2);
+    QTest::mouseClick(about, Qt::LeftButton);
+    auto* checkUpdates = window.findChild<QPushButton*>("checkForUpdates");
+    QVERIFY(checkUpdates && checkUpdates->isVisible() && about->isChecked());
+    QTest::mouseClick(back, Qt::LeftButton);
+    QVERIFY(device->isVisible() && device->isChecked());
+}
+
+void DeviceSecurityProbe::homeCaptionNativeBehavior() {
+    if (QApplication::platformName() != QStringLiteral("windows"))
+        QSKIP("The native caption requires Qt's Windows platform.");
+    HomeWindow window;
+    window.setAttribute(Qt::WA_ShowWithoutActivating);
+    window.setAttribute(Qt::WA_QuitOnClose, false);
+    window.show();
+    window.showDevicePage();
+    QCoreApplication::processEvents();
+
+    const auto handle = reinterpret_cast<HWND>(window.winId());
+    QVERIFY(IsWindow(handle));
+    auto* caption = window.findChild<QWidget*>("homeCaption");
+    auto* minimize = window.findChild<QAbstractButton*>("homeMinimize");
+    auto* maximize = window.findChild<QAbstractButton*>("homeMaximize");
+    auto* close = window.findChild<QAbstractButton*>("homeClose");
+    auto* navigation = window.findChild<QPushButton*>("deviceNavigation");
+    QVERIFY(caption && minimize && maximize && close && navigation);
+    for (auto* button : {minimize, maximize, close}) {
+        QVERIFY(button->isVisible() && button->isEnabled());
+        QVERIFY(!button->accessibleName().isEmpty());
+    }
+
+    RECT frame{};
+    POINT origin{};
+    QVERIFY(GetWindowRect(handle, &frame));
+    QVERIFY(ClientToScreen(handle, &origin));
+    QVERIFY2(origin.y - frame.top >= 0 && origin.y - frame.top <= 1,
+             "The Windows client must start at the top of the window frame.");
+    const auto hitTestScreen = [&](POINT point) {
+        return SendMessageW(handle, WM_NCHITTEST, 0, MAKELPARAM(point.x, point.y));
+    };
+    const auto hitTest = [&](QPoint point) {
+        POINT nativePoint{qRound(point.x() * window.devicePixelRatioF()),
+                          qRound(point.y() * window.devicePixelRatioF())};
+        if (!ClientToScreen(handle, &nativePoint))
+            return static_cast<LRESULT>(HTERROR);
+        return hitTestScreen(nativePoint);
+    };
+    const auto centerOf = [&](const QWidget* widget) {
+        return widget->mapTo(&window, widget->rect().center());
+    };
+    const auto dragPoint = centerOf(caption);
+    QCOMPARE(hitTest(dragPoint), LRESULT(HTCAPTION));
+    const auto* brand = window.findChild<QLabel*>("brandName");
+    QVERIFY(brand);
+    QCOMPARE(hitTest(centerOf(brand)), LRESULT(HTCAPTION));
+    QCOMPARE(hitTest(centerOf(navigation)), LRESULT(HTCLIENT));
+    QCOMPARE(hitTest(centerOf(minimize)), LRESULT(HTCLIENT));
+    QCOMPARE(hitTest(centerOf(maximize)), LRESULT(HTMAXBUTTON));
+    QCOMPARE(hitTest(centerOf(close)), LRESULT(HTCLIENT));
+    QCOMPARE(hitTest(QPoint(dragPoint.x(), 0)), LRESULT(HTTOP));
+    QCOMPARE(hitTestScreen(POINT{frame.left + 1, (frame.top + frame.bottom) / 2}), LRESULT(HTLEFT));
+    window.showSettingsPage();
+    auto* back = window.findChild<QPushButton*>("settingsBack");
+    QVERIFY(back && back->isVisible());
+    QCOMPARE(hitTest(centerOf(back)), LRESULT(HTCLIENT));
+    back->click();
+
+    const auto normalGeometry = window.geometry();
+    const auto maximizeName = maximize->accessibleName();
+    const auto clickNativeMaximize = [&](bool releaseInside) {
+        const auto logical = centerOf(maximize);
+        POINT clientPoint{qRound(logical.x() * window.devicePixelRatioF()),
+                          qRound(logical.y() * window.devicePixelRatioF())};
+        POINT screenPoint = clientPoint;
+        QVERIFY(ClientToScreen(handle, &screenPoint));
+        SendMessageW(handle, WM_NCLBUTTONDOWN, HTMAXBUTTON, MAKELPARAM(screenPoint.x, screenPoint.y));
+        QCOMPARE(GetCapture(), handle);
+        if (!releaseInside)
+            clientPoint.y += qRound(64 * window.devicePixelRatioF());
+        SendMessageW(handle, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(clientPoint.x, clientPoint.y));
+        SendMessageW(handle, WM_LBUTTONUP, 0, MAKELPARAM(clientPoint.x, clientPoint.y));
+        QVERIFY(GetCapture() != handle);
+    };
+    clickNativeMaximize(false);
+    QVERIFY(!window.isMaximized() && !IsZoomed(handle));
+    clickNativeMaximize(true);
+    QTRY_VERIFY(window.isMaximized() && IsZoomed(handle));
+    QVERIFY(maximize->accessibleName() != maximizeName);
+    const auto maximizedDrag = centerOf(caption);
+    QCOMPARE(hitTest(QPoint(maximizedDrag.x(), 0)), LRESULT(HTCAPTION));
+
+    const auto matchesWorkArea = [&] {
+        MONITORINFO monitor{};
+        monitor.cbSize = sizeof(monitor);
+        RECT client{};
+        POINT topLeft{};
+        if (!GetMonitorInfoW(MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST), &monitor) ||
+            !GetClientRect(handle, &client) || !ClientToScreen(handle, &topLeft))
+            return false;
+        const auto& work = monitor.rcWork;
+        return qAbs(topLeft.x - work.left) <= 1 && qAbs(topLeft.y - work.top) <= 1 &&
+               qAbs(topLeft.x + client.right - work.right) <= 1 &&
+               qAbs(topLeft.y + client.bottom - work.bottom) <= 1;
+    };
+    QTRY_VERIFY(matchesWorkArea());
+    RECT maximizedClient{};
+    QVERIFY(GetClientRect(handle, &maximizedClient));
+    POINT lastTopPixel{maximizedClient.right - 1, 0};
+    QVERIFY(ClientToScreen(handle, &lastTopPixel));
+    QCOMPARE(hitTestScreen(lastTopPixel), LRESULT(HTCLIENT));
+    clickNativeMaximize(true);
+    QTRY_VERIFY(!window.isMaximized() && !IsZoomed(handle));
+    QCOMPARE(maximize->accessibleName(), maximizeName);
+    QTRY_COMPARE(window.geometry(), normalGeometry);
+
+    const auto doubleClickTitle = [&] {
+        const auto title = centerOf(caption);
+        POINT p{qRound(title.x() * window.devicePixelRatioF()), qRound(title.y() * window.devicePixelRatioF())};
+        QVERIFY(ClientToScreen(handle, &p));
+        SendMessageW(handle, WM_NCLBUTTONDBLCLK, HTCAPTION, MAKELPARAM(p.x, p.y));
+    };
+    doubleClickTitle();
+    QTRY_VERIFY(window.isMaximized() && IsZoomed(handle));
+    doubleClickTitle();
+    QTRY_COMPARE(window.geometry(), normalGeometry);
+
+    QTest::mouseClick(minimize, Qt::LeftButton);
+    QTRY_VERIFY(window.isMinimized() && IsIconic(handle));
+    window.showNormal();
+    QTRY_VERIFY(window.isVisible() && !window.isMinimized() && !IsIconic(handle));
+    QTest::mouseClick(close, Qt::LeftButton);
+    QTRY_VERIFY(!window.isVisible() && !IsWindowVisible(handle));
 }
 
 void DeviceSecurityProbe::assistanceTabsAndScrollableDeviceList() {

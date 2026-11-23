@@ -5,6 +5,7 @@
 #include "device_page.h"
 #include "devices/device_identity.h"
 #include "floating_surface.h"
+#include "home_window_frame.h"
 #include "select_field.h"
 #include "theme.h"
 #include "visual_style.h"
@@ -59,7 +60,7 @@ constexpr auto homeStyle = R"(
     QWidget#home, QWidget#homeBody, QScrollArea#homeScroll { background: #f7f9fd/#191a1c@background; }
     QWidget#rail, QWidget#settingsRail { background: #eaf1fc/#1e2023@surface; border-right: 1px solid #e1eafa/#343942@stroke; }
     QLabel { color: #182844/#e6e8ec@foreground; background: transparent; }
-    QLabel#subtle, QLabel#machinePlatform { color: #566986/#b7c0cf@muted; }
+    QLabel#subtle, QLabel#sidebarPlatform, QLabel#machinePlatform { color: #566986/#b7c0cf@muted; }
     QCheckBox, QRadioButton { color: palette(window-text)/#e6e8ec@foreground; }
     QCheckBox:disabled, QRadioButton:disabled { color: palette(window-text)/#9da7b8@muted; }
     QRadioButton { spacing: 7px; }
@@ -79,7 +80,7 @@ constexpr auto homeStyle = R"(
     QLineEdit:disabled { background: #f4f7fc/#24262a@surface; color: #566986/#b7c0cf@muted; }
     QPushButton[roleNavigation="true"] {
         background: transparent; color: #214c98/#b7d0ff@accentText; border: 1px solid transparent;
-        padding: 0 12px; text-align: left;
+        padding: 0 8px; text-align: left;
     }
     QPushButton[roleNavigation="true"]:checked { background: #dbe8ff/#283b56@accentTint; }
     QPushButton[roleNavigation="true"]:hover { background: #cddfff/#304867@accentHoverTint; }
@@ -176,9 +177,9 @@ ActionButton* roleButton(const QString& text, const char* name) {
     auto* button = new ActionButton(text);
     button->setObjectName(QString::fromLatin1(name));
     button->setProperty("roleNavigation", true);
-    button->setFont(uiFont(14, QFont::DemiBold));
-    button->setIconSize(QSize(19, 19));
-    button->setMinimumHeight(44);
+    button->setFont(uiFont(13, QFont::Medium));
+    button->setIconSize(QSize(16, 16));
+    button->setMinimumHeight(32);
     button->setCheckable(true);
     return button;
 }
@@ -268,26 +269,28 @@ HomeWindow::HomeWindow(QWidget* parent)
 
     auto* rail = new QWidget;
     rail->setObjectName(QStringLiteral("rail"));
+    constexpr QMargins railInsets(8, 12, 8, 8);
+    constexpr int navigationGap = 2;
     auto* railLayout = new QVBoxLayout(rail);
-    railLayout->setContentsMargins(16, 25, 16, 24);
+    railLayout->setContentsMargins(railInsets);
     railLayout->setSpacing(0);
     rails_->addWidget(rail);
 
     auto* brand = new QHBoxLayout;
     brand->setContentsMargins(4, 0, 0, 0);
-    brand->setSpacing(10);
+    brand->setSpacing(8);
     auto* brandMark = label({}, "brandMark", 14);
-    brandMark->setFixedSize(36, 36);
+    brandMark->setFixedSize(30, 30);
     brandMark->setAlignment(Qt::AlignCenter);
-    brandMark->setPixmap(windowIcon().pixmap(QSize(36, 36), devicePixelRatioF()));
+    brandMark->setPixmap(windowIcon().pixmap(brandMark->size(), devicePixelRatioF()));
     brand->addWidget(brandMark);
     brand->addWidget(label(QStringLiteral("EVP 远程"), "brandName", 17, QFont::DemiBold), 1);
     railLayout->addLayout(brand);
-    railLayout->addSpacing(34);
+    railLayout->addSpacing(14);
     deviceNavigation_ = roleButton(QStringLiteral("我的设备"), "deviceNavigation");
     assistanceNavigation_ = roleButton(QStringLiteral("远程协助"), "navigation");
     railLayout->addWidget(deviceNavigation_);
-    railLayout->addSpacing(6);
+    railLayout->addSpacing(navigationGap);
     railLayout->addWidget(assistanceNavigation_);
     railLayout->addStretch();
     hostEndButton_ = hostButton(QStringLiteral("结束共享"), "hostEnd");
@@ -307,28 +310,28 @@ HomeWindow::HomeWindow(QWidget* parent)
     stop->setIcon(symbolIcon(Symbol::End, Qt::white, 17));
     native_ui::styleFloatingSurface(*shareIndicator_, *stop);
     connect(stop, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
-    railLayout->addSpacing(16);
+    railLayout->addSpacing(10);
     const QString windowsVersion = QSysInfo::prettyProductName().replace(QStringLiteral(" Version "), QStringLiteral(" "));
-    auto* platform = label(windowsVersion, "subtle", 12);
+    auto* platform = label(windowsVersion, "sidebarPlatform", 12);
     platform->setContentsMargins(8, 0, 0, 0);
     railLayout->addWidget(platform);
-    railLayout->addSpacing(6);
+    railLayout->addSpacing(4);
     settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation");
     onThemeChanged(*this, [this] {
         const auto ink = themeColor("#275cae", "#aec9fb", "accentText");
-        deviceNavigation_->setIcon(symbolIcon(Symbol::Display, ink, 19));
-        assistanceNavigation_->setIcon(symbolIcon(Symbol::Connect, ink, 19));
-        settingsNavigation_->setIcon(symbolIcon(Symbol::Settings, ink, 19));
+        deviceNavigation_->setIcon(symbolIcon(Symbol::Display, ink, 16));
+        assistanceNavigation_->setIcon(symbolIcon(Symbol::Connect, ink, 16));
+        settingsNavigation_->setIcon(symbolIcon(Symbol::Settings, ink, 16));
     });
     railLayout->addWidget(settingsNavigation_);
 
     auto* settingsRail = new QWidget;
     settingsRail->setObjectName(QStringLiteral("settingsRail"));
     auto* settingsRailLayout = new QVBoxLayout(settingsRail);
-    settingsRailLayout->setContentsMargins(16, 25, 16, 24);
+    settingsRailLayout->setContentsMargins(railInsets);
     settingsRailLayout->setSpacing(0);
     auto* settingsHeader = new QHBoxLayout;
-    settingsHeader->setSpacing(10);
+    settingsHeader->setSpacing(8);
     settingsBack_ = new ActionButton(QString{});
     onThemeChanged(*settingsBack_, [this] {
         settingsBack_->setIcon(symbolIcon(Symbol::Back, themeColor("#456594", "#aec9fb", "accentText"), 18));
@@ -337,18 +340,18 @@ HomeWindow::HomeWindow(QWidget* parent)
     settingsBack_->setAccessibleName(QStringLiteral("返回"));
     settingsBack_->setToolTip(settingsBack_->accessibleName());
     settingsBack_->setIconSize(QSize(18, 18));
-    settingsBack_->setFixedWidth(36);
+    settingsBack_->setFixedSize(32, 32);
     settingsHeader->addWidget(settingsBack_);
     settingsHeader->addWidget(label(QStringLiteral("设置中心"), "settingsCenterTitle", 17, QFont::DemiBold), 1);
     settingsRailLayout->addLayout(settingsHeader);
-    settingsRailLayout->addSpacing(34);
+    settingsRailLayout->addSpacing(14);
     settingsConnectionNavigation_ = roleButton(QStringLiteral("连接设置"), "settingsConnectionNavigation");
     settingsAppearanceNavigation_ = roleButton(QStringLiteral("外观"), "settingsAppearanceNavigation");
     settingsAboutNavigation_ = roleButton(QStringLiteral("关于"), "settingsAboutNavigation");
     settingsRailLayout->addWidget(settingsConnectionNavigation_);
-    settingsRailLayout->addSpacing(6);
+    settingsRailLayout->addSpacing(navigationGap);
     settingsRailLayout->addWidget(settingsAppearanceNavigation_);
-    settingsRailLayout->addSpacing(6);
+    settingsRailLayout->addSpacing(navigationGap);
     settingsRailLayout->addWidget(settingsAboutNavigation_);
     settingsRailLayout->addStretch();
     rails_->addWidget(settingsRail);
@@ -356,6 +359,8 @@ HomeWindow::HomeWindow(QWidget* parent)
     auto* mainLayout = new QVBoxLayout;
     mainLayout->setSpacing(0);
     shell->addLayout(mainLayout, 1);
+    frame_ = new native_ui::HomeWindowFrame(*this, *brand, *settingsHeader);
+    mainLayout->addWidget(frame_);
     assistanceHeader_ = new QWidget;
     auto* headerLayout = new QVBoxLayout(assistanceHeader_);
     headerLayout->setContentsMargins(35, 24, 35, 0);
@@ -577,6 +582,8 @@ bool HomeWindow::nativeEvent(const QByteArray& eventType, void* message, qintptr
             return true;
         }
     }
+    if (frame_ && frame_->handleMessage(*msg, *result))
+        return true;
     return QMainWindow::nativeEvent(eventType, message, result);
 }
 
@@ -1368,6 +1375,7 @@ void HomeWindow::updateForm()
 void HomeWindow::showEvent(QShowEvent* event)
 {
     QMainWindow::showEvent(event);
+    frame_->prepareWindow();
     updateShareIndicator();
 }
 
