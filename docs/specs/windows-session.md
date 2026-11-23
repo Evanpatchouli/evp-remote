@@ -2,6 +2,8 @@
 
 The Windows app has three sidebar destinations. My Devices lists paired PCs, Remote Assistance groups the two invitation roles, and **设置** at the bottom holds the shared signaling address and deployment key. Under Remote Assistance, **远程协助** accepts a peer's invitation and **共享本机** creates an invitation to share the local PC. The active role stays selected while its request or session is in progress. A viewing session opens a second window inside the same app.
 
+The sidebar and local device summary show the installed Windows name and its release when available, for example `Windows 11 25H2`.
+
 Each Windows user configures one signaling endpoint. Invitation redemption uses the address and the guest's single-use invitation. Invitation creation and device registration use the deployment key saved for that endpoint. An address-only configuration supports guests. The client applies changes only after a successful save while idle.
 
 The host selects an invitation lifetime of 5, 15, or 30 minutes or 1, 2, 5, or 12 hours. The default is five minutes. A locally generated invitation can authorize one viewer. By default the host approves the request when it arrives. For a particular invitation the host may explicitly select **持码免本机确认** and set sound, refresh, and relay preferences before creating the code. The first valid redemption then starts that session. Expiry, cancellation, disconnect, and redemption invalidate the code. New invitations start with manual approval.

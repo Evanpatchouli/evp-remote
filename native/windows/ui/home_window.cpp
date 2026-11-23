@@ -309,9 +309,10 @@ HomeWindow::HomeWindow(QWidget* parent)
     native_ui::styleFloatingSurface(*shareIndicator_, *stop);
     connect(stop, &QPushButton::clicked, this, &HomeWindow::hostEndRequested);
     railLayout->addSpacing(16);
-    auto* role = label(QStringLiteral("Windows"), "subtle", 12);
-    role->setContentsMargins(8, 0, 0, 0);
-    railLayout->addWidget(role);
+    const QString windowsVersion = QSysInfo::prettyProductName().replace(QStringLiteral(" Version "), QStringLiteral(" "));
+    auto* platform = label(windowsVersion, "subtle", 12);
+    platform->setContentsMargins(8, 0, 0, 0);
+    railLayout->addWidget(platform);
     railLayout->addSpacing(6);
     settingsNavigation_ = roleButton(QStringLiteral("设置"), "settingsNavigation");
     onThemeChanged(*this, [this] {
@@ -443,7 +444,7 @@ HomeWindow::HomeWindow(QWidget* parent)
     machineName->setWordWrap(true);
     machineName->setTextInteractionFlags(Qt::TextSelectableByMouse);
     machine->addWidget(machineName);
-    machine->addWidget(label(QStringLiteral("Windows"), "machinePlatform", 12));
+    machine->addWidget(label(windowsVersion, "machinePlatform", 12));
     deviceLayout->addLayout(machine, 1);
     summaryLayout->addWidget(deviceCard);
     contentLayout->addWidget(deviceSummary_);
